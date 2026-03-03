@@ -33,3 +33,10 @@ broadcast/
 *.log
 *.swp
 *~
+
+# Nix
+.direnv/
+.nix-mix/
+.nix-hex/
+result
+result-*
