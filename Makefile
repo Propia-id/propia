@@ -12,14 +12,14 @@ db.reset:
 
 # Mobile — Wallet (React Native / Expo)
 wallet:
-	cd frontend/wallet && npx expo start
+	cd frontend/wallet && pnpm start
 
 # Mobile — Verifier (React Native / Expo)
 verifier:
-	cd frontend/verifier && npx expo start
+	cd frontend/verifier && pnpm start
 
 # Web — Issuer Portal (Vite)
-issuer-web:
+issuer:
 	cd frontend/issuer && pnpm dev
 
 # Smart Contracts (Foundry)
