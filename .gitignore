@@ -1,0 +1,35 @@
+# Elixir
+_build/
+deps/
+.elixir_ls/
+*.beam
+*.ez
+erl_crash.dump
+*.plt
+*.plt.hash
+
+# Ecto
+*.db
+*.db-journal
+priv/repo/migrations/.formatter.exs
+
+# Node / JS / TS
+node_modules/
+dist/
+.expo/
+*.tsbuildinfo
+.turbo/
+
+# Foundry
+out/
+cache/
+broadcast/
+
+# General
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+*.swp
+*~
