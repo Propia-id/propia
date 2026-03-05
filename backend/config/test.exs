@@ -20,6 +20,14 @@ config :sovra, SovraWeb.Endpoint,
   secret_key_base: "+IpCk7u6d8wD+jABpM9K1t4OkH4v/Oy5/eu0C30Zzt4jnLi0ulGaep4Asz7YMQq4",
   server: false
 
+# Co-signing server test config
+config :sovra,
+  auth_provider: Sovra.Auth.MockAuthProvider,
+  session_secret: "test-secret-must-be-at-least-32-bytes-long-for-hmac!",
+  google_client_id: "test-client-id",
+  google_client_secret: "test-client-secret",
+  google_redirect_uri: "http://localhost:4002/api/v1/cosigner/auth/callback"
+
 # Print only warnings and errors during test
 config :logger, level: :warning
 

@@ -52,6 +52,12 @@ config :sovra, SovraWeb.Endpoint,
 # Enable dev routes for dashboard and mailbox
 config :sovra, dev_routes: true
 
+# Google OAuth (dev) — set via environment variables
+config :sovra,
+  google_client_id: System.get_env("GOOGLE_CLIENT_ID", "dev-client-id"),
+  google_client_secret: System.get_env("GOOGLE_CLIENT_SECRET", "dev-client-secret"),
+  google_redirect_uri: "http://localhost:4000/api/v1/cosigner/auth/callback"
+
 # Do not include metadata nor timestamps in development logs
 config :logger, :default_formatter, format: "[$level] $message\n"
 

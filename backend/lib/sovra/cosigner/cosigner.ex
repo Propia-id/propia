@@ -1,12 +1,173 @@
 defmodule Sovra.Cosigner do
   @moduledoc """
-  Co-signing logic — KB-JWT co-signature, holder authentication, policy enforcement.
+  Co-signing server context. Orchestrates onboarding, authentication,
+  blind hash co-signing, key rotation, and recovery.
   """
 
-  @doc """
-  Co-signs a KB-JWT for the given holder after policy validation.
-  """
-  def cosign(_kb_jwt, _holder_did) do
-    {:error, :not_implemented}
+  alias Sovra.Cosigner.HolderRecord
+  alias Sovra.Crypto.Key
+  alias Sovra.Auth.Session
+  alias Sovra.Repo
+
+  import Ecto.Query
+
+  def onboard(sovra_address, oauth_token) do
+    with {:ok, %{sub: sub, email: _email}} <- auth_provider().verify_id_token(oauth_token),
+         :ok <- check_not_onboarded(sovra_address, sub),
+         {:ok, %{key_id: key_id, public_key_x: x, public_key_y: y}} <-
+           Key.generate_key(sovra_address) do
+      changeset =
+        HolderRecord.create_changeset(%{
+          sovra_address: sovra_address,
+          server_key_id: key_id,
+          server_public_key_x: x,
+          server_public_key_y: y,
+          oauth_provider: "google",
+          oauth_subject: sub
+        })
+
+      case Repo.insert(changeset) do
+        {:ok, _record} ->
+          {:ok,
+           %{
+             server_public_key: %{
+               x: Base.encode64(x, padding: false),
+               y: Base.encode64(y, padding: false)
+             }
+           }}
+
+        {:error, changeset} ->
+          {:error, {:changeset, changeset}}
+      end
+    end
+  end
+
+  def get_auth_url(sovra_address) do
+    case get_active_holder(sovra_address) do
+      {:ok, _holder} ->
+        state = encode_state(sovra_address)
+        auth_provider().get_authorization_url(state)
+
+      error ->
+        error
+    end
+  end
+
+  def handle_auth_callback(code, state) do
+    with {:ok, sovra_address} <- decode_state(state),
+         {:ok, %{sub: sub, provider: _provider}} <- auth_provider().handle_callback(code),
+         {:ok, holder} <- get_active_holder(sovra_address),
+         :ok <- verify_oauth_binding(holder, sub) do
+      Session.create(holder.sovra_address)
+    end
+  end
+
+  def cosign(sovra_address, <<hash::binary-size(32)>>) do
+    case get_active_holder(sovra_address) do
+      {:ok, holder} -> Key.sign(holder.server_key_id, hash)
+      error -> error
+    end
+  end
+
+  def cosign(_sovra_address, _hash), do: {:error, :invalid_hash_size}
+
+  def rotate_server_key(sovra_address) do
+    with {:ok, holder} <- get_active_holder(sovra_address),
+         {:ok, %{key_id: new_key_id, public_key_x: new_x, public_key_y: new_y}} <-
+           Key.generate_key("#{sovra_address}_rotation"),
+         rotation_hash <- :crypto.hash(:sha256, <<new_x::binary, new_y::binary>>),
+         {:ok, rotation_sig} <- Key.sign(holder.server_key_id, rotation_hash) do
+      changeset =
+        HolderRecord.update_key_changeset(holder, %{
+          server_key_id: new_key_id,
+          server_public_key_x: new_x,
+          server_public_key_y: new_y
+        })
+
+      case Repo.update(changeset) do
+        {:ok, _updated} ->
+          Key.delete_key(holder.server_key_id)
+
+          {:ok,
+           %{
+             new_server_public_key: %{
+               x: Base.encode64(new_x, padding: false),
+               y: Base.encode64(new_y, padding: false)
+             },
+             rotation_signature: format_signature(rotation_sig)
+           }}
+
+        {:error, changeset} ->
+          Key.delete_key(new_key_id)
+          {:error, {:changeset, changeset}}
+      end
+    end
+  end
+
+  def initiate_recovery(sovra_address, %{x: passkey_x, y: passkey_y}) do
+    with {:ok, holder} <- get_holder(sovra_address),
+         recovery_hash <-
+           :crypto.hash(:sha256, <<passkey_x::binary, passkey_y::binary>>),
+         {:ok, sig} <- Key.sign(holder.server_key_id, recovery_hash) do
+      changeset = HolderRecord.status_changeset(holder, "recovery_pending")
+
+      case Repo.update(changeset) do
+        {:ok, _updated} -> {:ok, %{signature: format_signature(sig)}}
+        {:error, changeset} -> {:error, {:changeset, changeset}}
+      end
+    end
+  end
+
+  def initiate_recovery(_sovra_address, _passkey), do: {:error, :invalid_passkey}
+
+  # Private helpers
+
+  defp get_active_holder(sovra_address) do
+    case Repo.get_by(HolderRecord, sovra_address: sovra_address) do
+      nil -> {:error, :holder_not_found}
+      %{status: "active"} = holder -> {:ok, holder}
+      %{status: "deactivated"} -> {:error, :holder_deactivated}
+      %{status: "recovery_pending"} -> {:error, :recovery_pending}
+    end
+  end
+
+  defp get_holder(sovra_address) do
+    case Repo.get_by(HolderRecord, sovra_address: sovra_address) do
+      nil -> {:error, :holder_not_found}
+      holder -> {:ok, holder}
+    end
+  end
+
+  defp check_not_onboarded(sovra_address, oauth_subject) do
+    exists? =
+      from(h in HolderRecord,
+        where: h.sovra_address == ^sovra_address or h.oauth_subject == ^oauth_subject
+      )
+      |> Repo.exists?()
+
+    if exists?, do: {:error, :already_onboarded}, else: :ok
+  end
+
+  defp verify_oauth_binding(%{oauth_subject: expected_sub}, actual_sub) do
+    if expected_sub == actual_sub, do: :ok, else: {:error, :oauth_mismatch}
+  end
+
+  defp encode_state(sovra_address) do
+    Base.url_encode64(sovra_address, padding: false)
+  end
+
+  defp decode_state(state) do
+    case Base.url_decode64(state, padding: false) do
+      {:ok, address} -> {:ok, address}
+      :error -> {:error, :invalid_state}
+    end
+  end
+
+  defp format_signature(%{r: r, s: s}) do
+    %{r: "0x" <> Base.encode16(r, case: :lower), s: "0x" <> Base.encode16(s, case: :lower)}
+  end
+
+  defp auth_provider do
+    Application.get_env(:sovra, :auth_provider, Sovra.Auth.GoogleAuthProvider)
   end
 end

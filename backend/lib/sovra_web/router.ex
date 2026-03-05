@@ -5,6 +5,10 @@ defmodule SovraWeb.Router do
     plug :accepts, ["json"]
   end
 
+  pipeline :cosigner_session do
+    plug SovraWeb.Plugs.SessionPlug
+  end
+
   # Health check
   scope "/", SovraWeb do
     pipe_through :api
@@ -36,10 +40,21 @@ defmodule SovraWeb.Router do
     get "/did/:did", PresentationController, :resolve_did
   end
 
-  # Co-signing API
+  # Co-signing API (public)
   scope "/api/v1/cosigner", SovraWeb.Cosigner do
     pipe_through :api
 
-    post "/sign", SignController, :sign
+    post "/onboard", OnboardController, :onboard
+    post "/auth", AuthController, :auth
+    post "/auth/callback", AuthController, :callback
+  end
+
+  # Co-signing API (authenticated)
+  scope "/api/v1/cosigner", SovraWeb.Cosigner do
+    pipe_through [:api, :cosigner_session]
+
+    post "/cosign", SignController, :sign
+    post "/rotate-server-key", RotateController, :rotate
+    post "/initiate-recovery", RecoveryController, :initiate_recovery
   end
 end

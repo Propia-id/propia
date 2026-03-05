@@ -9,7 +9,10 @@ import Config
 
 config :sovra,
   ecto_repos: [Sovra.Repo],
-  generators: [timestamp_type: :utc_datetime]
+  generators: [timestamp_type: :utc_datetime],
+  key_store: Sovra.Crypto.SoftwareKeyStore,
+  auth_provider: Sovra.Auth.GoogleAuthProvider,
+  session_secret: "dev-only-secret-must-be-at-least-32-bytes-long!"
 
 # Configure the endpoint
 config :sovra, SovraWeb.Endpoint,
