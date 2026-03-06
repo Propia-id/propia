@@ -31,8 +31,8 @@ defmodule SovraWeb.Issuer.AdminController do
       schema_id: params["schema_id"],
       credential_type: params["credential_type"],
       name: params["name"],
-      claims: params["claims"],
-      validity_period: params["validity_period"] || "1y"
+      claims: normalize_claims(params["claims"]),
+      validity_period: to_string(params["validity_period"] || "1y")
     }
 
     case Issuer.create_schema(issuer_id, attrs) do
@@ -74,6 +74,11 @@ defmodule SovraWeb.Issuer.AdminController do
         end)
     })
   end
+
+  # Accept claims as either a list of maps or a map with a "claims" key wrapping the list
+  defp normalize_claims(%{"claims" => claims}) when is_list(claims), do: claims
+  defp normalize_claims(claims) when is_list(claims), do: claims
+  defp normalize_claims(other), do: other
 
   defp changeset_errors(changeset) do
     Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->

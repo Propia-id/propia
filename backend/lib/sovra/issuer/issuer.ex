@@ -5,9 +5,12 @@ defmodule Sovra.Issuer do
 
   alias Sovra.Issuer.{IssuerRecord, CredentialSchema, CredentialOffer, IssuedCredential, SDJWT}
   alias Sovra.Crypto.Key
+  alias Sovra.Ethereum.{DIDRegistry, IssuerRegistry}
   alias Sovra.Repo
 
   import Ecto.Query
+
+  require Logger
 
   # ── Issuer Management ──────────────────────────────────
 
@@ -16,8 +19,16 @@ defmodule Sovra.Issuer do
 
     with {:ok, %{key_id: key_id, public_key_x: x, public_key_y: y}} <-
            Key.generate_key("issuer_#{issuer_uuid}_signing") do
-      # Stub EOA for MVP (no on-chain registration yet)
       eoa_address = "0x" <> Base.encode16(:crypto.strong_rand_bytes(20), case: :lower)
+
+      # Register DID on-chain if Ethereum is configured
+      case register_did_on_chain(eoa_address, x, y) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning("On-chain DID registration skipped: #{inspect(reason)}")
+      end
 
       changeset =
         IssuerRecord.create_changeset(%{
@@ -53,8 +64,12 @@ defmodule Sovra.Issuer do
   def create_schema(issuer_id, attrs) do
     attrs = Map.put(attrs, :issuer_id, issuer_id)
 
-    CredentialSchema.create_changeset(attrs)
-    |> Repo.insert()
+    with {:ok, issuer} <- get_issuer(issuer_id),
+         {:ok, schema} <- CredentialSchema.create_changeset(attrs) |> Repo.insert() do
+      # Register issuer for this credential type on-chain
+      register_credential_type_on_chain(issuer.eoa_address, schema.credential_type)
+      {:ok, schema}
+    end
   end
 
   def get_schema(issuer_id, schema_id) do
@@ -266,5 +281,50 @@ defmodule Sovra.Issuer do
 
   defp base_url do
     Application.get_env(:sovra, :issuer, []) |> Keyword.get(:base_url, "http://localhost:4000")
+  end
+
+  # ── On-Chain Registration Helpers ─────────────────────
+
+  defp register_did_on_chain(eoa_address, pub_key_x, pub_key_y) do
+    if ethereum_configured?() do
+      service_endpoint = base_url()
+
+      case DIDRegistry.register_issuer_did(eoa_address, pub_key_x, pub_key_y, service_endpoint) do
+        {:ok, _tx_hash} -> :ok
+        {:error, _} = error -> error
+      end
+    else
+      {:error, :ethereum_not_configured}
+    end
+  end
+
+  defp register_credential_type_on_chain(eoa_address, credential_type) do
+    if ethereum_configured?() do
+      type_hash = IssuerRegistry.credential_type_hash(credential_type)
+
+      case IssuerRegistry.is_registered(eoa_address) do
+        {:ok, true} ->
+          case IssuerRegistry.add_credential_types(eoa_address, [type_hash]) do
+            {:ok, _tx_hash} -> :ok
+            {:error, reason} ->
+              Logger.warning("Failed to add credential type on-chain: #{inspect(reason)}")
+          end
+
+        {:ok, false} ->
+          case IssuerRegistry.register_issuer(eoa_address, [type_hash]) do
+            {:ok, _tx_hash} -> :ok
+            {:error, reason} ->
+              Logger.warning("Failed to register issuer on-chain: #{inspect(reason)}")
+          end
+
+        {:error, reason} ->
+          Logger.warning("Failed to check issuer registration: #{inspect(reason)}")
+      end
+    end
+  end
+
+  defp ethereum_configured? do
+    config = Application.get_env(:sovra, :ethereum, [])
+    config[:admin_private_key] != nil and config[:did_registry_address] != nil
   end
 end
