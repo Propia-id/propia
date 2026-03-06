@@ -6,7 +6,7 @@ defmodule SovraWeb.Cosigner.SignController do
 
     with {:ok, hash} <- decode_hash(hex_hash),
          {:ok, sig} <- Sovra.Cosigner.cosign(sovra_address, hash) do
-      json(conn, %{signature: format_signature(sig)})
+      json(conn, format_signature(sig))
     else
       {:error, :invalid_hash} ->
         conn |> put_status(400) |> json(%{error: "invalid_hash"})

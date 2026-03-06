@@ -28,17 +28,30 @@ defmodule Sovra.Cosigner do
 
       case Repo.insert(changeset) do
         {:ok, _record} ->
+          {:ok, session_token} = Session.create(sovra_address)
+
           {:ok,
            %{
              server_public_key: %{
                x: Base.encode64(x, padding: false),
                y: Base.encode64(y, padding: false)
-             }
+             },
+             session_token: session_token
            }}
 
         {:error, changeset} ->
           {:error, {:changeset, changeset}}
       end
+    end
+  end
+
+  def authenticate_with_token(oauth_token) do
+    with {:ok, %{sub: sub}} <- auth_provider().verify_id_token(oauth_token),
+         {:ok, holder} <- get_holder_by_oauth_subject(sub),
+         {:ok, session_token} <- Session.create(holder.sovra_address) do
+      expires_at = System.system_time(:second) + 900
+
+      {:ok, %{session_token: session_token, expires_at: expires_at}}
     end
   end
 
@@ -133,6 +146,13 @@ defmodule Sovra.Cosigner do
 
   defp get_holder(sovra_address) do
     case Repo.get_by(HolderRecord, sovra_address: sovra_address) do
+      nil -> {:error, :holder_not_found}
+      holder -> {:ok, holder}
+    end
+  end
+
+  defp get_holder_by_oauth_subject(oauth_subject) do
+    case Repo.get_by(HolderRecord, oauth_subject: oauth_subject) do
       nil -> {:error, :holder_not_found}
       holder -> {:ok, holder}
     end

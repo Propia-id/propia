@@ -91,8 +91,18 @@ defmodule Sovra.Auth.GoogleAuthProvider do
     now = System.system_time(:second)
 
     claims["iss"] in ["accounts.google.com", "https://accounts.google.com"] and
-      claims["aud"] == config(:google_client_id) and
+      claims["aud"] in allowed_client_ids() and
       claims["exp"] > now
+  end
+
+  defp allowed_client_ids do
+    [
+      config(:google_client_id),
+      config(:google_ios_client_id),
+      config(:google_android_client_id),
+      config(:google_web_client_id)
+    ]
+    |> Enum.reject(&is_nil/1)
   end
 
   defp config(key), do: Application.get_env(:sovra, key)
