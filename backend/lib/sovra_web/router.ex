@@ -32,6 +32,15 @@ defmodule SovraWeb.Router do
     get "/metadata", MetadataController, :show
   end
 
+  # Issuer admin API
+  scope "/api/v1/issuer/admin", SovraWeb.Issuer do
+    pipe_through :api
+
+    post "/issuers", AdminController, :create_issuer
+    post "/schemas", AdminController, :create_schema
+    get "/schemas", AdminController, :list_schemas
+  end
+
   # Verification API
   scope "/api/v1/verify", SovraWeb.Verify do
     pipe_through :api

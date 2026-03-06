@@ -12,7 +12,8 @@ config :sovra,
   generators: [timestamp_type: :utc_datetime],
   key_store: Sovra.Crypto.SoftwareKeyStore,
   auth_provider: Sovra.Auth.GoogleAuthProvider,
-  session_secret: "dev-only-secret-must-be-at-least-32-bytes-long!"
+  session_secret: "dev-only-secret-must-be-at-least-32-bytes-long!",
+  issuer: [base_url: System.get_env("ISSUER_BASE_URL", "http://localhost:4000")]
 
 # Configure the endpoint
 config :sovra, SovraWeb.Endpoint,
