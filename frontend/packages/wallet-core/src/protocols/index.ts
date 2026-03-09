@@ -225,22 +225,29 @@ export class PresentationProtocol {
     };
   }
 
-  /** Fetch and parse the verifier's signed request object. */
+  /** Fetch and parse the verifier's request object (JWT or plain JSON). */
   async fetchAndParseRequest(requestUri: string): Promise<VPRequest> {
-    const requestJwt = await this.api.fetchRequestObject(requestUri);
+    const requestData = await this.api.fetchRequestObject(requestUri);
 
-    // Decode JWT payload (we trust the verifier's signature verification to the backend)
-    const parts = requestJwt.split(".");
-    const payload = JSON.parse(
-      new TextDecoder().decode(base64urlDecode(parts[1])),
-    );
+    let payload: Record<string, unknown>;
+
+    if (!requestData.startsWith("{") && requestData.includes(".")) {
+      // JWT format: decode payload from second segment
+      const parts = requestData.split(".");
+      payload = JSON.parse(
+        new TextDecoder().decode(base64urlDecode(parts[1])),
+      );
+    } else {
+      // Plain JSON format
+      payload = JSON.parse(requestData);
+    }
 
     return {
-      clientId: payload.client_id,
-      nonce: payload.nonce,
-      responseUri: payload.response_uri,
-      dcqlQuery: payload.dcql_query,
-      verifierName: payload.client_metadata?.client_name,
+      clientId: payload.client_id as string,
+      nonce: payload.nonce as string,
+      responseUri: payload.response_uri as string,
+      dcqlQuery: payload.dcql_query as DCQLQuery,
+      verifierName: (payload.client_metadata as Record<string, string>)?.client_name,
     };
   }
 
