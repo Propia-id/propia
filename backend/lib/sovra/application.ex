@@ -14,7 +14,6 @@ defmodule Sovra.Application do
       {Phoenix.PubSub, name: Sovra.PubSub},
       {Finch, name: Sovra.Finch},
       Sovra.Crypto.SoftwareKeyStore,
-      Sovra.Relay.SessionStore,
       SovraWeb.Endpoint
     ]
 

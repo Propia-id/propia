@@ -49,18 +49,6 @@ defmodule SovraWeb.Router do
     get "/did/:did", PresentationController, :resolve_did
   end
 
-  # Relay API (OpenID4VP cross-device session broker)
-  scope "/api/v1/relay", SovraWeb.Relay do
-    pipe_through :api
-
-    post "/sessions", SessionController, :create
-    put "/sessions/:id/request", SessionController, :upload_request
-    get "/sessions/:id/request", SessionController, :get_request
-    post "/sessions/:id/response", SessionController, :submit_response
-    get "/sessions/:id/response", SessionController, :get_response
-    delete "/sessions/:id", SessionController, :delete_session
-  end
-
   # Co-signing API (public)
   scope "/api/v1/cosigner", SovraWeb.Cosigner do
     pipe_through :api
