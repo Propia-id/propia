@@ -280,6 +280,37 @@ describe("verify", () => {
     expect(result.errorCode).toBe(ErrorCode.HOLDER_DEACTIVATED);
   });
 
+  it("verifies in offline mode — skips on-chain calls, returns trustNotVerified", async () => {
+    const fixture = buildPresentation(keys, {
+      issuerAddress,
+      holderAddress,
+      vct,
+    });
+
+    // No fetch mock — offline mode should NOT call fetch at all
+    globalThis.fetch = vi.fn(() => {
+      throw new Error("fetch should not be called in offline mode");
+    }) as typeof fetch;
+
+    const offlineOptions = {
+      ...baseOptions,
+      offlineMode: true,
+    };
+
+    const result = await verify(fixture.presentation, offlineOptions, testCache);
+
+    expect(result.valid).toBe(true);
+    expect(result.offlineMode).toBe(true);
+    expect(result.trustNotVerified).toBe(true);
+    expect(result.claims).toBeDefined();
+    expect(result.claims!.given_name).toBe("Maria");
+    expect(result.credentialType).toBe(vct);
+    expect(result.issuer).toBe(`did:sovra:${issuerAddress}`);
+    expect(result.holder).toBe(`did:sovra:${holderAddress}`);
+    // Verify fetch was never called
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
   it("returns KB_PASSKEY_SIG_INVALID with wrong passkey on-chain", async () => {
     const wrongPasskey = generateKeys();
     const modifiedKeys = { ...keys, passkey: wrongPasskey.passkey };

@@ -5,7 +5,6 @@ import type { PasskeyProvider } from "../platform/index";
 import type { StoredCredential } from "../state/index";
 import {
   base64urlEncode,
-  base64urlDecode,
   sha256,
   concatBytes,
 } from "../utils/index";
@@ -37,7 +36,6 @@ export interface DCQLQuery {
 export interface VPRequest {
   clientId: string;
   nonce: string;
-  responseUri: string;
   dcqlQuery: DCQLQuery;
   verifierName?: string;
 }
@@ -216,36 +214,18 @@ export class PresentationProtocol {
     return qrData.startsWith("openid4vp://");
   }
 
-  /** Parse the OpenID4VP request URI. */
-  parseRequestUri(uri: string): { requestUri: string; clientId: string } {
+  /** Parse an inline OpenID4VP request from a QR URI. */
+  parseRequest(uri: string): VPRequest {
     const url = new URL(uri);
-    return {
-      requestUri: url.searchParams.get("request_uri") ?? "",
-      clientId: url.searchParams.get("client_id") ?? "",
-    };
-  }
-
-  /** Fetch and parse the verifier's request object (JWT or plain JSON). */
-  async fetchAndParseRequest(requestUri: string): Promise<VPRequest> {
-    const requestData = await this.api.fetchRequestObject(requestUri);
-
-    let payload: Record<string, unknown>;
-
-    if (!requestData.startsWith("{") && requestData.includes(".")) {
-      // JWT format: decode payload from second segment
-      const parts = requestData.split(".");
-      payload = JSON.parse(
-        new TextDecoder().decode(base64urlDecode(parts[1])),
-      );
-    } else {
-      // Plain JSON format
-      payload = JSON.parse(requestData);
+    const requestParam = url.searchParams.get("request");
+    if (!requestParam) {
+      throw new Error("Missing 'request' parameter in OpenID4VP URI");
     }
 
+    const payload = JSON.parse(requestParam) as Record<string, unknown>;
     return {
       clientId: payload.client_id as string,
       nonce: payload.nonce as string,
-      responseUri: payload.response_uri as string,
       dcqlQuery: payload.dcql_query as DCQLQuery,
       verifierName: (payload.client_metadata as Record<string, string>)?.client_name,
     };
@@ -291,12 +271,12 @@ export class PresentationProtocol {
     };
   }
 
-  /** Execute the full OpenID4VP presentation flow. */
+  /** Execute the full OpenID4VP presentation flow and return the VP token. */
   async executePresentation(
     request: VPRequest,
     credential: StoredCredential,
     approvedClaims: string[],
-  ): Promise<void> {
+  ): Promise<string> {
     const identity = this.getIdentity();
 
     // 1. Select disclosures for approved claims
@@ -321,14 +301,11 @@ export class PresentationProtocol {
     );
 
     // 4. Assemble final SD-JWT presentation
-    const vpToken = this.credentialManager.buildPresentationSDJwt(
+    return this.credentialManager.buildPresentationSDJwt(
       credential,
       selectedDisclosures,
       kbJwt,
     );
-
-    // 5. Submit to verifier
-    await this.api.submitPresentation(request.responseUri, vpToken);
   }
 
   /** Build and dual-sign a Key Binding JWT. */

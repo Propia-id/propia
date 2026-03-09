@@ -12,24 +12,31 @@ export async function ethCall(
   to: string,
   data: string,
 ): Promise<string> {
-  const res = await fetch(rpcUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      method: "eth_call",
-      params: [{ to, data }, "latest"],
-      id: 1,
-    }),
-  });
-  const json = (await res.json()) as {
-    result?: string;
-    error?: { message: string; data?: string };
-  };
-  if (json.error) {
-    throw new RpcError(json.error.message, json.error.data);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const res = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "eth_call",
+        params: [{ to, data }, "latest"],
+        id: 1,
+      }),
+      signal: controller.signal,
+    });
+    const json = (await res.json()) as {
+      result?: string;
+      error?: { message: string; data?: string };
+    };
+    if (json.error) {
+      throw new RpcError(json.error.message, json.error.data);
+    }
+    return json.result ?? "0x";
+  } finally {
+    clearTimeout(timer);
   }
-  return json.result ?? "0x";
 }
 
 export class RpcError extends Error {

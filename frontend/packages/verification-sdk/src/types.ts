@@ -32,6 +32,7 @@ export interface VerifyOptions {
   issuerRegistryAddress: string;
   maxClockSkew?: number;
   checkRevocation?: boolean;
+  offlineMode?: boolean;
 }
 
 export interface VerificationResult {
@@ -44,6 +45,8 @@ export interface VerificationResult {
   credentialType?: string;
   issuedAt?: number;
   expiresAt?: number;
+  offlineMode?: boolean;
+  trustNotVerified?: boolean;
 }
 
 // ─── Internal Types ──────────────────────────────────

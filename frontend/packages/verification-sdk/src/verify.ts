@@ -51,41 +51,44 @@ export async function verify(
     // Extract issuer address from DID
     const issuerAddress = extractDIDAddress(iss);
 
-    // Step 3: Resolve issuer DID
-    let issuerKeys = cache.getIssuerKeys(issuerAddress);
-    if (!issuerKeys) {
-      issuerKeys = await resolveIssuerDID(
-        options.l2RpcUrl,
-        options.didRegistryAddress,
-        issuerAddress,
-      );
-      cache.setIssuerKeys(issuerAddress, issuerKeys);
-    }
+    // Steps 3-5: On-chain issuer verification (skipped in offline mode)
+    if (!options.offlineMode) {
+      // Step 3: Resolve issuer DID
+      let issuerKeys = cache.getIssuerKeys(issuerAddress);
+      if (!issuerKeys) {
+        issuerKeys = await resolveIssuerDID(
+          options.l2RpcUrl,
+          options.didRegistryAddress,
+          issuerAddress,
+        );
+        cache.setIssuerKeys(issuerAddress, issuerKeys);
+      }
 
-    // Step 4: Verify issuer signature
-    if (!verifyES256(issuerJwtRaw, issuerKeys.pubKeyX, issuerKeys.pubKeyY)) {
-      throw new VerificationError(
-        "Issuer signature verification failed",
-        ErrorCode.ISSUER_SIG_INVALID,
-      );
-    }
+      // Step 4: Verify issuer signature
+      if (!verifyES256(issuerJwtRaw, issuerKeys.pubKeyX, issuerKeys.pubKeyY)) {
+        throw new VerificationError(
+          "Issuer signature verification failed",
+          ErrorCode.ISSUER_SIG_INVALID,
+        );
+      }
 
-    // Step 5: Check issuer trust
-    const typeId = bytesToHex(keccak256(new TextEncoder().encode(vct)), false);
-    const cachedTrust = cache.getIssuerTrust(issuerAddress, typeId);
-    if (cachedTrust === null) {
-      await checkIssuerTrust(
-        options.l2RpcUrl,
-        options.issuerRegistryAddress,
-        issuerAddress,
-        vct,
-      );
-      cache.setIssuerTrust(issuerAddress, typeId, true);
-    } else if (!cachedTrust) {
-      throw new VerificationError(
-        `Issuer not trusted for credential type ${vct}`,
-        ErrorCode.ISSUER_NOT_TRUSTED,
-      );
+      // Step 5: Check issuer trust
+      const typeId = bytesToHex(keccak256(new TextEncoder().encode(vct)), false);
+      const cachedTrust = cache.getIssuerTrust(issuerAddress, typeId);
+      if (cachedTrust === null) {
+        await checkIssuerTrust(
+          options.l2RpcUrl,
+          options.issuerRegistryAddress,
+          issuerAddress,
+          vct,
+        );
+        cache.setIssuerTrust(issuerAddress, typeId, true);
+      } else if (!cachedTrust) {
+        throw new VerificationError(
+          `Issuer not trusted for credential type ${vct}`,
+          ErrorCode.ISSUER_NOT_TRUSTED,
+        );
+      }
     }
 
     // Step 6: Verify disclosures
@@ -103,26 +106,32 @@ export async function verify(
     // Step 8: Check revocation (TBD - not implemented yet)
     // if (options.checkRevocation !== false) { ... }
 
-    // Step 9: Resolve holder DID
-    if (!cnf?.kid) {
-      throw new VerificationError("Missing cnf.kid in credential", ErrorCode.PARSE_ERROR);
-    }
-    const holderAddress = extractHolderAddress(cnf.kid);
+    // Steps 9-10: On-chain holder verification (skipped in offline mode)
+    let holderAddress: string | undefined;
+    if (!options.offlineMode) {
+      // Step 9: Resolve holder DID
+      if (!cnf?.kid) {
+        throw new VerificationError("Missing cnf.kid in credential", ErrorCode.PARSE_ERROR);
+      }
+      holderAddress = extractHolderAddress(cnf.kid);
 
-    let holderKeys = cache.getHolderKeys(holderAddress);
-    if (!holderKeys) {
-      holderKeys = await resolveHolderKeys(options.l2RpcUrl, holderAddress);
-      cache.setHolderKeys(holderAddress, holderKeys);
-    }
+      let holderKeys = cache.getHolderKeys(holderAddress);
+      if (!holderKeys) {
+        holderKeys = await resolveHolderKeys(options.l2RpcUrl, holderAddress);
+        cache.setHolderKeys(holderAddress, holderKeys);
+      }
 
-    // Step 10: Verify compound KB-JWT signature
-    verifyCompoundSignature(
-      kbJwtRaw,
-      holderKeys.passkeyX,
-      holderKeys.passkeyY,
-      holderKeys.serverKeyX,
-      holderKeys.serverKeyY,
-    );
+      // Step 10: Verify compound KB-JWT signature
+      verifyCompoundSignature(
+        kbJwtRaw,
+        holderKeys.passkeyX,
+        holderKeys.passkeyY,
+        holderKeys.serverKeyX,
+        holderKeys.serverKeyY,
+      );
+    } else if (cnf?.kid) {
+      holderAddress = extractHolderAddress(cnf.kid);
+    }
 
     // Step 11: Validate KB-JWT claims
     const kbAud = kbPayload.aud as string;
@@ -171,10 +180,11 @@ export async function verify(
       valid: true,
       claims,
       issuer: iss,
-      holder: `did:sovra:${holderAddress}`,
+      holder: holderAddress ? `did:sovra:${holderAddress}` : undefined,
       credentialType: vct,
       issuedAt: iat,
       expiresAt: exp,
+      ...(options.offlineMode && { offlineMode: true, trustNotVerified: true }),
     };
   } catch (e) {
     if (e instanceof VerificationError) {
