@@ -61,6 +61,13 @@ config :sovra,
   google_android_client_id: System.get_env("GOOGLE_ANDROID_CLIENT_ID"),
   google_web_client_id: System.get_env("GOOGLE_WEB_CLIENT_ID")
 
+# Ethereum L2 config — set via environment variables after deploying contracts
+config :sovra, :ethereum,
+  rpc_url: System.get_env("L2_RPC_URL", "http://127.0.0.1:1729"),
+  admin_private_key: System.get_env("ADMIN_PRIVATE_KEY"),
+  did_registry_address: System.get_env("DID_REGISTRY_ADDRESS"),
+  issuer_registry_address: System.get_env("ISSUER_REGISTRY_ADDRESS")
+
 # Do not include metadata nor timestamps in development logs
 config :logger, :default_formatter, format: "[$level] $message\n"
 

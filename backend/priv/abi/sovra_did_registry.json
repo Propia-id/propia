@@ -1,0 +1,399 @@
+[
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_owner",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "constructor"
+  },
+  {
+    "inputs": [],
+    "name": "DIDAlreadyExists",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "DIDIsDeactivated",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "DIDNotFound",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NoVerificationMethods",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "owner",
+        "type": "address"
+      }
+    ],
+    "name": "OwnableInvalidOwner",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "account",
+        "type": "address"
+      }
+    ],
+    "name": "OwnableUnauthorizedAccount",
+    "type": "error"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "identity",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint32",
+        "name": "versionId",
+        "type": "uint32"
+      }
+    ],
+    "name": "DIDCreated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "identity",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint32",
+        "name": "versionId",
+        "type": "uint32"
+      }
+    ],
+    "name": "DIDDeactivated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "identity",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint32",
+        "name": "versionId",
+        "type": "uint32"
+      }
+    ],
+    "name": "DIDUpdated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "previousOwner",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "newOwner",
+        "type": "address"
+      }
+    ],
+    "name": "OwnershipTransferred",
+    "type": "event"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "identity",
+        "type": "address"
+      },
+      {
+        "components": [
+          {
+            "internalType": "bytes32",
+            "name": "id",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint8",
+            "name": "keyType",
+            "type": "uint8"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "pubKeyX",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "pubKeyY",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint8",
+            "name": "relationships",
+            "type": "uint8"
+          }
+        ],
+        "internalType": "struct ISovraDIDRegistry.VerificationMethod[]",
+        "name": "methods",
+        "type": "tuple[]"
+      },
+      {
+        "components": [
+          {
+            "internalType": "bytes32",
+            "name": "id",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "serviceType",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "string",
+            "name": "endpoint",
+            "type": "string"
+          }
+        ],
+        "internalType": "struct ISovraDIDRegistry.ServiceEndpoint[]",
+        "name": "services",
+        "type": "tuple[]"
+      }
+    ],
+    "name": "create",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "identity",
+        "type": "address"
+      }
+    ],
+    "name": "deactivate",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "owner",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "renounceOwnership",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "identity",
+        "type": "address"
+      }
+    ],
+    "name": "resolve",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "bytes32",
+            "name": "id",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint8",
+            "name": "keyType",
+            "type": "uint8"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "pubKeyX",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "pubKeyY",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint8",
+            "name": "relationships",
+            "type": "uint8"
+          }
+        ],
+        "internalType": "struct ISovraDIDRegistry.VerificationMethod[]",
+        "name": "methods",
+        "type": "tuple[]"
+      },
+      {
+        "components": [
+          {
+            "internalType": "bytes32",
+            "name": "id",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "serviceType",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "string",
+            "name": "endpoint",
+            "type": "string"
+          }
+        ],
+        "internalType": "struct ISovraDIDRegistry.ServiceEndpoint[]",
+        "name": "services",
+        "type": "tuple[]"
+      },
+      {
+        "internalType": "uint64",
+        "name": "created",
+        "type": "uint64"
+      },
+      {
+        "internalType": "uint64",
+        "name": "updated",
+        "type": "uint64"
+      },
+      {
+        "internalType": "uint32",
+        "name": "versionId",
+        "type": "uint32"
+      },
+      {
+        "internalType": "bool",
+        "name": "deactivated",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "newOwner",
+        "type": "address"
+      }
+    ],
+    "name": "transferOwnership",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "identity",
+        "type": "address"
+      },
+      {
+        "components": [
+          {
+            "internalType": "bytes32",
+            "name": "id",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint8",
+            "name": "keyType",
+            "type": "uint8"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "pubKeyX",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "pubKeyY",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint8",
+            "name": "relationships",
+            "type": "uint8"
+          }
+        ],
+        "internalType": "struct ISovraDIDRegistry.VerificationMethod[]",
+        "name": "methods",
+        "type": "tuple[]"
+      },
+      {
+        "components": [
+          {
+            "internalType": "bytes32",
+            "name": "id",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "serviceType",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "string",
+            "name": "endpoint",
+            "type": "string"
+          }
+        ],
+        "internalType": "struct ISovraDIDRegistry.ServiceEndpoint[]",
+        "name": "services",
+        "type": "tuple[]"
+      }
+    ],
+    "name": "update",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+]

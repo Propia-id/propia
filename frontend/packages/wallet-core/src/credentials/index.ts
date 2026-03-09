@@ -82,7 +82,10 @@ export class CredentialManager {
   ): Promise<StoredCredential> {
     const parsed = this.parseSDJwt(sdJwtString);
 
-    const id = crypto.randomUUID();
+    const bytes = new Uint8Array(16);
+    globalThis.crypto.getRandomValues(bytes);
+    const h = Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("");
+    const id = `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;
     const credentialType =
       (parsed.payload.vct as string) ??
       (parsed.payload.type as string) ??

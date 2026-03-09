@@ -54,6 +54,7 @@ defmodule Sovra.MixProject do
       {:ethers, "~> 0.6"},
       {:ethereumex, "~> 0.10"},
       {:ex_keccak, "~> 0.7"},
+      {:ex_secp256k1, "~> 0.7"},
       {:cors_plug, "~> 3.0"},
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"}
