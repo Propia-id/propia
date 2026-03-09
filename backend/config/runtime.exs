@@ -56,6 +56,12 @@ if config_env() == :prod do
 
   config :sovra, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
+  config :sovra,
+    session_secret: System.fetch_env!("COSIGNER_SESSION_SECRET"),
+    google_client_id: System.fetch_env!("GOOGLE_CLIENT_ID"),
+    google_client_secret: System.fetch_env!("GOOGLE_CLIENT_SECRET"),
+    google_redirect_uri: System.fetch_env!("GOOGLE_REDIRECT_URI")
+
   config :sovra, SovraWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
     http: [

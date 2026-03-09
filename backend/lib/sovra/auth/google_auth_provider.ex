@@ -1,0 +1,99 @@
+defmodule Sovra.Auth.GoogleAuthProvider do
+  @moduledoc """
+  Google OAuth 2.0 authentication provider.
+  Exchanges authorization codes for tokens and verifies Google ID tokens.
+  """
+
+  @behaviour Sovra.Auth.AuthProvider
+
+  @google_auth_url "https://accounts.google.com/o/oauth2/v2/auth"
+  @google_token_url "https://oauth2.googleapis.com/token"
+  @google_jwks_url "https://www.googleapis.com/oauth2/v3/certs"
+
+  @impl true
+  def get_authorization_url(state) do
+    params =
+      URI.encode_query(%{
+        client_id: config(:google_client_id),
+        redirect_uri: config(:google_redirect_uri),
+        response_type: "code",
+        scope: "openid email",
+        state: state
+      })
+
+    {:ok, "#{@google_auth_url}?#{params}"}
+  end
+
+  @impl true
+  def handle_callback(code) do
+    body = %{
+      code: code,
+      client_id: config(:google_client_id),
+      client_secret: config(:google_client_secret),
+      redirect_uri: config(:google_redirect_uri),
+      grant_type: "authorization_code"
+    }
+
+    case Req.post(@google_token_url, form: body) do
+      {:ok, %{status: 200, body: %{"id_token" => id_token}}} ->
+        case verify_id_token(id_token) do
+          {:ok, claims} -> {:ok, Map.put(claims, :provider, "google")}
+          error -> error
+        end
+
+      {:ok, %{body: body}} ->
+        {:error, {:oauth_error, body}}
+
+      {:error, reason} ->
+        {:error, {:http_error, reason}}
+    end
+  end
+
+  @impl true
+  def verify_id_token(token) do
+    with {:ok, jwks} <- fetch_google_jwks(),
+         {:ok, claims} <- verify_jwt(token, jwks) do
+      {:ok, %{sub: claims["sub"], email: claims["email"]}}
+    end
+  end
+
+  defp fetch_google_jwks do
+    case Req.get(@google_jwks_url) do
+      {:ok, %{status: 200, body: %{"keys" => keys}}} ->
+        jwks = Enum.map(keys, &JOSE.JWK.from_map/1)
+        {:ok, jwks}
+
+      _ ->
+        {:error, :jwks_fetch_failed}
+    end
+  end
+
+  defp verify_jwt(token, jwks) do
+    # Try each key until one verifies
+    result =
+      Enum.find_value(jwks, :none, fn jwk ->
+        case JOSE.JWT.verify_strict(jwk, ["RS256"], token) do
+          {true, %JOSE.JWT{fields: fields}, _jws} ->
+            if valid_google_claims?(fields), do: {:ok, fields}
+
+          _ ->
+            nil
+        end
+      end)
+
+    case result do
+      {:ok, _} = ok -> ok
+      :none -> {:error, :invalid_id_token}
+    end
+  end
+
+  defp valid_google_claims?(claims) do
+    now = System.system_time(:second)
+
+    claims["iss"] in ["accounts.google.com", "https://accounts.google.com"] and
+      claims["aud"] == config(:google_client_id) and
+      claims["exp"] > now
+  end
+
+  defp config(key), do: Application.get_env(:sovra, key)
+end

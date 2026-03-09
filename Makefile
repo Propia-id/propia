@@ -8,7 +8,7 @@ shell:
 
 # Backend (Elixir/Phoenix)
 backend:
-	$(NIX_SHELL) bash -c "cd backend && mix deps.get && mix phx.server"
+	$(NIX_SHELL) bash -c "cd backend && mix deps.get && iex -S mix phx.server"
 
 db.migrate:
 	$(NIX_SHELL) bash -c "cd backend && mix ecto.migrate"
