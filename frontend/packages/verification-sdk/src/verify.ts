@@ -154,9 +154,7 @@ export async function verify(
     // Verify sd_hash: SHA-256 of everything before the KB-JWT
     // Format: issuerJwt~disc1~disc2~...~
     const disclosurePart = disclosures.map((d) => d.encoded).join("~");
-    const hashInput = disclosurePart
-      ? `${issuerJwtRaw}~${disclosurePart}~`
-      : `${issuerJwtRaw}~`;
+    const hashInput = `${issuerJwtRaw}~${disclosurePart}~`;
     const expectedSdHash = base64urlEncode(
       sha256(new TextEncoder().encode(hashInput)),
     );
