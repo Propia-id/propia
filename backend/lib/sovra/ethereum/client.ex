@@ -42,12 +42,37 @@ defmodule Sovra.Ethereum.Client do
 
   defp handle_send_result({:ok, tx_hash}) do
     Logger.info("Transaction sent: #{tx_hash}")
-    {:ok, tx_hash}
+    await_receipt(tx_hash)
   end
 
   defp handle_send_result({:error, reason} = error) do
     Logger.error("Transaction failed: #{inspect(reason)}")
     error
+  end
+
+  defp await_receipt(tx_hash, attempts \\ 10) do
+    config = ethereum_config()
+
+    case Ethers.get_transaction_receipt(tx_hash, rpc_opts: rpc_opts(config)) do
+      {:ok, %{"status" => "0x1"}} ->
+        {:ok, tx_hash}
+
+      {:ok, %{"status" => "0x0"}} ->
+        Logger.error("Transaction reverted: #{tx_hash}")
+        {:error, :transaction_reverted}
+
+      {:error, :transaction_receipt_not_found} when attempts > 0 ->
+        Process.sleep(500)
+        await_receipt(tx_hash, attempts - 1)
+
+      {:error, :transaction_receipt_not_found} ->
+        Logger.error("Transaction receipt not found after retries: #{tx_hash}")
+        {:error, :receipt_timeout}
+
+      other ->
+        Logger.error("Unexpected receipt result: #{inspect(other)}")
+        {:error, :unexpected_receipt}
+    end
   end
 
   defp ethereum_config do
