@@ -1,0 +1,371 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.31;
+
+import {ISovraWallet} from "./ISovraWallet.sol";
+
+/// @title SovraWalletV1 - Implementation for EIP-7702 delegated holder wallets
+/// @notice All wallet logic: 2-of-2 P256 signature validation, arbitrary call execution,
+///         DID state management, cooperative key rotation, permanent deactivation,
+///         time-locked single-key recovery, and UUPS upgradeability.
+///         Runs in the EOA's storage context via the SovraDispatcher proxy.
+/// @dev P256 verification uses the EIP-7212 precompile at address(0x0100), which exists
+///      natively on the ethrex L2. For local Hardhat tests, a Solidity mock is etched there.
+///      Future V2+ implementations MUST use ERC-7201 namespaced storage for new fields.
+contract SovraWalletV1 is ISovraWallet {
+    // ─── ERC-1967 ────────────────────────────────────────
+
+    /// @dev ERC-1967 implementation storage slot, written by upgrade().
+    bytes32 internal constant IMPL_SLOT =
+        0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+
+    // ─── P256 Precompile ─────────────────────────────────
+
+    /// @dev EIP-7212 P256 signature verification precompile address.
+    address internal constant P256_VERIFIER = address(0x0100);
+
+    // ─── Keys ────────────────────────────────────────────
+
+    /// @inheritdoc ISovraWallet
+    bytes32 public passkeyX;
+    /// @inheritdoc ISovraWallet
+    bytes32 public passkeyY;
+    /// @inheritdoc ISovraWallet
+    bytes32 public serverKeyX;
+    /// @inheritdoc ISovraWallet
+    bytes32 public serverKeyY;
+
+    // ─── DID Metadata ────────────────────────────────────
+
+    /// @inheritdoc ISovraWallet
+    uint64 public didCreated;
+    /// @inheritdoc ISovraWallet
+    uint64 public didUpdated;
+    /// @inheritdoc ISovraWallet
+    uint32 public didVersionId;
+    /// @inheritdoc ISovraWallet
+    bool public didDeactivated;
+
+    // ─── Replay Protection ───────────────────────────────
+
+    /// @inheritdoc ISovraWallet
+    uint256 public nonce;
+
+    // ─── Recovery ────────────────────────────────────────
+
+    /// @inheritdoc ISovraWallet
+    RecoveryRequest public pendingRecovery;
+    /// @inheritdoc ISovraWallet
+    uint64 public constant RECOVERY_DELAY = 7 days;
+
+    // ─── EIP-712 ─────────────────────────────────────────
+
+    /// @dev EIP-712 domain separator typehash.
+    bytes32 internal constant DOMAIN_TYPEHASH =
+        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
+    /// @dev keccak256("SovraWallet") - cached for domain separator computation.
+    bytes32 internal constant NAME_HASH = keccak256("SovraWallet");
+    /// @dev keccak256("1") - cached for domain separator computation.
+    bytes32 internal constant VERSION_HASH = keccak256("1");
+
+    // ─── Internal Helpers ────────────────────────────────
+
+    /// @dev Computes the EIP-712 domain separator for this wallet on the current chain.
+    /// @return The domain separator hash
+    function _domainSeparator() internal view returns (bytes32) {
+        return keccak256(abi.encode(
+            DOMAIN_TYPEHASH,
+            NAME_HASH,
+            VERSION_HASH,
+            block.chainid,
+            address(this)
+        ));
+    }
+
+    /// @dev Builds the final message hash that both keys sign, binding operation + nonce + domain.
+    /// @param operationHash The keccak256 hash of the operation-specific parameters
+    /// @param _nonce The current sequential nonce for replay protection
+    /// @return The EIP-712 structured message hash
+    function _buildMessageHash(bytes32 operationHash, uint256 _nonce) internal view returns (bytes32) {
+        return keccak256(abi.encode(
+            _domainSeparator(),
+            operationHash,
+            _nonce
+        ));
+    }
+
+    /// @dev Verifies a single P256 signature via the EIP-7212 precompile at address(0x0100).
+    ///      Sends 160 bytes (hash || r || s || x || y) via staticcall; expects uint256(1) on success.
+    /// @param hash The 32-byte message hash that was signed
+    /// @param r r component of the P256 signature
+    /// @param s s component of the P256 signature
+    /// @param pubKeyX X coordinate of the signer's P256 public key
+    /// @param pubKeyY Y coordinate of the signer's P256 public key
+    /// @return True if the signature is valid
+    function _verifyP256(
+        bytes32 hash,
+        bytes32 r, bytes32 s,
+        bytes32 pubKeyX, bytes32 pubKeyY
+    ) internal view returns (bool) {
+        (bool success, bytes memory result) = P256_VERIFIER.staticcall(
+            abi.encode(hash, r, s, pubKeyX, pubKeyY)
+        );
+        return success && result.length >= 32 && abi.decode(result, (uint256)) == 1;
+    }
+
+    /// @dev Verifies both passkey and server key signatures against the stored public keys.
+    /// @param msgHash The EIP-712 message hash to verify against
+    /// @param passkeyR r component of the passkey's P256 signature
+    /// @param passkeyS s component of the passkey's P256 signature
+    /// @param serverR r component of the server key's P256 signature
+    /// @param serverS s component of the server key's P256 signature
+    function _verify2of2(
+        bytes32 msgHash,
+        bytes32 passkeyR, bytes32 passkeyS,
+        bytes32 serverR, bytes32 serverS
+    ) internal view {
+        if (!_verifyP256(msgHash, passkeyR, passkeyS, passkeyX, passkeyY)) {
+            revert InvalidPasskeySig();
+        }
+        if (!_verifyP256(msgHash, serverR, serverS, serverKeyX, serverKeyY)) {
+            revert InvalidServerSig();
+        }
+    }
+
+    // ─── Functions ───────────────────────────────────────
+
+    /// @inheritdoc ISovraWallet
+    function initialize(
+        bytes32 _passkeyX, bytes32 _passkeyY,
+        bytes32 _serverKeyX, bytes32 _serverKeyY,
+        bytes32 passkeyR, bytes32 passkeyS,
+        bytes32 serverR, bytes32 serverS
+    ) external {
+        if (didCreated != 0) revert AlreadyInitialized();
+
+        bytes32 initHash = keccak256(abi.encode(
+            address(this), _passkeyX, _passkeyY, _serverKeyX, _serverKeyY
+        ));
+
+        if (!_verifyP256(initHash, passkeyR, passkeyS, _passkeyX, _passkeyY)) {
+            revert InvalidPasskeySig();
+        }
+        if (!_verifyP256(initHash, serverR, serverS, _serverKeyX, _serverKeyY)) {
+            revert InvalidServerSig();
+        }
+
+        passkeyX = _passkeyX;
+        passkeyY = _passkeyY;
+        serverKeyX = _serverKeyX;
+        serverKeyY = _serverKeyY;
+
+        didCreated = uint64(block.timestamp);
+        didUpdated = uint64(block.timestamp);
+        didVersionId = 1;
+
+        emit DIDCreated(address(this), 1);
+    }
+
+    /// @inheritdoc ISovraWallet
+    function execute(
+        address target,
+        uint256 value,
+        bytes calldata data,
+        bytes32 passkeyR, bytes32 passkeyS,
+        bytes32 serverR, bytes32 serverS
+    ) external returns (bytes memory) {
+        if (didDeactivated) revert DIDIsDeactivated();
+
+        bytes32 opHash = keccak256(abi.encode(target, value, data));
+        bytes32 msgHash = _buildMessageHash(opHash, nonce);
+
+        _verify2of2(msgHash, passkeyR, passkeyS, serverR, serverS);
+
+        nonce++;
+
+        (bool success, bytes memory result) = target.call{value: value}(data);
+        if (!success) revert CallFailed();
+
+        emit Executed(address(this), target, value, nonce - 1);
+        return result;
+    }
+
+    /// @inheritdoc ISovraWallet
+    function rotatePasskey(
+        bytes32 newX, bytes32 newY,
+        bytes32 passkeyR, bytes32 passkeyS,
+        bytes32 serverR, bytes32 serverS
+    ) external {
+        if (didDeactivated) revert DIDIsDeactivated();
+
+        bytes32 opHash = keccak256(abi.encode(bytes4(keccak256("rotatePasskey")), newX, newY));
+        bytes32 msgHash = _buildMessageHash(opHash, nonce);
+
+        _verify2of2(msgHash, passkeyR, passkeyS, serverR, serverS);
+
+        nonce++;
+        passkeyX = newX;
+        passkeyY = newY;
+        didUpdated = uint64(block.timestamp);
+        didVersionId++;
+
+        emit DIDUpdated(address(this), didVersionId);
+    }
+
+    /// @inheritdoc ISovraWallet
+    function rotateServerKey(
+        bytes32 newX, bytes32 newY,
+        bytes32 passkeyR, bytes32 passkeyS,
+        bytes32 serverR, bytes32 serverS
+    ) external {
+        if (didDeactivated) revert DIDIsDeactivated();
+
+        bytes32 opHash = keccak256(abi.encode(bytes4(keccak256("rotateServerKey")), newX, newY));
+        bytes32 msgHash = _buildMessageHash(opHash, nonce);
+
+        _verify2of2(msgHash, passkeyR, passkeyS, serverR, serverS);
+
+        nonce++;
+        serverKeyX = newX;
+        serverKeyY = newY;
+        didUpdated = uint64(block.timestamp);
+        didVersionId++;
+
+        emit DIDUpdated(address(this), didVersionId);
+    }
+
+    /// @inheritdoc ISovraWallet
+    function deactivate(
+        bytes32 passkeyR, bytes32 passkeyS,
+        bytes32 serverR, bytes32 serverS
+    ) external {
+        if (didDeactivated) revert AlreadyDeactivated();
+
+        bytes32 opHash = keccak256(abi.encode(bytes4(keccak256("deactivate"))));
+        bytes32 msgHash = _buildMessageHash(opHash, nonce);
+
+        _verify2of2(msgHash, passkeyR, passkeyS, serverR, serverS);
+
+        nonce++;
+        didDeactivated = true;
+        didVersionId++;
+
+        emit DIDDeactivated(address(this), didVersionId);
+    }
+
+    /// @inheritdoc ISovraWallet
+    function upgrade(
+        address newImplementation,
+        bytes32 passkeyR, bytes32 passkeyS,
+        bytes32 serverR, bytes32 serverS
+    ) external {
+        if (didDeactivated) revert DIDIsDeactivated();
+        if (newImplementation == address(0)) revert InvalidImplementation();
+        if (newImplementation.code.length == 0) revert NotAContract();
+
+        bytes32 opHash = keccak256(abi.encode(bytes4(keccak256("upgrade")), newImplementation));
+        bytes32 msgHash = _buildMessageHash(opHash, nonce);
+
+        _verify2of2(msgHash, passkeyR, passkeyS, serverR, serverS);
+
+        nonce++;
+
+        assembly {
+            sstore(IMPL_SLOT, newImplementation)
+        }
+
+        emit Upgraded(address(this), newImplementation);
+    }
+
+    /// @inheritdoc ISovraWallet
+    function initiateRecovery(
+        bytes32 newKeyX, bytes32 newKeyY,
+        uint8 keyToReplace,
+        bytes32 sigR, bytes32 sigS
+    ) external {
+        if (didDeactivated) revert DIDIsDeactivated();
+        if (pendingRecovery.active) revert RecoveryAlreadyPending();
+        if (keyToReplace > 1) revert InvalidKeyIndex();
+
+        bytes32 opHash = keccak256(abi.encode(
+            bytes4(keccak256("initiateRecovery")),
+            newKeyX, newKeyY, keyToReplace
+        ));
+        bytes32 msgHash = _buildMessageHash(opHash, nonce);
+
+        // Surviving key (NOT being replaced) signs
+        if (keyToReplace == 0) {
+            if (!_verifyP256(msgHash, sigR, sigS, serverKeyX, serverKeyY)) revert InvalidSig();
+        } else {
+            if (!_verifyP256(msgHash, sigR, sigS, passkeyX, passkeyY)) revert InvalidSig();
+        }
+
+        nonce++;
+        pendingRecovery = RecoveryRequest({
+            newKeyX: newKeyX,
+            newKeyY: newKeyY,
+            keyToReplace: keyToReplace,
+            initiatedAt: uint64(block.timestamp),
+            active: true
+        });
+
+        emit RecoveryInitiated(address(this), keyToReplace, newKeyX, newKeyY);
+    }
+
+    /// @inheritdoc ISovraWallet
+    function cancelRecovery(
+        bytes32 sigR, bytes32 sigS,
+        uint8 signerKey
+    ) external {
+        if (!pendingRecovery.active) revert NoRecoveryPending();
+
+        bytes32 opHash = keccak256(abi.encode(bytes4(keccak256("cancelRecovery"))));
+        bytes32 msgHash = _buildMessageHash(opHash, nonce);
+
+        if (signerKey == 0) {
+            if (!_verifyP256(msgHash, sigR, sigS, passkeyX, passkeyY)) revert InvalidSig();
+        } else {
+            if (!_verifyP256(msgHash, sigR, sigS, serverKeyX, serverKeyY)) revert InvalidSig();
+        }
+
+        nonce++;
+        delete pendingRecovery;
+
+        emit RecoveryCancelled(address(this));
+    }
+
+    /// @inheritdoc ISovraWallet
+    function finalizeRecovery(
+        bytes32 sigR, bytes32 sigS
+    ) external {
+        RecoveryRequest memory req = pendingRecovery;
+        if (!req.active) revert NoRecoveryPending();
+        if (block.timestamp < req.initiatedAt + RECOVERY_DELAY) revert RecoveryDelayNotElapsed();
+
+        bytes32 opHash = keccak256(abi.encode(bytes4(keccak256("finalizeRecovery"))));
+        bytes32 msgHash = _buildMessageHash(opHash, nonce);
+
+        // Surviving key signs finalization
+        if (req.keyToReplace == 0) {
+            if (!_verifyP256(msgHash, sigR, sigS, serverKeyX, serverKeyY)) revert InvalidSig();
+        } else {
+            if (!_verifyP256(msgHash, sigR, sigS, passkeyX, passkeyY)) revert InvalidSig();
+        }
+
+        nonce++;
+
+        if (req.keyToReplace == 0) {
+            passkeyX = req.newKeyX;
+            passkeyY = req.newKeyY;
+        } else {
+            serverKeyX = req.newKeyX;
+            serverKeyY = req.newKeyY;
+        }
+
+        didUpdated = uint64(block.timestamp);
+        didVersionId++;
+        delete pendingRecovery;
+
+        emit DIDUpdated(address(this), didVersionId);
+        emit RecoveryFinalized(address(this), req.keyToReplace);
+    }
+}
