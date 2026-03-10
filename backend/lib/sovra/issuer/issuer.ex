@@ -91,6 +91,32 @@ defmodule Sovra.Issuer do
     |> Repo.all()
   end
 
+  def delete_schema(issuer_id, schema_id) do
+    case Repo.get_by(CredentialSchema, id: schema_id, issuer_id: issuer_id) do
+      nil -> {:error, :schema_not_found}
+      schema -> Repo.delete(schema)
+    end
+  end
+
+  # ── Offer & Credential Queries ──────────────────────────
+
+  def list_offers(issuer_id) do
+    from(o in CredentialOffer,
+      where: o.issuer_id == ^issuer_id,
+      order_by: [desc: :inserted_at]
+    )
+    |> Repo.all()
+  end
+
+  def list_issued_credentials(issuer_id) do
+    from(c in IssuedCredential,
+      where: c.issuer_id == ^issuer_id,
+      order_by: [desc: :issued_at],
+      preload: [:schema]
+    )
+    |> Repo.all()
+  end
+
   # ── Credential Offer ───────────────────────────────────
 
   def create_credential_offer(issuer_id, schema_id, holder_did, claims) do

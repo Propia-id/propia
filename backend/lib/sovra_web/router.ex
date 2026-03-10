@@ -9,6 +9,10 @@ defmodule SovraWeb.Router do
     plug SovraWeb.Plugs.SessionPlug
   end
 
+  pipeline :issuer_session do
+    plug SovraWeb.Plugs.IssuerSessionPlug
+  end
+
   # Health check
   scope "/", SovraWeb do
     pipe_through :api
@@ -32,13 +36,25 @@ defmodule SovraWeb.Router do
     get "/metadata", MetadataController, :show
   end
 
-  # Issuer admin API
-  scope "/api/v1/issuer/admin", SovraWeb.Issuer do
+  # Issuer auth (public)
+  scope "/api/v1/issuer/auth", SovraWeb.Issuer do
     pipe_through :api
 
-    post "/issuers", AdminController, :create_issuer
+    post "/register", AuthController, :register
+    post "/login", AuthController, :login
+  end
+
+  # Issuer admin API (authenticated)
+  scope "/api/v1/issuer/admin", SovraWeb.Issuer do
+    pipe_through [:api, :issuer_session]
+
+    get "/profile", AdminController, :get_issuer
     post "/schemas", AdminController, :create_schema
     get "/schemas", AdminController, :list_schemas
+    delete "/schemas/:id", AdminController, :delete_schema
+    post "/offers", AdminController, :create_offer
+    get "/offers", AdminController, :list_offers
+    get "/credentials", AdminController, :list_issued_credentials
   end
 
   # Verification API

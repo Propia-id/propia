@@ -3,29 +3,26 @@ defmodule SovraWeb.Issuer.AdminController do
 
   alias Sovra.Issuer
 
-  def create_issuer(conn, %{"name" => name}) do
-    case Issuer.create_issuer(name) do
+  def get_issuer(conn, _params) do
+    issuer_id = conn.assigns.current_issuer_account.issuer_id
+
+    case Issuer.get_issuer(issuer_id) do
       {:ok, issuer} ->
-        conn
-        |> put_status(201)
-        |> json(%{
+        json(conn, %{
           id: issuer.id,
           name: issuer.name,
           did: issuer.did,
           eoa_address: issuer.eoa_address,
-          signing_public_key: %{
-            x: Base.url_encode64(issuer.signing_public_key_x, padding: false),
-            y: Base.url_encode64(issuer.signing_public_key_y, padding: false)
-          }
+          status: issuer.status
         })
 
-      {:error, reason} ->
-        conn |> put_status(500) |> json(%{error: inspect(reason)})
+      {:error, _} ->
+        conn |> put_status(404) |> json(%{error: "issuer_not_found"})
     end
   end
 
   def create_schema(conn, params) do
-    issuer_id = params["issuer_id"]
+    issuer_id = conn.assigns.current_issuer_account.issuer_id
 
     attrs = %{
       schema_id: params["schema_id"],
@@ -56,7 +53,8 @@ defmodule SovraWeb.Issuer.AdminController do
     end
   end
 
-  def list_schemas(conn, %{"issuer_id" => issuer_id}) do
+  def list_schemas(conn, _params) do
+    issuer_id = conn.assigns.current_issuer_account.issuer_id
     schemas = Issuer.list_schemas(issuer_id)
 
     json(conn, %{
@@ -75,7 +73,87 @@ defmodule SovraWeb.Issuer.AdminController do
     })
   end
 
-  # Accept claims as either a list of maps or a map with a "claims" key wrapping the list
+  def delete_schema(conn, %{"id" => schema_id}) do
+    issuer_id = conn.assigns.current_issuer_account.issuer_id
+
+    case Issuer.delete_schema(issuer_id, schema_id) do
+      {:ok, _} ->
+        conn |> put_status(204) |> text("")
+
+      {:error, :schema_not_found} ->
+        conn |> put_status(404) |> json(%{error: "schema_not_found"})
+    end
+  end
+
+  def create_offer(conn, params) do
+    issuer_id = conn.assigns.current_issuer_account.issuer_id
+
+    case Issuer.create_credential_offer(
+           issuer_id,
+           params["schema_id"],
+           params["holder_did"],
+           params["claims"] || %{}
+         ) do
+      {:ok, %{offer: offer, offer_uri: offer_uri}} ->
+        conn
+        |> put_status(201)
+        |> json(%{
+          id: offer.id,
+          status: offer.status,
+          holder_did: offer.holder_did,
+          offer_uri: offer_uri,
+          expires_at: DateTime.to_iso8601(offer.expires_at)
+        })
+
+      {:error, {:missing_claims, missing}} ->
+        conn |> put_status(422) |> json(%{error: "missing_claims", details: missing})
+
+      {:error, reason} ->
+        conn |> put_status(422) |> json(%{error: inspect(reason)})
+    end
+  end
+
+  def list_offers(conn, _params) do
+    issuer_id = conn.assigns.current_issuer_account.issuer_id
+    offers = Issuer.list_offers(issuer_id)
+
+    json(conn, %{
+      offers:
+        Enum.map(offers, fn o ->
+          %{
+            id: o.id,
+            holder_did: o.holder_did,
+            status: o.status,
+            expires_at: DateTime.to_iso8601(o.expires_at),
+            inserted_at: DateTime.to_iso8601(o.inserted_at)
+          }
+        end)
+    })
+  end
+
+  def list_issued_credentials(conn, _params) do
+    issuer_id = conn.assigns.current_issuer_account.issuer_id
+    credentials = Issuer.list_issued_credentials(issuer_id)
+
+    json(conn, %{
+      credentials:
+        Enum.map(credentials, fn c ->
+          %{
+            id: c.id,
+            holder_did: c.holder_did,
+            status: c.status,
+            issued_at: DateTime.to_iso8601(c.issued_at),
+            expires_at: DateTime.to_iso8601(c.expires_at),
+            schema: %{
+              id: c.schema.id,
+              credential_type: c.schema.credential_type,
+              name: c.schema.name
+            }
+          }
+        end)
+    })
+  end
+
   defp normalize_claims(%{"claims" => claims}) when is_list(claims), do: claims
   defp normalize_claims(claims) when is_list(claims), do: claims
   defp normalize_claims(other), do: other
