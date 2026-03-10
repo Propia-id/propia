@@ -103,7 +103,8 @@ defmodule Sovra.Issuer do
   def list_offers(issuer_id) do
     from(o in CredentialOffer,
       where: o.issuer_id == ^issuer_id,
-      order_by: [desc: :inserted_at]
+      order_by: [desc: :inserted_at],
+      preload: [:schema]
     )
     |> Repo.all()
   end

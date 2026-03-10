@@ -108,8 +108,17 @@ defmodule SovraWeb.Issuer.AdminController do
       {:error, {:missing_claims, missing}} ->
         conn |> put_status(422) |> json(%{error: "missing_claims", details: missing})
 
+      {:error, :key_not_found} ->
+        conn |> put_status(500) |> json(%{error: "signing_key_not_found", message: "Issuer signing key is unavailable. Re-register the issuer if the server was restarted."})
+
+      {:error, :schema_not_found} ->
+        conn |> put_status(404) |> json(%{error: "schema_not_found"})
+
+      {:error, :issuer_not_found} ->
+        conn |> put_status(404) |> json(%{error: "issuer_not_found"})
+
       {:error, reason} ->
-        conn |> put_status(422) |> json(%{error: inspect(reason)})
+        conn |> put_status(422) |> json(%{error: to_string(reason)})
     end
   end
 
@@ -125,7 +134,12 @@ defmodule SovraWeb.Issuer.AdminController do
             holder_did: o.holder_did,
             status: o.status,
             expires_at: DateTime.to_iso8601(o.expires_at),
-            inserted_at: DateTime.to_iso8601(o.inserted_at)
+            inserted_at: DateTime.to_iso8601(o.inserted_at),
+            schema: %{
+              id: o.schema.id,
+              credential_type: o.schema.credential_type,
+              name: o.schema.name
+            }
           }
         end)
     })
