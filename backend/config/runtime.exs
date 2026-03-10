@@ -22,6 +22,15 @@ end
 
 config :sovra, SovraWeb.Endpoint, http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+# Ethereum config — available in all environments at runtime
+if System.get_env("ADMIN_PRIVATE_KEY") do
+  config :sovra, :ethereum,
+    rpc_url: System.get_env("L2_RPC_URL", "http://127.0.0.1:1729"),
+    admin_private_key: System.fetch_env!("ADMIN_PRIVATE_KEY"),
+    did_registry_address: System.fetch_env!("DID_REGISTRY_ADDRESS"),
+    issuer_registry_address: System.fetch_env!("ISSUER_REGISTRY_ADDRESS")
+end
+
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||

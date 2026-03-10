@@ -1,7 +1,7 @@
-export type { SecureStorage } from "./secure-storage.js";
+export type { SecureStorage } from "./secure-storage";
 export type {
   PasskeyProvider,
   PasskeyResult,
   PasskeySignature,
-} from "./passkey-provider.js";
-export type { CameraScanner } from "./camera-scanner.js";
+} from "./passkey-provider";
+export type { CameraScanner } from "./camera-scanner";

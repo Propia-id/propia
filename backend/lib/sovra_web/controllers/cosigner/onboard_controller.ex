@@ -4,7 +4,10 @@ defmodule SovraWeb.Cosigner.OnboardController do
   def onboard(conn, %{"sovraAddress" => sovra_address, "oauthToken" => oauth_token}) do
     case Sovra.Cosigner.onboard(sovra_address, oauth_token) do
       {:ok, result} ->
-        conn |> put_status(201) |> json(%{serverPublicKey: result.server_public_key})
+        conn |> put_status(201) |> json(%{
+          serverPublicKey: result.server_public_key,
+          sessionToken: result.session_token
+        })
 
       {:error, :already_onboarded} ->
         conn |> put_status(409) |> json(%{error: "already_onboarded"})

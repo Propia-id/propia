@@ -33,6 +33,46 @@ async function main() {
   if (dispatcherCode === "0x") {
     throw new Error(`No code at SovraDispatcher address ${dispatcherAddr} — deployment failed`);
   }
+
+  // ─── DID Registry ──────────────────────────────────
+  const SovraDIDRegistry = await ethers.getContractFactory("SovraDIDRegistry", deployer);
+  const didRegistry = await SovraDIDRegistry.deploy(deployer.address);
+  const didRegistryTx = didRegistry.deploymentTransaction()!;
+  console.log("SovraDIDRegistry deploy tx:", didRegistryTx.hash);
+  await didRegistry.waitForDeployment();
+  const didRegistryAddr = await didRegistry.getAddress();
+  console.log("SovraDIDRegistry deployed to:", didRegistryAddr);
+
+  const didRegistryCode = await ethers.provider.getCode(didRegistryAddr);
+  if (didRegistryCode === "0x") {
+    throw new Error(`No code at SovraDIDRegistry address ${didRegistryAddr} — deployment failed`);
+  }
+
+  // ─── Issuer Registry (UUPS proxy) ─────────────────
+  const SovraIssuerRegistryV1 = await ethers.getContractFactory("SovraIssuerRegistryV1", deployer);
+  const issuerRegistryImpl = await SovraIssuerRegistryV1.deploy();
+  await issuerRegistryImpl.waitForDeployment();
+  const issuerRegistryImplAddr = await issuerRegistryImpl.getAddress();
+  console.log("SovraIssuerRegistryV1 impl deployed to:", issuerRegistryImplAddr);
+
+  const ERC1967Proxy = await ethers.getContractFactory("ERC1967Proxy", deployer);
+  const initData = SovraIssuerRegistryV1.interface.encodeFunctionData("initialize", [deployer.address]);
+  const issuerRegistryProxy = await ERC1967Proxy.deploy(issuerRegistryImplAddr, initData);
+  await issuerRegistryProxy.waitForDeployment();
+  const issuerRegistryAddr = await issuerRegistryProxy.getAddress();
+  console.log("SovraIssuerRegistryV1 proxy deployed to:", issuerRegistryAddr);
+
+  const issuerRegistryCode = await ethers.provider.getCode(issuerRegistryAddr);
+  if (issuerRegistryCode === "0x") {
+    throw new Error(`No code at SovraIssuerRegistryV1 proxy address ${issuerRegistryAddr} — deployment failed`);
+  }
+
+  // ─── Summary ──────────────────────────────────────
+  console.log("\n=== Deployment Summary ===");
+  console.log("SovraWalletV1:          ", implAddr);
+  console.log("SovraDispatcher:        ", dispatcherAddr);
+  console.log("SovraDIDRegistry:       ", didRegistryAddr);
+  console.log("SovraIssuerRegistryV1:  ", issuerRegistryAddr);
 }
 
 main().catch((error) => {
