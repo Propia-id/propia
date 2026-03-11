@@ -201,23 +201,4 @@ export class ApiClient {
     return data.result ?? null;
   }
 
-  // ─── OpenID4VP ────────────────────────────────────
-
-  async fetchRequestObject(requestUri: string): Promise<string> {
-    const { data } = await axios.get<string>(requestUri);
-    return data;
-  }
-
-  async submitPresentation(
-    responseUri: string,
-    vpToken: string,
-    presentationSubmission?: Record<string, unknown>,
-  ): Promise<void> {
-    await axios.post(responseUri, {
-      vp_token: vpToken,
-      ...(presentationSubmission && {
-        presentation_submission: presentationSubmission,
-      }),
-    });
-  }
 }

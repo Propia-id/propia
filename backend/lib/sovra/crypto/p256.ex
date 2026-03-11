@@ -5,6 +5,8 @@ defmodule Sovra.Crypto.P256 do
 
   @curve :secp256r1
   @coord_size 32
+  # P-256 curve order
+  @n 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
 
   @doc """
   Generates a new P-256 key pair.
@@ -22,7 +24,8 @@ defmodule Sovra.Crypto.P256 do
   """
   def sign(<<hash::binary-size(32)>>, private_key) when is_binary(private_key) do
     der = :crypto.sign(:ecdsa, :sha256, {:digest, hash}, [private_key, @curve])
-    {:ok, der_to_rs(der)}
+    %{r: r, s: s} = der_to_rs(der)
+    {:ok, %{r: r, s: normalize_s(s)}}
   end
 
   def sign(_hash, _private_key), do: {:error, :invalid_hash_size}
@@ -63,6 +66,18 @@ defmodule Sovra.Crypto.P256 do
     else
       <<first, _::binary>> = bin
       if Bitwise.band(first, 0x80) != 0, do: <<0, bin::binary>>, else: bin
+    end
+  end
+
+  # Ensure low-S: if s > n/2, replace with n - s
+  defp normalize_s(s_bin) do
+    s = :binary.decode_unsigned(s_bin)
+    half_n = div(@n, 2)
+
+    if s > half_n do
+      (@n - s) |> :binary.encode_unsigned() |> pad_or_trim(@coord_size)
+    else
+      s_bin
     end
   end
 
