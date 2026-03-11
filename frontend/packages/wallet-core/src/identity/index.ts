@@ -25,6 +25,11 @@ export interface OnboardingResult {
   txHash: string;
 }
 
+export interface LoginResult {
+  did: string;
+  eoaAddress: string;
+}
+
 export class IdentityManager {
   constructor(
     private passkeyProvider: PasskeyProvider,
@@ -46,13 +51,28 @@ export class IdentityManager {
    * 4. Both keys sign init hash
    * 5. Submit 7702 delegation + initialize tx
    */
-  async onboard(oauthToken: string): Promise<OnboardingResult> {
+  async onboard(oauthToken: string): Promise<OnboardingResult | LoginResult> {
     // Step 1: Generate throwaway secp256k1 keypair → derive EOA address
     const throwawayKey = generateSecp256k1KeyPair();
     const eoaAddress = secp256k1AddressFromPublicKey(throwawayKey.publicKey);
 
-    // Step 2: Register with guardian server → get recovery public key
-    const { recoveryPublicKey } = await this.guardianClient.onboard(eoaAddress, oauthToken);
+    // Step 2: Register with guardian server → get recovery public key (or login if account exists)
+    const onboardResult = await this.guardianClient.onboard(eoaAddress, oauthToken);
+
+    // If the Google account already exists, this is a login on a new device
+    if (onboardResult.type === "login") {
+      const did = `did:sovra:${onboardResult.sovraAddress.toLowerCase()}`;
+      const state = this.identityStore.getState();
+      state.setLoginIdentity({
+        did,
+        eoaAddress: onboardResult.sovraAddress,
+        chainId: this.config.chainId,
+      });
+      await state.persistToStorage(this.storage);
+      return { did, eoaAddress: onboardResult.sovraAddress };
+    }
+
+    const { recoveryPublicKey } = onboardResult;
 
     // Step 3: Create passkey (biometric prompt)
     const passkey = await this.passkeyProvider.create("sovra-user", "Sovra Wallet");

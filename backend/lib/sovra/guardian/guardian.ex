@@ -9,39 +9,55 @@ defmodule Sovra.Guardian do
   alias Sovra.Auth.Session
   alias Sovra.Repo
 
-  import Ecto.Query
-
   def onboard(sovra_address, oauth_token) do
     with {:ok, %{sub: sub, email: _email}} <- auth_provider().verify_id_token(oauth_token),
-         :ok <- check_not_onboarded(sovra_address, sub),
-         {:ok, %{key_id: key_id, public_key_x: x, public_key_y: y}} <-
-           Key.generate_key(sovra_address) do
-      changeset =
-        HolderRecord.create_changeset(%{
-          sovra_address: sovra_address,
-          recovery_key_id: key_id,
-          recovery_public_key_x: x,
-          recovery_public_key_y: y,
-          oauth_provider: "google",
-          oauth_subject: sub
-        })
-
-      case Repo.insert(changeset) do
-        {:ok, _record} ->
+         :ok <- check_address_available(sovra_address) do
+      case get_holder_by_oauth_subject(sub) do
+        {:ok, existing_holder} ->
+          # Same Google account on a different device — login instead of onboard
           {:ok, session_token} = Session.create(sovra_address)
 
           {:ok,
            %{
-             recovery_public_key: %{
-               x: Base.encode64(x, padding: false),
-               y: Base.encode64(y, padding: false)
-             },
+             sovra_address: existing_holder.sovra_address,
              session_token: session_token
            }}
 
-        {:error, changeset} ->
-          {:error, {:changeset, changeset}}
+        {:error, :holder_not_found} ->
+          create_new_holder(sovra_address, sub)
       end
+    end
+  end
+
+  defp create_new_holder(sovra_address, oauth_subject) do
+    {:ok, %{key_id: key_id, public_key_x: x, public_key_y: y}} =
+      Key.generate_key(sovra_address)
+
+    changeset =
+      HolderRecord.create_changeset(%{
+        sovra_address: sovra_address,
+        recovery_key_id: key_id,
+        recovery_public_key_x: x,
+        recovery_public_key_y: y,
+        oauth_provider: "google",
+        oauth_subject: oauth_subject
+      })
+
+    case Repo.insert(changeset) do
+      {:ok, _record} ->
+        {:ok, session_token} = Session.create(sovra_address)
+
+        {:ok,
+         %{
+           recovery_public_key: %{
+             x: Base.encode64(x, padding: false),
+             y: Base.encode64(y, padding: false)
+           },
+           session_token: session_token
+         }}
+
+      {:error, changeset} ->
+        {:error, {:changeset, changeset}}
     end
   end
 
@@ -149,14 +165,11 @@ defmodule Sovra.Guardian do
     end
   end
 
-  defp check_not_onboarded(sovra_address, oauth_subject) do
-    exists? =
-      from(h in HolderRecord,
-        where: h.sovra_address == ^sovra_address or h.oauth_subject == ^oauth_subject
-      )
-      |> Repo.exists?()
-
-    if exists?, do: {:error, :already_onboarded}, else: :ok
+  defp check_address_available(sovra_address) do
+    case Repo.get_by(HolderRecord, sovra_address: sovra_address) do
+      nil -> :ok
+      _exists -> {:error, :already_onboarded}
+    end
   end
 
   defp verify_oauth_binding(%{oauth_subject: expected_sub}, actual_sub) do

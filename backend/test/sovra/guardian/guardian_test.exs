@@ -19,7 +19,17 @@ defmodule Sovra.GuardianTest do
       {:ok, _} = Guardian.onboard("0xduplicate", MockAuthProvider.valid_token())
 
       assert {:error, :already_onboarded} =
-               Guardian.onboard("0xduplicate", MockAuthProvider.valid_token())
+               Guardian.onboard("0xduplicate", MockAuthProvider.valid_token_2())
+    end
+
+    test "returns login session for same google account on different device" do
+      {:ok, first} = Guardian.onboard("0xdevice_a", MockAuthProvider.valid_token())
+      assert Map.has_key?(first, :recovery_public_key)
+
+      {:ok, second} = Guardian.onboard("0xdevice_b", MockAuthProvider.valid_token())
+      assert second.sovra_address == "0xdevice_a"
+      assert is_binary(second.session_token)
+      refute Map.has_key?(second, :recovery_public_key)
     end
 
     test "rejects invalid oauth token" do

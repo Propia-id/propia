@@ -4,7 +4,8 @@ import { bytesToHex } from "../utils/index";
 // ─── Types ────────────────────────────────────────────
 
 export interface OnboardResponse {
-  recoveryPublicKey: { x: string; y: string };
+  recoveryPublicKey?: { x: string; y: string };
+  sovraAddress?: string;
   sessionToken: string;
 }
 

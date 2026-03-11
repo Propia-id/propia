@@ -24,6 +24,11 @@ export interface IdentityActions {
     recoveryPublicKey: { x: Uint8Array; y: Uint8Array };
     chainId: bigint;
   }): void;
+  setLoginIdentity(data: {
+    did: string;
+    eoaAddress: string;
+    chainId: bigint;
+  }): void;
   setSession(token: string, expiresAt: number): void;
   clearSession(): void;
   isSessionValid(): boolean;
@@ -55,6 +60,15 @@ export function createIdentityStore() {
         passkeyCredentialId: data.passkeyCredentialId,
         passkeyPublicKey: data.passkeyPublicKey,
         recoveryPublicKey: data.recoveryPublicKey,
+        chainId: data.chainId,
+        isOnboarded: true,
+      });
+    },
+
+    setLoginIdentity(data) {
+      set({
+        did: data.did,
+        eoaAddress: data.eoaAddress,
         chainId: data.chainId,
         isOnboarded: true,
       });
