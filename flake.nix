@@ -10,10 +10,8 @@
   outputs = { self, nixpkgs, flake-utils, foundry }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs {
-          inherit system;
-          overlays = [ foundry.overlay ];
-        };
+        pkgs = nixpkgs.legacyPackages.${system};
+        foundryPkgs = foundry.defaultPackage.${system};
 
         # Elixir with Erlang/OTP 27
         erlang = pkgs.beam.interpreters.erlang_27;
@@ -41,7 +39,7 @@
             pkgs.pnpm
 
             # Smart contracts
-            pkgs.foundry-bin
+            foundryPkgs
 
             # Build tools
             pkgs.gnumake
