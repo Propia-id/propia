@@ -106,7 +106,7 @@ defmodule Sovra.Issuer.SDJWT do
       value = Map.get(claims, key)
 
       if value != nil do
-        if def["disclosable"] do
+        if def["disclosable"] || def["sd"] do
           {[{key, value} | disc], non_disc}
         else
           {disc, [{key, value} | non_disc]}
