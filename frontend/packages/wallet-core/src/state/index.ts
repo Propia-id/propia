@@ -8,7 +8,7 @@ export interface IdentityState {
   eoaAddress: string | null;
   passkeyCredentialId: string | null;
   passkeyPublicKey: Uint8Array | null;
-  serverPublicKey: { x: Uint8Array; y: Uint8Array } | null;
+  recoveryPublicKey: { x: Uint8Array; y: Uint8Array } | null;
   sessionToken: string | null;
   sessionExpiresAt: number | null;
   chainId: bigint | null;
@@ -21,7 +21,7 @@ export interface IdentityActions {
     eoaAddress: string;
     passkeyCredentialId: string;
     passkeyPublicKey: Uint8Array;
-    serverPublicKey: { x: Uint8Array; y: Uint8Array };
+    recoveryPublicKey: { x: Uint8Array; y: Uint8Array };
     chainId: bigint;
   }): void;
   setSession(token: string, expiresAt: number): void;
@@ -42,7 +42,7 @@ export function createIdentityStore() {
     eoaAddress: null,
     passkeyCredentialId: null,
     passkeyPublicKey: null,
-    serverPublicKey: null,
+    recoveryPublicKey: null,
     sessionToken: null,
     sessionExpiresAt: null,
     chainId: null,
@@ -54,7 +54,7 @@ export function createIdentityStore() {
         eoaAddress: data.eoaAddress,
         passkeyCredentialId: data.passkeyCredentialId,
         passkeyPublicKey: data.passkeyPublicKey,
-        serverPublicKey: data.serverPublicKey,
+        recoveryPublicKey: data.recoveryPublicKey,
         chainId: data.chainId,
         isOnboarded: true,
       });
@@ -80,7 +80,7 @@ export function createIdentityStore() {
         eoaAddress: null,
         passkeyCredentialId: null,
         passkeyPublicKey: null,
-        serverPublicKey: null,
+        recoveryPublicKey: null,
         sessionToken: null,
         sessionExpiresAt: null,
         chainId: null,
@@ -99,10 +99,10 @@ export function createIdentityStore() {
         passkeyPublicKey: state.passkeyPublicKey
           ? Array.from(state.passkeyPublicKey)
           : null,
-        serverPublicKey: state.serverPublicKey
+        recoveryPublicKey: state.recoveryPublicKey
           ? {
-              x: Array.from(state.serverPublicKey.x),
-              y: Array.from(state.serverPublicKey.y),
+              x: Array.from(state.recoveryPublicKey.x),
+              y: Array.from(state.recoveryPublicKey.y),
             }
           : null,
         chainId: state.chainId?.toString() ?? null,
@@ -122,10 +122,10 @@ export function createIdentityStore() {
         passkeyPublicKey: data.passkeyPublicKey
           ? new Uint8Array(data.passkeyPublicKey)
           : null,
-        serverPublicKey: data.serverPublicKey
+        recoveryPublicKey: data.recoveryPublicKey
           ? {
-              x: new Uint8Array(data.serverPublicKey.x),
-              y: new Uint8Array(data.serverPublicKey.y),
+              x: new Uint8Array(data.recoveryPublicKey.x),
+              y: new Uint8Array(data.recoveryPublicKey.y),
             }
           : null,
         chainId: data.chainId ? BigInt(data.chainId) : null,

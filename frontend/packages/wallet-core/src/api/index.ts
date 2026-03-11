@@ -4,13 +4,12 @@ import { bytesToHex } from "../utils/index";
 // ─── Types ────────────────────────────────────────────
 
 export interface OnboardResponse {
-  serverPublicKey: { x: string; y: string };
+  recoveryPublicKey: { x: string; y: string };
   sessionToken: string;
 }
 
-export interface CosignResponse {
-  r: string;
-  s: string;
+export interface SignResponse {
+  signature: { r: string; s: string };
 }
 
 export interface AuthResponse {
@@ -66,9 +65,9 @@ export class ApiClient {
     this.backend = axios.create({ baseURL: config.backendUrl });
     this.l2 = axios.create({ baseURL: config.l2RpcUrl });
 
-    // Attach session token to co-signer requests
+    // Attach session token to authenticated requests
     this.backend.interceptors.request.use((req) => {
-      if (this.sessionToken && req.url?.startsWith("/api/v1/cosigner/")) {
+      if (this.sessionToken && (req.url?.startsWith("/api/v1/holder/") || req.url?.startsWith("/api/v1/recovery/"))) {
         req.headers.Authorization = `Bearer ${this.sessionToken}`;
       }
       return req;
@@ -92,28 +91,30 @@ export class ApiClient {
     this.onSessionExpired = handler;
   }
 
-  // ─── Co-Signer ────────────────────────────────────
+  // ─── Holder Onboarding & Auth ───────────────────────
 
-  async cosignerOnboard(sovraAddress: string, oauthToken: string): Promise<OnboardResponse> {
+  async holderOnboard(sovraAddress: string, oauthToken: string): Promise<OnboardResponse> {
     const { data } = await this.backend.post<OnboardResponse>(
-      "/api/v1/cosigner/onboard",
+      "/api/v1/holder/onboard",
       { sovraAddress, oauthToken },
     );
     return data;
   }
 
-  async cosignerSign(hash: Uint8Array): Promise<CosignResponse> {
-    const { data } = await this.backend.post<CosignResponse>(
-      "/api/v1/cosigner/cosign",
-      { hash: bytesToHex(hash) },
+  async holderAuth(oauthToken: string): Promise<AuthResponse> {
+    const { data } = await this.backend.post<AuthResponse>(
+      "/api/v1/holder/auth",
+      { oauth_token: oauthToken },
     );
     return data;
   }
 
-  async cosignerAuth(oauthToken: string): Promise<AuthResponse> {
-    const { data } = await this.backend.post<AuthResponse>(
-      "/api/v1/cosigner/auth",
-      { oauth_token: oauthToken },
+  // ─── Recovery Operations ──────────────────────────
+
+  async recoverySign(hash: Uint8Array): Promise<SignResponse> {
+    const { data } = await this.backend.post<SignResponse>(
+      "/api/v1/recovery/sign",
+      { hash: bytesToHex(hash) },
     );
     return data;
   }

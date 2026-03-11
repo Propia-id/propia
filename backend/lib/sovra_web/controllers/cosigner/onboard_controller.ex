@@ -5,7 +5,7 @@ defmodule SovraWeb.Cosigner.OnboardController do
     case Sovra.Cosigner.onboard(sovra_address, oauth_token) do
       {:ok, result} ->
         conn |> put_status(201) |> json(%{
-          serverPublicKey: result.server_public_key,
+          recoveryPublicKey: result.recovery_public_key,
           sessionToken: result.session_token
         })
 

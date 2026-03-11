@@ -51,8 +51,8 @@ export class IdentityManager {
     const throwawayKey = generateSecp256k1KeyPair();
     const eoaAddress = secp256k1AddressFromPublicKey(throwawayKey.publicKey);
 
-    // Step 2: Register with co-signing server → get server public key
-    const { serverPublicKey } = await this.cosignerClient.onboard(eoaAddress, oauthToken);
+    // Step 2: Register with co-signing server → get recovery public key
+    const { recoveryPublicKey } = await this.cosignerClient.onboard(eoaAddress, oauthToken);
 
     // Step 3: Create passkey (biometric prompt)
     const passkey = await this.passkeyProvider.create("sovra-user", "Sovra Wallet");
@@ -64,8 +64,8 @@ export class IdentityManager {
       eoaAddress,
       passkeyXY.x,
       passkeyXY.y,
-      serverPublicKey.x,
-      serverPublicKey.y,
+      recoveryPublicKey.x,
+      recoveryPublicKey.y,
     );
 
     // Step 5: Sign init hash with passkey
@@ -77,22 +77,17 @@ export class IdentityManager {
     const passkeyR = passkeySig.signature.slice(0, 32);
     const passkeyS = passkeySig.signature.slice(32, 64);
 
-    // Step 6: Co-sign init hash with server
-    const serverSig = await this.cosignerClient.cosign(initHash);
-
-    // Step 7: Build initialize() calldata
+    // Step 6: Build initialize() calldata
     const initCalldata = buildInitializeCalldata(
       passkeyXY.x,
       passkeyXY.y,
-      serverPublicKey.x,
-      serverPublicKey.y,
+      recoveryPublicKey.x,
+      recoveryPublicKey.y,
       passkeyR,
       passkeyS,
-      serverSig.r,
-      serverSig.s,
     );
 
-    // Step 8: Sign EIP-7702 authorization tuple with throwaway EOA key
+    // Step 7: Sign EIP-7702 authorization tuple with throwaway EOA key
     const authTuple = signEIP7702AuthTuple(
       throwawayKey.privateKey,
       this.config.chainId,
@@ -100,7 +95,7 @@ export class IdentityManager {
       0n, // nonce 0 for fresh EOA
     );
 
-    // Step 9: Submit type-4 transaction
+    // Step 8: Submit type-4 transaction
     const txHash = await this.api.sendTransaction({
       type: "0x04",
       authorizationList: [
@@ -119,7 +114,7 @@ export class IdentityManager {
       gas: "0x100000",
     });
 
-    // Step 10: Wait for receipt
+    // Step 9: Wait for receipt
     let receipt = null;
     for (let i = 0; i < 30; i++) {
       receipt = await this.api.getTransactionReceipt(txHash);
@@ -129,7 +124,7 @@ export class IdentityManager {
     if (!receipt) throw new Error("Transaction not confirmed");
     if (receipt.status !== "0x1") throw new Error("Transaction reverted");
 
-    // Step 11: Persist identity (throwaway key is discarded by going out of scope)
+    // Step 10: Persist identity (throwaway key is discarded by going out of scope)
     const did = `did:sovra:${eoaAddress.toLowerCase()}`;
     const state = this.identityStore.getState();
     state.setIdentity({
@@ -137,7 +132,7 @@ export class IdentityManager {
       eoaAddress,
       passkeyCredentialId: passkey.credentialId,
       passkeyPublicKey: passkey.publicKey,
-      serverPublicKey,
+      recoveryPublicKey,
       chainId: this.config.chainId,
     });
     await state.persistToStorage(this.storage);
@@ -173,12 +168,9 @@ export class IdentityManager {
     const passkeyR = passkeySig.signature.slice(0, 32);
     const passkeyS = passkeySig.signature.slice(32, 64);
 
-    // Co-sign with server
-    const serverSig = await this.cosignerClient.cosign(msgHash);
-
     const calldata = encodeFunctionCall(
-      "rotatePasskey(bytes32,bytes32,bytes32,bytes32,bytes32,bytes32)",
-      [newX, newY, passkeyR, passkeyS, serverSig.r, serverSig.s],
+      "rotatePasskey(bytes32,bytes32,bytes32,bytes32)",
+      [newX, newY, passkeyR, passkeyS],
     );
 
     return this.api.sendTransaction({
@@ -189,10 +181,10 @@ export class IdentityManager {
     });
   }
 
-  /** Rotate server key — both current keys must sign. */
-  async rotateServerKey(): Promise<string> {
-    // Server generates new key; this triggers the co-signing server's rotation endpoint
-    throw new Error("Not implemented — requires POST /rotate-server-key endpoint");
+  /** Rotate recovery key — requires recovery flow. */
+  async rotateRecoveryKey(): Promise<string> {
+    // Server generates new key; this triggers the recovery server's rotation endpoint
+    throw new Error("Not implemented — requires POST /api/v1/recovery/rotate-key endpoint");
   }
 
   /** Deactivate DID permanently — both keys sign. */
@@ -218,11 +210,9 @@ export class IdentityManager {
     const passkeyR = passkeySig.signature.slice(0, 32);
     const passkeyS = passkeySig.signature.slice(32, 64);
 
-    const serverSig = await this.cosignerClient.cosign(msgHash);
-
     const calldata = encodeFunctionCall(
-      "deactivate(bytes32,bytes32,bytes32,bytes32)",
-      [passkeyR, passkeyS, serverSig.r, serverSig.s],
+      "deactivate(bytes32,bytes32)",
+      [passkeyR, passkeyS],
     );
 
     return this.api.sendTransaction({

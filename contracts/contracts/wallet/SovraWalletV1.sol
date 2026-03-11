@@ -4,9 +4,10 @@ pragma solidity 0.8.31;
 import {ISovraWallet} from "./ISovraWallet.sol";
 
 /// @title SovraWalletV1 - Implementation for EIP-7702 delegated holder wallets
-/// @notice All wallet logic: 2-of-2 P256 signature validation, arbitrary call execution,
+/// @notice All wallet logic: passkey-only P256 signature validation, arbitrary call execution,
 ///         DID state management, cooperative key rotation, permanent deactivation,
 ///         time-locked single-key recovery, and UUPS upgradeability.
+///         The recovery key is stored on-chain but only used for time-locked recovery.
 ///         Runs in the EOA's storage context via the SovraDispatcher proxy.
 /// @dev P256 verification uses the EIP-7212 precompile at address(0x0100), which exists
 ///      natively on the ethrex L2. For local Hardhat tests, a Solidity mock is etched there.
@@ -30,9 +31,9 @@ contract SovraWalletV1 is ISovraWallet {
     /// @inheritdoc ISovraWallet
     bytes32 public passkeyY;
     /// @inheritdoc ISovraWallet
-    bytes32 public serverKeyX;
+    bytes32 public recoveryKeyX;
     /// @inheritdoc ISovraWallet
-    bytes32 public serverKeyY;
+    bytes32 public recoveryKeyY;
 
     // ─── DID Metadata ────────────────────────────────────
 
@@ -81,7 +82,7 @@ contract SovraWalletV1 is ISovraWallet {
         ));
     }
 
-    /// @dev Builds the final message hash that both keys sign, binding operation + nonce + domain.
+    /// @dev Builds the final message hash that the passkey signs, binding operation + nonce + domain.
     /// @param operationHash The keccak256 hash of the operation-specific parameters
     /// @param _nonce The current sequential nonce for replay protection
     /// @return The EIP-712 structured message hash
@@ -112,22 +113,16 @@ contract SovraWalletV1 is ISovraWallet {
         return success && result.length >= 32 && abi.decode(result, (uint256)) == 1;
     }
 
-    /// @dev Verifies both passkey and server key signatures against the stored public keys.
+    /// @dev Verifies the passkey signature against the stored public key.
     /// @param msgHash The EIP-712 message hash to verify against
     /// @param passkeyR r component of the passkey's P256 signature
     /// @param passkeyS s component of the passkey's P256 signature
-    /// @param serverR r component of the server key's P256 signature
-    /// @param serverS s component of the server key's P256 signature
-    function _verify2of2(
+    function _verifyPasskey(
         bytes32 msgHash,
-        bytes32 passkeyR, bytes32 passkeyS,
-        bytes32 serverR, bytes32 serverS
+        bytes32 passkeyR, bytes32 passkeyS
     ) internal view {
         if (!_verifyP256(msgHash, passkeyR, passkeyS, passkeyX, passkeyY)) {
             revert InvalidPasskeySig();
-        }
-        if (!_verifyP256(msgHash, serverR, serverS, serverKeyX, serverKeyY)) {
-            revert InvalidServerSig();
         }
     }
 
@@ -136,27 +131,23 @@ contract SovraWalletV1 is ISovraWallet {
     /// @inheritdoc ISovraWallet
     function initialize(
         bytes32 _passkeyX, bytes32 _passkeyY,
-        bytes32 _serverKeyX, bytes32 _serverKeyY,
-        bytes32 passkeyR, bytes32 passkeyS,
-        bytes32 serverR, bytes32 serverS
+        bytes32 _recoveryKeyX, bytes32 _recoveryKeyY,
+        bytes32 passkeyR, bytes32 passkeyS
     ) external {
         if (didCreated != 0) revert AlreadyInitialized();
 
         bytes32 initHash = keccak256(abi.encode(
-            address(this), _passkeyX, _passkeyY, _serverKeyX, _serverKeyY
+            address(this), _passkeyX, _passkeyY, _recoveryKeyX, _recoveryKeyY
         ));
 
         if (!_verifyP256(initHash, passkeyR, passkeyS, _passkeyX, _passkeyY)) {
             revert InvalidPasskeySig();
         }
-        if (!_verifyP256(initHash, serverR, serverS, _serverKeyX, _serverKeyY)) {
-            revert InvalidServerSig();
-        }
 
         passkeyX = _passkeyX;
         passkeyY = _passkeyY;
-        serverKeyX = _serverKeyX;
-        serverKeyY = _serverKeyY;
+        recoveryKeyX = _recoveryKeyX;
+        recoveryKeyY = _recoveryKeyY;
 
         didCreated = uint64(block.timestamp);
         didUpdated = uint64(block.timestamp);
@@ -170,15 +161,14 @@ contract SovraWalletV1 is ISovraWallet {
         address target,
         uint256 value,
         bytes calldata data,
-        bytes32 passkeyR, bytes32 passkeyS,
-        bytes32 serverR, bytes32 serverS
+        bytes32 passkeyR, bytes32 passkeyS
     ) external returns (bytes memory) {
         if (didDeactivated) revert DIDIsDeactivated();
 
         bytes32 opHash = keccak256(abi.encode(target, value, data));
         bytes32 msgHash = _buildMessageHash(opHash, nonce);
 
-        _verify2of2(msgHash, passkeyR, passkeyS, serverR, serverS);
+        _verifyPasskey(msgHash, passkeyR, passkeyS);
 
         nonce++;
 
@@ -192,15 +182,14 @@ contract SovraWalletV1 is ISovraWallet {
     /// @inheritdoc ISovraWallet
     function rotatePasskey(
         bytes32 newX, bytes32 newY,
-        bytes32 passkeyR, bytes32 passkeyS,
-        bytes32 serverR, bytes32 serverS
+        bytes32 passkeyR, bytes32 passkeyS
     ) external {
         if (didDeactivated) revert DIDIsDeactivated();
 
         bytes32 opHash = keccak256(abi.encode(bytes4(keccak256("rotatePasskey")), newX, newY));
         bytes32 msgHash = _buildMessageHash(opHash, nonce);
 
-        _verify2of2(msgHash, passkeyR, passkeyS, serverR, serverS);
+        _verifyPasskey(msgHash, passkeyR, passkeyS);
 
         nonce++;
         passkeyX = newX;
@@ -212,21 +201,20 @@ contract SovraWalletV1 is ISovraWallet {
     }
 
     /// @inheritdoc ISovraWallet
-    function rotateServerKey(
+    function rotateRecoveryKey(
         bytes32 newX, bytes32 newY,
-        bytes32 passkeyR, bytes32 passkeyS,
-        bytes32 serverR, bytes32 serverS
+        bytes32 passkeyR, bytes32 passkeyS
     ) external {
         if (didDeactivated) revert DIDIsDeactivated();
 
-        bytes32 opHash = keccak256(abi.encode(bytes4(keccak256("rotateServerKey")), newX, newY));
+        bytes32 opHash = keccak256(abi.encode(bytes4(keccak256("rotateRecoveryKey")), newX, newY));
         bytes32 msgHash = _buildMessageHash(opHash, nonce);
 
-        _verify2of2(msgHash, passkeyR, passkeyS, serverR, serverS);
+        _verifyPasskey(msgHash, passkeyR, passkeyS);
 
         nonce++;
-        serverKeyX = newX;
-        serverKeyY = newY;
+        recoveryKeyX = newX;
+        recoveryKeyY = newY;
         didUpdated = uint64(block.timestamp);
         didVersionId++;
 
@@ -235,15 +223,14 @@ contract SovraWalletV1 is ISovraWallet {
 
     /// @inheritdoc ISovraWallet
     function deactivate(
-        bytes32 passkeyR, bytes32 passkeyS,
-        bytes32 serverR, bytes32 serverS
+        bytes32 passkeyR, bytes32 passkeyS
     ) external {
         if (didDeactivated) revert AlreadyDeactivated();
 
         bytes32 opHash = keccak256(abi.encode(bytes4(keccak256("deactivate"))));
         bytes32 msgHash = _buildMessageHash(opHash, nonce);
 
-        _verify2of2(msgHash, passkeyR, passkeyS, serverR, serverS);
+        _verifyPasskey(msgHash, passkeyR, passkeyS);
 
         nonce++;
         didDeactivated = true;
@@ -255,8 +242,7 @@ contract SovraWalletV1 is ISovraWallet {
     /// @inheritdoc ISovraWallet
     function upgrade(
         address newImplementation,
-        bytes32 passkeyR, bytes32 passkeyS,
-        bytes32 serverR, bytes32 serverS
+        bytes32 passkeyR, bytes32 passkeyS
     ) external {
         if (didDeactivated) revert DIDIsDeactivated();
         if (newImplementation == address(0)) revert InvalidImplementation();
@@ -265,7 +251,7 @@ contract SovraWalletV1 is ISovraWallet {
         bytes32 opHash = keccak256(abi.encode(bytes4(keccak256("upgrade")), newImplementation));
         bytes32 msgHash = _buildMessageHash(opHash, nonce);
 
-        _verify2of2(msgHash, passkeyR, passkeyS, serverR, serverS);
+        _verifyPasskey(msgHash, passkeyR, passkeyS);
 
         nonce++;
 
@@ -294,7 +280,7 @@ contract SovraWalletV1 is ISovraWallet {
 
         // Surviving key (NOT being replaced) signs
         if (keyToReplace == 0) {
-            if (!_verifyP256(msgHash, sigR, sigS, serverKeyX, serverKeyY)) revert InvalidSig();
+            if (!_verifyP256(msgHash, sigR, sigS, recoveryKeyX, recoveryKeyY)) revert InvalidSig();
         } else {
             if (!_verifyP256(msgHash, sigR, sigS, passkeyX, passkeyY)) revert InvalidSig();
         }
@@ -324,7 +310,7 @@ contract SovraWalletV1 is ISovraWallet {
         if (signerKey == 0) {
             if (!_verifyP256(msgHash, sigR, sigS, passkeyX, passkeyY)) revert InvalidSig();
         } else {
-            if (!_verifyP256(msgHash, sigR, sigS, serverKeyX, serverKeyY)) revert InvalidSig();
+            if (!_verifyP256(msgHash, sigR, sigS, recoveryKeyX, recoveryKeyY)) revert InvalidSig();
         }
 
         nonce++;
@@ -346,7 +332,7 @@ contract SovraWalletV1 is ISovraWallet {
 
         // Surviving key signs finalization
         if (req.keyToReplace == 0) {
-            if (!_verifyP256(msgHash, sigR, sigS, serverKeyX, serverKeyY)) revert InvalidSig();
+            if (!_verifyP256(msgHash, sigR, sigS, recoveryKeyX, recoveryKeyY)) revert InvalidSig();
         } else {
             if (!_verifyP256(msgHash, sigR, sigS, passkeyX, passkeyY)) revert InvalidSig();
         }
@@ -357,8 +343,8 @@ contract SovraWalletV1 is ISovraWallet {
             passkeyX = req.newKeyX;
             passkeyY = req.newKeyY;
         } else {
-            serverKeyX = req.newKeyX;
-            serverKeyY = req.newKeyY;
+            recoveryKeyX = req.newKeyX;
+            recoveryKeyY = req.newKeyY;
         }
 
         didUpdated = uint64(block.timestamp);

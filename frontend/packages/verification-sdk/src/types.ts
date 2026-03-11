@@ -13,7 +13,6 @@ export const ErrorCode = {
   HOLDER_DEACTIVATED: "HOLDER_DEACTIVATED",
   KB_JWT_MISSING: "KB_JWT_MISSING",
   KB_PASSKEY_SIG_INVALID: "KB_PASSKEY_SIG_INVALID",
-  KB_SERVER_SIG_INVALID: "KB_SERVER_SIG_INVALID",
   KB_NONCE_MISMATCH: "KB_NONCE_MISMATCH",
   KB_AUDIENCE_MISMATCH: "KB_AUDIENCE_MISMATCH",
   KB_SD_HASH_MISMATCH: "KB_SD_HASH_MISMATCH",
@@ -77,7 +76,7 @@ export interface IssuerKeyData {
 export interface HolderKeyData {
   passkeyX: Uint8Array;
   passkeyY: Uint8Array;
-  serverKeyX: Uint8Array;
-  serverKeyY: Uint8Array;
+  recoveryKeyX: Uint8Array;
+  recoveryKeyY: Uint8Array;
   versionId: number;
 }

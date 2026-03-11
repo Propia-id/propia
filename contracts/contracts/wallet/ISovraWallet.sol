@@ -4,14 +4,15 @@ pragma solidity 0.8.31;
 /// @title ISovraWallet - Interface for the Sovra EIP-7702 holder wallet
 /// @notice Defines the full API for wallet initialization, execution, key management,
 ///         DID lifecycle, time-locked recovery, and UUPS upgradeability.
-///         All state-changing functions require P256 signature authorization.
+///         Normal operations require passkey-only P256 signature authorization.
+///         The recovery key can only initiate time-locked recovery.
 interface ISovraWallet {
     // ─── Structs ─────────────────────────────────────────
 
     /// @notice Pending recovery request stored on-chain during the 7-day delay window.
     /// @param newKeyX X coordinate of the replacement P256 public key
     /// @param newKeyY Y coordinate of the replacement P256 public key
-    /// @param keyToReplace Which key is being replaced: 0 = passkey, 1 = server key
+    /// @param keyToReplace Which key is being replaced: 0 = passkey, 1 = recovery key
     /// @param initiatedAt Timestamp when recovery was initiated (used to enforce delay)
     /// @param active Whether this recovery request is currently pending
     struct RecoveryRequest {
@@ -35,9 +36,6 @@ interface ISovraWallet {
 
     /// @notice Thrown when the passkey P256 signature fails verification.
     error InvalidPasskeySig();
-
-    /// @notice Thrown when the server key P256 signature fails verification.
-    error InvalidServerSig();
 
     /// @notice Thrown when a single-key P256 signature fails verification (recovery ops).
     error InvalidSig();
@@ -82,7 +80,7 @@ interface ISovraWallet {
 
     /// @notice Emitted when a recovery process is started by the surviving key.
     /// @param identity The wallet (EOA) address initiating recovery
-    /// @param keyToReplace Which key is being replaced: 0 = passkey, 1 = server key
+    /// @param keyToReplace Which key is being replaced: 0 = passkey, 1 = recovery key
     /// @param newKeyX X coordinate of the proposed replacement key
     /// @param newKeyY Y coordinate of the proposed replacement key
     event RecoveryInitiated(address indexed identity, uint8 keyToReplace, bytes32 newKeyX, bytes32 newKeyY);
@@ -93,7 +91,7 @@ interface ISovraWallet {
 
     /// @notice Emitted when a recovery is finalized after the 7-day delay, replacing the lost key.
     /// @param identity The wallet (EOA) address whose key was replaced
-    /// @param keyReplaced Which key was replaced: 0 = passkey, 1 = server key
+    /// @param keyReplaced Which key was replaced: 0 = passkey, 1 = recovery key
     event RecoveryFinalized(address indexed identity, uint8 keyReplaced);
 
     /// @notice Emitted on each successful execute() call.
@@ -111,98 +109,80 @@ interface ISovraWallet {
     // ─── Functions ───────────────────────────────────────
 
     /// @notice One-time initialization called atomically with the EIP-7702 delegation.
-    ///         Both keys prove possession by signing a hash of (walletAddress, all four key coordinates).
+    ///         The passkey proves possession by signing a hash of (walletAddress, all four key coordinates).
     /// @param _passkeyX X coordinate of the holder's P256 passkey
     /// @param _passkeyY Y coordinate of the holder's P256 passkey
-    /// @param _serverKeyX X coordinate of the co-signing server's P256 key
-    /// @param _serverKeyY Y coordinate of the co-signing server's P256 key
+    /// @param _recoveryKeyX X coordinate of the recovery server's P256 key
+    /// @param _recoveryKeyY Y coordinate of the recovery server's P256 key
     /// @param passkeyR r component of the passkey's P256 signature over the init hash
     /// @param passkeyS s component of the passkey's P256 signature over the init hash
-    /// @param serverR r component of the server key's P256 signature over the init hash
-    /// @param serverS s component of the server key's P256 signature over the init hash
     function initialize(
         bytes32 _passkeyX, bytes32 _passkeyY,
-        bytes32 _serverKeyX, bytes32 _serverKeyY,
-        bytes32 passkeyR, bytes32 passkeyS,
-        bytes32 serverR, bytes32 serverS
+        bytes32 _recoveryKeyX, bytes32 _recoveryKeyY,
+        bytes32 passkeyR, bytes32 passkeyS
     ) external;
 
-    /// @notice Execute an arbitrary call from the wallet. Requires 2-of-2 P256 signatures.
+    /// @notice Execute an arbitrary call from the wallet. Requires passkey P256 signature.
     ///         The signed message includes target, value, data, and the current nonce under EIP-712.
     /// @param target The address to call
     /// @param value The ETH value to send
     /// @param data The calldata to forward
     /// @param passkeyR r component of the passkey's P256 signature
     /// @param passkeyS s component of the passkey's P256 signature
-    /// @param serverR r component of the server key's P256 signature
-    /// @param serverS s component of the server key's P256 signature
     /// @return The return data from the target call
     function execute(
         address target,
         uint256 value,
         bytes calldata data,
-        bytes32 passkeyR, bytes32 passkeyS,
-        bytes32 serverR, bytes32 serverS
+        bytes32 passkeyR, bytes32 passkeyS
     ) external returns (bytes memory);
 
-    /// @notice Replace the passkey with a new P256 key pair. Requires 2-of-2.
+    /// @notice Replace the passkey with a new P256 key pair. Requires passkey signature.
     ///         Increments nonce and DID versionId, updates didUpdated timestamp.
     /// @param newX X coordinate of the new passkey
     /// @param newY Y coordinate of the new passkey
     /// @param passkeyR r component of the current passkey's P256 signature
     /// @param passkeyS s component of the current passkey's P256 signature
-    /// @param serverR r component of the server key's P256 signature
-    /// @param serverS s component of the server key's P256 signature
     function rotatePasskey(
         bytes32 newX, bytes32 newY,
-        bytes32 passkeyR, bytes32 passkeyS,
-        bytes32 serverR, bytes32 serverS
+        bytes32 passkeyR, bytes32 passkeyS
     ) external;
 
-    /// @notice Replace the server key with a new P256 key pair. Requires 2-of-2.
+    /// @notice Replace the recovery key with a new P256 key pair. Requires passkey signature.
     ///         Increments nonce and DID versionId, updates didUpdated timestamp.
-    /// @param newX X coordinate of the new server key
-    /// @param newY Y coordinate of the new server key
+    /// @param newX X coordinate of the new recovery key
+    /// @param newY Y coordinate of the new recovery key
     /// @param passkeyR r component of the passkey's P256 signature
     /// @param passkeyS s component of the passkey's P256 signature
-    /// @param serverR r component of the current server key's P256 signature
-    /// @param serverS s component of the current server key's P256 signature
-    function rotateServerKey(
+    function rotateRecoveryKey(
         bytes32 newX, bytes32 newY,
-        bytes32 passkeyR, bytes32 passkeyS,
-        bytes32 serverR, bytes32 serverS
+        bytes32 passkeyR, bytes32 passkeyS
     ) external;
 
-    /// @notice Permanently deactivate the DID. Requires 2-of-2. Irreversible.
+    /// @notice Permanently deactivate the DID. Requires passkey signature. Irreversible.
     ///         After deactivation, all operations except view functions are blocked.
     /// @param passkeyR r component of the passkey's P256 signature
     /// @param passkeyS s component of the passkey's P256 signature
-    /// @param serverR r component of the server key's P256 signature
-    /// @param serverS s component of the server key's P256 signature
     function deactivate(
-        bytes32 passkeyR, bytes32 passkeyS,
-        bytes32 serverR, bytes32 serverS
+        bytes32 passkeyR, bytes32 passkeyS
     ) external;
 
-    /// @notice Change the implementation contract (UUPS upgrade). Requires 2-of-2.
+    /// @notice Change the implementation contract (UUPS upgrade). Requires passkey signature.
     ///         Writes the new address to the ERC-1967 implementation slot. The dispatcher
     ///         will delegatecall the new implementation for all subsequent calls.
     /// @param newImplementation Address of the new implementation contract (must have code)
     /// @param passkeyR r component of the passkey's P256 signature
     /// @param passkeyS s component of the passkey's P256 signature
-    /// @param serverR r component of the server key's P256 signature
-    /// @param serverS s component of the server key's P256 signature
     function upgrade(
         address newImplementation,
-        bytes32 passkeyR, bytes32 passkeyS,
-        bytes32 serverR, bytes32 serverS
+        bytes32 passkeyR, bytes32 passkeyS
     ) external;
 
     /// @notice Start a time-locked recovery to replace a lost key. Only the surviving key signs.
     ///         The other party has a 7-day window to cancel before finalization.
     /// @param newKeyX X coordinate of the proposed replacement key
     /// @param newKeyY Y coordinate of the proposed replacement key
-    /// @param keyToReplace Which key to replace: 0 = passkey, 1 = server key
+    /// @param keyToReplace Which key to replace: 0 = passkey, 1 = recovery key
     /// @param sigR r component of the surviving key's P256 signature
     /// @param sigS s component of the surviving key's P256 signature
     function initiateRecovery(
@@ -211,10 +191,10 @@ interface ISovraWallet {
         bytes32 sigR, bytes32 sigS
     ) external;
 
-    /// @notice Cancel a pending recovery. Either key (passkey or server) can cancel at any time.
+    /// @notice Cancel a pending recovery. Either key (passkey or recovery) can cancel at any time.
     /// @param sigR r component of the signer's P256 signature
     /// @param sigS s component of the signer's P256 signature
-    /// @param signerKey Which key is signing the cancellation: 0 = passkey, 1 = server key
+    /// @param signerKey Which key is signing the cancellation: 0 = passkey, 1 = recovery key
     function cancelRecovery(
         bytes32 sigR, bytes32 sigS,
         uint8 signerKey
@@ -236,11 +216,11 @@ interface ISovraWallet {
     /// @notice Y coordinate of the holder's P256 passkey.
     function passkeyY() external view returns (bytes32);
 
-    /// @notice X coordinate of the co-signing server's P256 key.
-    function serverKeyX() external view returns (bytes32);
+    /// @notice X coordinate of the recovery server's P256 key.
+    function recoveryKeyX() external view returns (bytes32);
 
-    /// @notice Y coordinate of the co-signing server's P256 key.
-    function serverKeyY() external view returns (bytes32);
+    /// @notice Y coordinate of the recovery server's P256 key.
+    function recoveryKeyY() external view returns (bytes32);
 
     /// @notice Timestamp when the DID was created (set during initialize).
     function didCreated() external view returns (uint64);
@@ -260,7 +240,7 @@ interface ISovraWallet {
     /// @notice The currently pending recovery request, if any.
     /// @return newKeyX X coordinate of proposed replacement key
     /// @return newKeyY Y coordinate of proposed replacement key
-    /// @return keyToReplace 0 = passkey, 1 = server key
+    /// @return keyToReplace 0 = passkey, 1 = recovery key
     /// @return initiatedAt Timestamp when recovery was initiated
     /// @return active Whether this recovery is currently pending
     function pendingRecovery() external view returns (bytes32, bytes32, uint8, uint64, bool);

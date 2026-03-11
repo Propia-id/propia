@@ -14,9 +14,9 @@ defmodule Sovra.CosignerHelpers do
     {:ok, holder} =
       HolderRecord.create_changeset(%{
         sovra_address: sovra_address,
-        server_key_id: key_id,
-        server_public_key_x: x,
-        server_public_key_y: y,
+        recovery_key_id: key_id,
+        recovery_public_key_x: x,
+        recovery_public_key_y: y,
         oauth_provider: "google",
         oauth_subject: Sovra.Auth.MockAuthProvider.test_sub()
       })

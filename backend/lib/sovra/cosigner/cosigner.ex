@@ -19,9 +19,9 @@ defmodule Sovra.Cosigner do
       changeset =
         HolderRecord.create_changeset(%{
           sovra_address: sovra_address,
-          server_key_id: key_id,
-          server_public_key_x: x,
-          server_public_key_y: y,
+          recovery_key_id: key_id,
+          recovery_public_key_x: x,
+          recovery_public_key_y: y,
           oauth_provider: "google",
           oauth_subject: sub
         })
@@ -32,7 +32,7 @@ defmodule Sovra.Cosigner do
 
           {:ok,
            %{
-             server_public_key: %{
+             recovery_public_key: %{
                x: Base.encode64(x, padding: false),
                y: Base.encode64(y, padding: false)
              },
@@ -75,35 +75,26 @@ defmodule Sovra.Cosigner do
     end
   end
 
-  def cosign(sovra_address, <<hash::binary-size(32)>>) do
-    case get_active_holder(sovra_address) do
-      {:ok, holder} -> Key.sign(holder.server_key_id, hash)
-      error -> error
-    end
-  end
-
-  def cosign(_sovra_address, _hash), do: {:error, :invalid_hash_size}
-
-  def rotate_server_key(sovra_address) do
+  def rotate_recovery_key(sovra_address) do
     with {:ok, holder} <- get_active_holder(sovra_address),
          {:ok, %{key_id: new_key_id, public_key_x: new_x, public_key_y: new_y}} <-
            Key.generate_key("#{sovra_address}_rotation"),
          rotation_hash <- :crypto.hash(:sha256, <<new_x::binary, new_y::binary>>),
-         {:ok, rotation_sig} <- Key.sign(holder.server_key_id, rotation_hash) do
+         {:ok, rotation_sig} <- Key.sign(holder.recovery_key_id, rotation_hash) do
       changeset =
         HolderRecord.update_key_changeset(holder, %{
-          server_key_id: new_key_id,
-          server_public_key_x: new_x,
-          server_public_key_y: new_y
+          recovery_key_id: new_key_id,
+          recovery_public_key_x: new_x,
+          recovery_public_key_y: new_y
         })
 
       case Repo.update(changeset) do
         {:ok, _updated} ->
-          Key.delete_key(holder.server_key_id)
+          Key.delete_key(holder.recovery_key_id)
 
           {:ok,
            %{
-             new_server_public_key: %{
+             new_recovery_public_key: %{
                x: Base.encode64(new_x, padding: false),
                y: Base.encode64(new_y, padding: false)
              },
@@ -121,7 +112,7 @@ defmodule Sovra.Cosigner do
     with {:ok, holder} <- get_holder(sovra_address),
          recovery_hash <-
            :crypto.hash(:sha256, <<passkey_x::binary, passkey_y::binary>>),
-         {:ok, sig} <- Key.sign(holder.server_key_id, recovery_hash) do
+         {:ok, sig} <- Key.sign(holder.recovery_key_id, recovery_hash) do
       changeset = HolderRecord.status_changeset(holder, "recovery_pending")
 
       case Repo.update(changeset) do

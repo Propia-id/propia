@@ -45,8 +45,8 @@ function buildMockRpcResponses(
   // Wallet contract view function returns
   const passkeyXResult = "0x" + bytesToHex(keys.passkey.x, false);
   const passkeyYResult = "0x" + bytesToHex(keys.passkey.y, false);
-  const serverKeyXResult = "0x" + bytesToHex(keys.server.x, false);
-  const serverKeyYResult = "0x" + bytesToHex(keys.server.y, false);
+  const recoveryKeyXResult = "0x" + bytesToHex(keys.recovery.x, false);
+  const recoveryKeyYResult = "0x" + bytesToHex(keys.recovery.y, false);
   const didDeactivatedResult = "0x" + slot(opts.deactivatedHolder ? "1" : "0");
   const didVersionIdResult = "0x" + slot("1");
 
@@ -55,8 +55,8 @@ function buildMockRpcResponses(
     trustedResult,
     passkeyXResult,
     passkeyYResult,
-    serverKeyXResult,
-    serverKeyYResult,
+    recoveryKeyXResult,
+    recoveryKeyYResult,
     didDeactivatedResult,
     didVersionIdResult,
   };
@@ -90,12 +90,12 @@ function createFetchMock(
 
       // Compute selectors for each view function
       const fns = [
-        "passkeyX()", "passkeyY()", "serverKeyX()", "serverKeyY()",
+        "passkeyX()", "passkeyY()", "recoveryKeyX()", "recoveryKeyY()",
         "didDeactivated()", "didVersionId()",
       ];
       const results = [
         responses.passkeyXResult, responses.passkeyYResult,
-        responses.serverKeyXResult, responses.serverKeyYResult,
+        responses.recoveryKeyXResult, responses.recoveryKeyYResult,
         responses.didDeactivatedResult, responses.didVersionIdResult,
       ];
       for (let i = 0; i < fns.length; i++) {

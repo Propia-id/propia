@@ -56,7 +56,7 @@ config :sovra, dev_routes: true
 config :sovra,
   google_client_id: System.get_env("GOOGLE_CLIENT_ID", "dev-client-id"),
   google_client_secret: System.get_env("GOOGLE_CLIENT_SECRET", "dev-client-secret"),
-  google_redirect_uri: "http://localhost:4000/api/v1/cosigner/auth/callback",
+  google_redirect_uri: "http://localhost:4000/api/v1/holder/auth/callback",
   google_ios_client_id: System.get_env("GOOGLE_IOS_CLIENT_ID"),
   google_android_client_id: System.get_env("GOOGLE_ANDROID_CLIENT_ID"),
   google_web_client_id: System.get_env("GOOGLE_WEB_CLIENT_ID")

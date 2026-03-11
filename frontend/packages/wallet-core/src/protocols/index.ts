@@ -1,12 +1,10 @@
 import type { ApiClient, IssuerMetadata } from "../api/index";
-import type { CosignerClient } from "../cosigner/index";
 import type { CredentialManager } from "../credentials/index";
 import type { PasskeyProvider } from "../platform/index";
 import type { StoredCredential } from "../state/index";
 import {
   base64urlEncode,
   sha256,
-  concatBytes,
 } from "../utils/index";
 
 // ─── OID4VCI Types ────────────────────────────────────
@@ -53,7 +51,6 @@ export interface ApprovalData {
 export class IssuanceProtocol {
   constructor(
     private api: ApiClient,
-    private cosignerClient: CosignerClient,
     private credentialManager: CredentialManager,
     private passkeyProvider: PasskeyProvider,
     private getIdentity: () => {
@@ -181,15 +178,8 @@ export class IssuanceProtocol {
       hash,
     );
 
-    // Co-sign with server
-    const serverSig = await this.cosignerClient.cosign(hash);
-
-    // Concatenate both signatures (64 + 64 = 128 bytes)
-    const combinedSig = concatBytes(
-      passkeySig.signature,
-      concatBytes(serverSig.r, serverSig.s),
-    );
-    const sigB64 = base64urlEncode(combinedSig);
+    // Passkey-only 64-byte signature
+    const sigB64 = base64urlEncode(passkeySig.signature);
 
     return `${signingInput}.${sigB64}`;
   }
@@ -200,7 +190,6 @@ export class IssuanceProtocol {
 export class PresentationProtocol {
   constructor(
     private api: ApiClient,
-    private cosignerClient: CosignerClient,
     private credentialManager: CredentialManager,
     private passkeyProvider: PasskeyProvider,
     private getIdentity: () => {
@@ -340,15 +329,8 @@ export class PresentationProtocol {
       hash,
     );
 
-    // Co-sign with server
-    const serverSig = await this.cosignerClient.cosign(hash);
-
-    // Concatenate both signatures (64 + 64 = 128 bytes)
-    const combinedSig = concatBytes(
-      passkeySig.signature,
-      concatBytes(serverSig.r, serverSig.s),
-    );
-    const sigB64 = base64urlEncode(combinedSig);
+    // Passkey-only 64-byte signature
+    const sigB64 = base64urlEncode(passkeySig.signature);
 
     return `${signingInput}.${sigB64}`;
   }

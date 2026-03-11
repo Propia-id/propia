@@ -3,15 +3,15 @@ defmodule SovraWeb.Cosigner.OnboardControllerTest do
 
   alias Sovra.Auth.MockAuthProvider
 
-  describe "POST /api/v1/cosigner/onboard" do
-    test "creates holder and returns server public key", %{conn: conn} do
+  describe "POST /api/v1/holder/onboard" do
+    test "creates holder and returns recovery public key", %{conn: conn} do
       conn =
-        post(conn, "/api/v1/cosigner/onboard", %{
+        post(conn, "/api/v1/holder/onboard", %{
           "sovraAddress" => "0xonboard_test",
           "oauthToken" => MockAuthProvider.valid_token()
         })
 
-      assert %{"serverPublicKey" => %{"x" => x, "y" => y}} = json_response(conn, 201)
+      assert %{"recoveryPublicKey" => %{"x" => x, "y" => y}} = json_response(conn, 201)
       assert is_binary(x)
       assert is_binary(y)
     end
@@ -22,15 +22,15 @@ defmodule SovraWeb.Cosigner.OnboardControllerTest do
         "oauthToken" => MockAuthProvider.valid_token()
       }
 
-      post(conn, "/api/v1/cosigner/onboard", params)
-      conn = post(conn, "/api/v1/cosigner/onboard", params)
+      post(conn, "/api/v1/holder/onboard", params)
+      conn = post(conn, "/api/v1/holder/onboard", params)
 
       assert %{"error" => "already_onboarded"} = json_response(conn, 409)
     end
 
     test "returns 401 for invalid token", %{conn: conn} do
       conn =
-        post(conn, "/api/v1/cosigner/onboard", %{
+        post(conn, "/api/v1/holder/onboard", %{
           "sovraAddress" => "0xinvalid_token",
           "oauthToken" => "bad-token"
         })
@@ -39,7 +39,7 @@ defmodule SovraWeb.Cosigner.OnboardControllerTest do
     end
 
     test "returns 400 for missing fields", %{conn: conn} do
-      conn = post(conn, "/api/v1/cosigner/onboard", %{})
+      conn = post(conn, "/api/v1/holder/onboard", %{})
 
       assert %{"error" => "missing_required_fields"} = json_response(conn, 400)
     end

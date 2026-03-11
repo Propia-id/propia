@@ -196,23 +196,23 @@ export function buildInitHash(
   walletAddress: string,
   passkeyX: Uint8Array,
   passkeyY: Uint8Array,
-  serverKeyX: Uint8Array,
-  serverKeyY: Uint8Array,
+  recoveryKeyX: Uint8Array,
+  recoveryKeyY: Uint8Array,
 ): Uint8Array {
   return keccak256(
     encodeAbiValues([
       encodeAddress(walletAddress),
       passkeyX,
       passkeyY,
-      serverKeyX,
-      serverKeyY,
+      recoveryKeyX,
+      recoveryKeyY,
     ]),
   );
 }
 
-/** Build operation hash for rotatePasskey/rotateServerKey. */
+/** Build operation hash for rotatePasskey/rotateRecoveryKey. */
 export function buildRotateOpHash(
-  operation: "rotatePasskey" | "rotateServerKey",
+  operation: "rotatePasskey" | "rotateRecoveryKey",
   newX: Uint8Array,
   newY: Uint8Array,
 ): Uint8Array {
@@ -363,15 +363,13 @@ function intToBytes(value: number): Uint8Array {
 export function buildInitializeCalldata(
   passkeyX: Uint8Array,
   passkeyY: Uint8Array,
-  serverKeyX: Uint8Array,
-  serverKeyY: Uint8Array,
+  recoveryKeyX: Uint8Array,
+  recoveryKeyY: Uint8Array,
   passkeyR: Uint8Array,
   passkeyS: Uint8Array,
-  serverR: Uint8Array,
-  serverS: Uint8Array,
 ): Uint8Array {
   return encodeFunctionCall(
-    "initialize(bytes32,bytes32,bytes32,bytes32,bytes32,bytes32,bytes32,bytes32)",
-    [passkeyX, passkeyY, serverKeyX, serverKeyY, passkeyR, passkeyS, serverR, serverS],
+    "initialize(bytes32,bytes32,bytes32,bytes32,bytes32,bytes32)",
+    [passkeyX, passkeyY, recoveryKeyX, recoveryKeyY, passkeyR, passkeyS],
   );
 }

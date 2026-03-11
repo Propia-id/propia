@@ -17,8 +17,8 @@ export async function resolveHolderKeys(
   const selectors = {
     passkeyX: selectorHex("passkeyX()"),
     passkeyY: selectorHex("passkeyY()"),
-    serverKeyX: selectorHex("serverKeyX()"),
-    serverKeyY: selectorHex("serverKeyY()"),
+    recoveryKeyX: selectorHex("recoveryKeyX()"),
+    recoveryKeyY: selectorHex("recoveryKeyY()"),
     didDeactivated: selectorHex("didDeactivated()"),
     didVersionId: selectorHex("didVersionId()"),
   };
@@ -29,8 +29,8 @@ export async function resolveHolderKeys(
     results = await Promise.all([
       ethCall(rpcUrl, holderAddress, selectors.passkeyX),
       ethCall(rpcUrl, holderAddress, selectors.passkeyY),
-      ethCall(rpcUrl, holderAddress, selectors.serverKeyX),
-      ethCall(rpcUrl, holderAddress, selectors.serverKeyY),
+      ethCall(rpcUrl, holderAddress, selectors.recoveryKeyX),
+      ethCall(rpcUrl, holderAddress, selectors.recoveryKeyY),
       ethCall(rpcUrl, holderAddress, selectors.didDeactivated),
       ethCall(rpcUrl, holderAddress, selectors.didVersionId),
     ]);
@@ -63,15 +63,15 @@ export async function resolveHolderKeys(
   return {
     passkeyX: decodeBytes32(results[0], 0),
     passkeyY: decodeBytes32(results[1], 0),
-    serverKeyX: decodeBytes32(results[2], 0),
-    serverKeyY: decodeBytes32(results[3], 0),
+    recoveryKeyX: decodeBytes32(results[2], 0),
+    recoveryKeyY: decodeBytes32(results[3], 0),
     versionId: decodeUint32(results[5], 0),
   };
 }
 
 /**
  * Extract the holder address from a cnf.kid field.
- * Format: "did:sovra:0xABCD...#2of2" → "0xABCD..."
+ * Format: "did:sovra:0xABCD...#passkey" → "0xABCD..."
  */
 export function extractHolderAddress(cnfKid: string): string {
   if (!cnfKid.startsWith("did:sovra:")) {

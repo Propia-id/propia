@@ -65,8 +65,8 @@ defmodule SovraWeb.Router do
     get "/did/:did", PresentationController, :resolve_did
   end
 
-  # Co-signing API (public)
-  scope "/api/v1/cosigner", SovraWeb.Cosigner do
+  # Holder onboarding & auth (public)
+  scope "/api/v1/holder", SovraWeb.Cosigner do
     pipe_through :api
 
     post "/onboard", OnboardController, :onboard
@@ -74,12 +74,11 @@ defmodule SovraWeb.Router do
     post "/auth/callback", AuthController, :callback
   end
 
-  # Co-signing API (authenticated)
-  scope "/api/v1/cosigner", SovraWeb.Cosigner do
+  # Recovery operations (authenticated)
+  scope "/api/v1/recovery", SovraWeb.Cosigner do
     pipe_through [:api, :cosigner_session]
 
-    post "/cosign", SignController, :sign
-    post "/rotate-server-key", RotateController, :rotate
-    post "/initiate-recovery", RecoveryController, :initiate_recovery
+    post "/rotate-key", RotateController, :rotate
+    post "/initiate", RecoveryController, :initiate_recovery
   end
 end

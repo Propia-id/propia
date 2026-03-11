@@ -40,7 +40,7 @@ function signJwt(signingInput: string, privateKey: Uint8Array): string {
 export interface FixtureKeys {
   issuer: ReturnType<typeof generateP256KeyPair>;
   passkey: ReturnType<typeof generateP256KeyPair>;
-  server: ReturnType<typeof generateP256KeyPair>;
+  recovery: ReturnType<typeof generateP256KeyPair>;
 }
 
 export interface FixtureOptions {
@@ -58,7 +58,7 @@ export function generateKeys(): FixtureKeys {
   return {
     issuer: generateP256KeyPair(),
     passkey: generateP256KeyPair(),
-    server: generateP256KeyPair(),
+    recovery: generateP256KeyPair(),
   };
 }
 
@@ -105,7 +105,7 @@ export function buildPresentation(
     iss: `did:sovra:${issuerAddress}`,
     sub: `did:sovra:${holderAddress}`,
     vct,
-    cnf: { kid: `did:sovra:${holderAddress}#2of2` },
+    cnf: { kid: `did:sovra:${holderAddress}#passkey` },
     iat: now,
     exp,
     _sd: sdDigests,
@@ -144,20 +144,9 @@ export function buildPresentation(
   );
   const kbSigningInput = `${kbHeaderB64}.${kbPayloadB64}`;
 
-  // Compound signature: passkey (64 bytes) || server (64 bytes)
-  const kbHash = sha256(new TextEncoder().encode(kbSigningInput));
-
-  const passkeySig = p256.sign(kbHash, keys.passkey.privateKey, { lowS: true });
-  const passkeyR = hexToBytes(passkeySig.r.toString(16).padStart(64, "0"));
-  const passkeyS = hexToBytes(passkeySig.s.toString(16).padStart(64, "0"));
-
-  const serverSig = p256.sign(kbHash, keys.server.privateKey, { lowS: true });
-  const serverR = hexToBytes(serverSig.r.toString(16).padStart(64, "0"));
-  const serverS = hexToBytes(serverSig.s.toString(16).padStart(64, "0"));
-
-  const compoundSig = concatBytes(passkeyR, passkeyS, serverR, serverS);
-  const kbSigB64 = base64urlEncode(compoundSig);
-  const kbJwt = `${kbSigningInput}.${kbSigB64}`;
+  // Passkey-only 64-byte ES256 signature
+  const kbSig = signJwt(kbSigningInput, keys.passkey.privateKey);
+  const kbJwt = `${kbSigningInput}.${kbSig}`;
 
   // Assemble full presentation
   const presentation = `${issuerJwt}~${disclosurePart}~${kbJwt}`;

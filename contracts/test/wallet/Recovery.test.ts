@@ -5,7 +5,7 @@ import {
   generateP256KeyPair,
   signP256,
   buildMessageHash,
-  sign2of2,
+  signPasskey,
 } from "./helpers";
 
 describe("Recovery", function () {
@@ -13,7 +13,7 @@ describe("Recovery", function () {
 
   describe("initiateRecovery", function () {
     it("server initiates passkey replacement", async function () {
-      const { wallet, serverKey, domainSep, walletAddress } = await deployAndInitialize();
+      const { wallet, recoveryKey, domainSep, walletAddress } = await deployAndInitialize();
       const newPasskey = generateP256KeyPair();
 
       const opHash = ethers.keccak256(
@@ -23,7 +23,7 @@ describe("Recovery", function () {
         )
       );
       const msgHash = buildMessageHash(domainSep, opHash, 0n);
-      const sig = signP256(serverKey.privateKey, msgHash);
+      const sig = signP256(recoveryKey.privateKey, msgHash);
 
       await expect(
         wallet.initiateRecovery(newPasskey.publicKeyX, newPasskey.publicKeyY, 0, sig.r, sig.s)
@@ -38,24 +38,24 @@ describe("Recovery", function () {
 
     it("passkey initiates server key replacement", async function () {
       const { wallet, passkey, domainSep } = await deployAndInitialize();
-      const newServerKey = generateP256KeyPair();
+      const newRecoveryKey = generateP256KeyPair();
 
       const opHash = ethers.keccak256(
         ethers.AbiCoder.defaultAbiCoder().encode(
           ["bytes4", "bytes32", "bytes32", "uint8"],
-          [ethers.dataSlice(ethers.keccak256(ethers.toUtf8Bytes("initiateRecovery")), 0, 4), newServerKey.publicKeyX, newServerKey.publicKeyY, 1]
+          [ethers.dataSlice(ethers.keccak256(ethers.toUtf8Bytes("initiateRecovery")), 0, 4), newRecoveryKey.publicKeyX, newRecoveryKey.publicKeyY, 1]
         )
       );
       const msgHash = buildMessageHash(domainSep, opHash, 0n);
       const sig = signP256(passkey.privateKey, msgHash);
 
       await expect(
-        wallet.initiateRecovery(newServerKey.publicKeyX, newServerKey.publicKeyY, 1, sig.r, sig.s)
+        wallet.initiateRecovery(newRecoveryKey.publicKeyX, newRecoveryKey.publicKeyY, 1, sig.r, sig.s)
       ).to.emit(wallet, "RecoveryInitiated");
     });
 
     it("reverts if recovery already pending", async function () {
-      const { wallet, serverKey, domainSep } = await deployAndInitialize();
+      const { wallet, recoveryKey, domainSep } = await deployAndInitialize();
       const newPasskey = generateP256KeyPair();
 
       // First initiation
@@ -66,7 +66,7 @@ describe("Recovery", function () {
         )
       );
       const msgHash = buildMessageHash(domainSep, opHash, 0n);
-      const sig = signP256(serverKey.privateKey, msgHash);
+      const sig = signP256(recoveryKey.privateKey, msgHash);
       await wallet.initiateRecovery(newPasskey.publicKeyX, newPasskey.publicKeyY, 0, sig.r, sig.s);
 
       // Second initiation should fail
@@ -78,7 +78,7 @@ describe("Recovery", function () {
         )
       );
       const msgHash2 = buildMessageHash(domainSep, opHash2, 1n);
-      const sig2 = signP256(serverKey.privateKey, msgHash2);
+      const sig2 = signP256(recoveryKey.privateKey, msgHash2);
 
       await expect(
         wallet.initiateRecovery(newPasskey2.publicKeyX, newPasskey2.publicKeyY, 0, sig2.r, sig2.s)
@@ -89,7 +89,7 @@ describe("Recovery", function () {
       const { wallet, passkey, domainSep } = await deployAndInitialize();
       const newPasskey = generateP256KeyPair();
 
-      // Passkey tries to replace itself (should be server key signing)
+      // Passkey tries to replace itself (should be recovery key signing)
       const opHash = ethers.keccak256(
         ethers.AbiCoder.defaultAbiCoder().encode(
           ["bytes4", "bytes32", "bytes32", "uint8"],
@@ -109,7 +109,7 @@ describe("Recovery", function () {
 
   describe("cancelRecovery", function () {
     it("either key cancels recovery", async function () {
-      const { wallet, passkey, serverKey, domainSep, walletAddress } = await deployAndInitialize();
+      const { wallet, passkey, recoveryKey, domainSep, walletAddress } = await deployAndInitialize();
       const newPasskey = generateP256KeyPair();
 
       // Initiate
@@ -120,7 +120,7 @@ describe("Recovery", function () {
         )
       );
       const initMsgHash = buildMessageHash(domainSep, initOpHash, 0n);
-      const initSig = signP256(serverKey.privateKey, initMsgHash);
+      const initSig = signP256(recoveryKey.privateKey, initMsgHash);
       await wallet.initiateRecovery(newPasskey.publicKeyX, newPasskey.publicKeyY, 0, initSig.r, initSig.s);
 
       // Cancel with passkey (signerKey = 0)
@@ -163,10 +163,10 @@ describe("Recovery", function () {
 
   describe("finalizeRecovery", function () {
     it("succeeds after 7 days and replaces key", async function () {
-      const { wallet, serverKey, domainSep, walletAddress } = await deployAndInitialize();
+      const { wallet, recoveryKey, domainSep, walletAddress } = await deployAndInitialize();
       const newPasskey = generateP256KeyPair();
 
-      // Initiate (server replaces passkey)
+      // Initiate (recovery key replaces passkey)
       const initOpHash = ethers.keccak256(
         ethers.AbiCoder.defaultAbiCoder().encode(
           ["bytes4", "bytes32", "bytes32", "uint8"],
@@ -174,14 +174,14 @@ describe("Recovery", function () {
         )
       );
       const initMsgHash = buildMessageHash(domainSep, initOpHash, 0n);
-      const initSig = signP256(serverKey.privateKey, initMsgHash);
+      const initSig = signP256(recoveryKey.privateKey, initMsgHash);
       await wallet.initiateRecovery(newPasskey.publicKeyX, newPasskey.publicKeyY, 0, initSig.r, initSig.s);
 
       // Advance time by 7 days
       await network.provider.send("evm_increaseTime", [7 * 24 * 60 * 60]);
       await network.provider.send("evm_mine");
 
-      // Finalize (server signs)
+      // Finalize (recovery key signs)
       const finalOpHash = ethers.keccak256(
         ethers.AbiCoder.defaultAbiCoder().encode(
           ["bytes4"],
@@ -189,7 +189,7 @@ describe("Recovery", function () {
         )
       );
       const finalMsgHash = buildMessageHash(domainSep, finalOpHash, 1n);
-      const finalSig = signP256(serverKey.privateKey, finalMsgHash);
+      const finalSig = signP256(recoveryKey.privateKey, finalMsgHash);
 
       await expect(
         wallet.finalizeRecovery(finalSig.r, finalSig.s)
@@ -202,7 +202,7 @@ describe("Recovery", function () {
     });
 
     it("reverts before 7-day delay", async function () {
-      const { wallet, serverKey, domainSep } = await deployAndInitialize();
+      const { wallet, recoveryKey, domainSep } = await deployAndInitialize();
       const newPasskey = generateP256KeyPair();
 
       // Initiate
@@ -213,7 +213,7 @@ describe("Recovery", function () {
         )
       );
       const initMsgHash = buildMessageHash(domainSep, initOpHash, 0n);
-      const initSig = signP256(serverKey.privateKey, initMsgHash);
+      const initSig = signP256(recoveryKey.privateKey, initMsgHash);
       await wallet.initiateRecovery(newPasskey.publicKeyX, newPasskey.publicKeyY, 0, initSig.r, initSig.s);
 
       // Try to finalize immediately
@@ -224,7 +224,7 @@ describe("Recovery", function () {
         )
       );
       const finalMsgHash = buildMessageHash(domainSep, finalOpHash, 1n);
-      const finalSig = signP256(serverKey.privateKey, finalMsgHash);
+      const finalSig = signP256(recoveryKey.privateKey, finalMsgHash);
 
       await expect(
         wallet.finalizeRecovery(finalSig.r, finalSig.s)
@@ -232,11 +232,11 @@ describe("Recovery", function () {
     });
 
     it("full flow: initiate -> wait -> finalize -> new key works", async function () {
-      const { wallet, passkey, serverKey, domainSep } = await deployAndInitialize();
+      const { wallet, passkey, recoveryKey, domainSep } = await deployAndInitialize();
       const newPasskey = generateP256KeyPair();
       const [, receiver] = await ethers.getSigners();
 
-      // Initiate (server replaces passkey)
+      // Initiate (recovery key replaces passkey)
       const initOpHash = ethers.keccak256(
         ethers.AbiCoder.defaultAbiCoder().encode(
           ["bytes4", "bytes32", "bytes32", "uint8"],
@@ -244,7 +244,7 @@ describe("Recovery", function () {
         )
       );
       const initMsgHash = buildMessageHash(domainSep, initOpHash, 0n);
-      const initSig = signP256(serverKey.privateKey, initMsgHash);
+      const initSig = signP256(recoveryKey.privateKey, initMsgHash);
       await wallet.initiateRecovery(newPasskey.publicKeyX, newPasskey.publicKeyY, 0, initSig.r, initSig.s);
 
       // Wait 7 days
@@ -259,10 +259,10 @@ describe("Recovery", function () {
         )
       );
       const finalMsgHash = buildMessageHash(domainSep, finalOpHash, 1n);
-      const finalSig = signP256(serverKey.privateKey, finalMsgHash);
+      const finalSig = signP256(recoveryKey.privateKey, finalMsgHash);
       await wallet.finalizeRecovery(finalSig.r, finalSig.s);
 
-      // Execute with new passkey + server key
+      // Execute with new passkey
       const execOpHash = ethers.keccak256(
         ethers.AbiCoder.defaultAbiCoder().encode(
           ["address", "uint256", "bytes"],
@@ -270,15 +270,15 @@ describe("Recovery", function () {
         )
       );
       const execMsgHash = buildMessageHash(domainSep, execOpHash, 2n);
-      const execSigs = sign2of2(newPasskey, serverKey, execMsgHash);
+      const execSigs = signPasskey(newPasskey, execMsgHash);
 
       await expect(
-        wallet.execute(receiver.address, 0, "0x", execSigs.passkeyR, execSigs.passkeyS, execSigs.serverR, execSigs.serverS)
+        wallet.execute(receiver.address, 0, "0x", execSigs.passkeyR, execSigs.passkeyS)
       ).to.emit(wallet, "Executed");
     });
 
     it("cancel flow: initiate -> cancel -> old key still works", async function () {
-      const { wallet, passkey, serverKey, domainSep } = await deployAndInitialize();
+      const { wallet, passkey, recoveryKey, domainSep } = await deployAndInitialize();
       const newPasskey = generateP256KeyPair();
       const [, receiver] = await ethers.getSigners();
 
@@ -290,7 +290,7 @@ describe("Recovery", function () {
         )
       );
       const initMsgHash = buildMessageHash(domainSep, initOpHash, 0n);
-      const initSig = signP256(serverKey.privateKey, initMsgHash);
+      const initSig = signP256(recoveryKey.privateKey, initMsgHash);
       await wallet.initiateRecovery(newPasskey.publicKeyX, newPasskey.publicKeyY, 0, initSig.r, initSig.s);
 
       // Cancel with passkey
@@ -312,10 +312,10 @@ describe("Recovery", function () {
         )
       );
       const execMsgHash = buildMessageHash(domainSep, execOpHash, 2n);
-      const execSigs = sign2of2(passkey, serverKey, execMsgHash);
+      const execSigs = signPasskey(passkey, execMsgHash);
 
       await expect(
-        wallet.execute(receiver.address, 0, "0x", execSigs.passkeyR, execSigs.passkeyS, execSigs.serverR, execSigs.serverS)
+        wallet.execute(receiver.address, 0, "0x", execSigs.passkeyR, execSigs.passkeyS)
       ).to.emit(wallet, "Executed");
     });
   });

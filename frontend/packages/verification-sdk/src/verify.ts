@@ -2,7 +2,7 @@ import { sha256, base64urlEncode, keccak256, bytesToHex } from "@sovra/wallet-co
 import type { VerifyOptions, VerificationResult } from "./types";
 import { ErrorCode } from "./types";
 import { parsePresentation, VerificationError } from "./parse";
-import { verifyES256, verifyCompoundSignature } from "./signature";
+import { verifyES256 } from "./signature";
 import { verifyDisclosures } from "./disclosure";
 import { resolveIssuerDID, checkIssuerTrust } from "./resolve-issuer";
 import { resolveHolderKeys, extractHolderAddress } from "./resolve-holder";
@@ -23,8 +23,8 @@ export const _defaultCache = new VerificationCache();
  * 6. Verify disclosures → hash each, check against _sd array
  * 7. Check credential expiry
  * 8. Check revocation (TBD)
- * 9. Resolve holder DID → passkey + server public keys
- * 10. Verify KB-JWT compound signature (2-of-2)
+ * 9. Resolve holder DID → passkey + recovery public keys
+ * 10. Verify KB-JWT passkey signature (ES256)
  * 11. Validate KB-JWT claims (aud, nonce, iat, sd_hash)
  * 12. Return result
  */
@@ -121,14 +121,10 @@ export async function verify(
         cache.setHolderKeys(holderAddress, holderKeys);
       }
 
-      // Step 10: Verify compound KB-JWT signature
-      verifyCompoundSignature(
-        kbJwtRaw,
-        holderKeys.passkeyX,
-        holderKeys.passkeyY,
-        holderKeys.serverKeyX,
-        holderKeys.serverKeyY,
-      );
+      // Step 10: Verify KB-JWT passkey signature
+      if (!verifyES256(kbJwtRaw, holderKeys.passkeyX, holderKeys.passkeyY)) {
+        throw new VerificationError("KB-JWT signature verification failed", ErrorCode.KB_PASSKEY_SIG_INVALID);
+      }
     } else if (cnf?.kid) {
       holderAddress = extractHolderAddress(cnf.kid);
     }

@@ -25,9 +25,7 @@ describe("SovraDispatcher", function () {
         ethers.zeroPadValue("0x03", 32),
         ethers.zeroPadValue("0x04", 32),
         ethers.zeroPadValue("0x05", 32),
-        ethers.zeroPadValue("0x06", 32),
-        ethers.zeroPadValue("0x07", 32),
-        ethers.zeroPadValue("0x08", 32)
+        ethers.zeroPadValue("0x06", 32)
       )
     ).to.be.revertedWithCustomError(wallet, "AlreadyInitialized");
   });
@@ -41,8 +39,8 @@ describe("SovraDispatcher", function () {
   });
 
   it("delegates to new implementation after upgrade", async function () {
-    const { wallet, passkey, serverKey, domainSep } = await deployAndInitialize();
-    const { buildMessageHash, sign2of2 } = await import("./helpers");
+    const { wallet, passkey, recoveryKey, domainSep } = await deployAndInitialize();
+    const { buildMessageHash, signPasskey } = await import("./helpers");
 
     // Deploy a new implementation
     const SovraWalletV1 = await ethers.getContractFactory("SovraWalletV1");
@@ -58,9 +56,9 @@ describe("SovraDispatcher", function () {
       )
     );
     const msgHash = buildMessageHash(domainSep, opHash, currentNonce);
-    const sigs = sign2of2(passkey, serverKey, msgHash);
+    const sigs = signPasskey(passkey, msgHash);
 
-    await wallet.upgrade(newImplAddr, sigs.passkeyR, sigs.passkeyS, sigs.serverR, sigs.serverS);
+    await wallet.upgrade(newImplAddr, sigs.passkeyR, sigs.passkeyS);
 
     // After upgrade, the wallet should still work (new impl same code)
     expect(await wallet.didVersionId()).to.equal(1);

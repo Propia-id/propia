@@ -4,10 +4,10 @@ defmodule SovraWeb.Cosigner.RotateController do
   def rotate(conn, _params) do
     sovra_address = conn.assigns.current_holder.sovra_address
 
-    case Sovra.Cosigner.rotate_server_key(sovra_address) do
+    case Sovra.Cosigner.rotate_recovery_key(sovra_address) do
       {:ok, result} ->
         json(conn, %{
-          newServerPublicKey: result.new_server_public_key,
+          newRecoveryPublicKey: result.new_recovery_public_key,
           rotationSignature: result.rotation_signature
         })
 

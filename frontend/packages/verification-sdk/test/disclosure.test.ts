@@ -72,7 +72,7 @@ describe("verifyDisclosures", () => {
   it("excludes cnf from returned claims", () => {
     const payload = {
       iss: "test",
-      cnf: { kid: "did:sovra:0x123#2of2" },
+      cnf: { kid: "did:sovra:0x123#passkey" },
       visible: true,
     };
     const claims = verifyDisclosures([], [], "sha-256", payload);

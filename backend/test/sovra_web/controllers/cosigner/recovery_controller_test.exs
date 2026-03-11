@@ -3,7 +3,7 @@ defmodule SovraWeb.Cosigner.RecoveryControllerTest do
 
   import Sovra.CosignerHelpers
 
-  describe "POST /api/v1/cosigner/initiate-recovery" do
+  describe "POST /api/v1/recovery/initiate" do
     test "returns recovery signature", %{conn: conn} do
       holder = create_test_holder("0xrecovery_ctrl_test")
       {:ok, %{public_key_x: x, public_key_y: y}} = Sovra.Crypto.P256.generate_key_pair()
@@ -11,7 +11,7 @@ defmodule SovraWeb.Cosigner.RecoveryControllerTest do
       conn =
         conn
         |> auth_conn(holder.sovra_address)
-        |> post("/api/v1/cosigner/initiate-recovery", %{
+        |> post("/api/v1/recovery/initiate", %{
           "newPasskeyPublicKey" => %{
             "x" => Base.encode64(x, padding: false),
             "y" => Base.encode64(y, padding: false)
@@ -22,7 +22,7 @@ defmodule SovraWeb.Cosigner.RecoveryControllerTest do
     end
 
     test "returns 401 without session", %{conn: conn} do
-      conn = post(conn, "/api/v1/cosigner/initiate-recovery", %{})
+      conn = post(conn, "/api/v1/recovery/initiate", %{})
 
       assert %{"error" => "missing_authorization"} = json_response(conn, 401)
     end
@@ -33,7 +33,7 @@ defmodule SovraWeb.Cosigner.RecoveryControllerTest do
       conn =
         conn
         |> auth_conn(holder.sovra_address)
-        |> post("/api/v1/cosigner/initiate-recovery", %{})
+        |> post("/api/v1/recovery/initiate", %{})
 
       assert %{"error" => "missing_required_fields"} = json_response(conn, 400)
     end

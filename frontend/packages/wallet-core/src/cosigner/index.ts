@@ -10,40 +10,40 @@ export class CosignerClient {
     >,
   ) {}
 
-  /** Register with co-signing server during onboarding. Returns server public key. */
+  /** Register with recovery server during onboarding. Returns recovery public key. */
   async onboard(
     sovraAddress: string,
     oauthToken: string,
   ): Promise<{
-    serverPublicKey: { x: Uint8Array; y: Uint8Array };
+    recoveryPublicKey: { x: Uint8Array; y: Uint8Array };
   }> {
-    const response = await this.api.cosignerOnboard(sovraAddress, oauthToken);
+    const response = await this.api.holderOnboard(sovraAddress, oauthToken);
 
     this.api.setSessionToken(response.sessionToken);
 
     return {
-      serverPublicKey: {
-        x: base64urlDecode(response.serverPublicKey.x),
-        y: base64urlDecode(response.serverPublicKey.y),
+      recoveryPublicKey: {
+        x: base64urlDecode(response.recoveryPublicKey.x),
+        y: base64urlDecode(response.recoveryPublicKey.y),
       },
     };
   }
 
-  /** Request co-signature on a message hash. Requires valid session. */
-  async cosign(messageHash: Uint8Array): Promise<{
+  /** Request recovery key signature on a message hash. Only used for recovery operations. */
+  async sign(messageHash: Uint8Array): Promise<{
     r: Uint8Array;
     s: Uint8Array;
   }> {
-    const response = await this.api.cosignerSign(messageHash);
+    const response = await this.api.recoverySign(messageHash);
     return {
-      r: hexToBytes(response.r),
-      s: hexToBytes(response.s),
+      r: hexToBytes(response.signature.r),
+      s: hexToBytes(response.signature.s),
     };
   }
 
-  /** Refresh the co-signing server session via OAuth. */
+  /** Refresh the recovery server session via OAuth. */
   async refreshSession(oauthToken: string): Promise<void> {
-    const response = await this.api.cosignerAuth(oauthToken);
+    const response = await this.api.holderAuth(oauthToken);
     this.identityStore
       .getState()
       .setSession(response.sessionToken, response.expiresAt);

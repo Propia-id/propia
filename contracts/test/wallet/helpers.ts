@@ -95,28 +95,26 @@ export async function deployAndInitialize() {
   const { wallet, dispatcher, implementation } = await deployWallet();
 
   const passkey = generateP256KeyPair();
-  const serverKey = generateP256KeyPair();
+  const recoveryKey = generateP256KeyPair();
 
   const walletAddress = await wallet.getAddress();
   const chainId = (await ethers.provider.getNetwork()).chainId;
   const domainSep = buildDomainSeparator(chainId, walletAddress);
 
-  // Build init hash: keccak256(abi.encode(address(this), passkeyX, passkeyY, serverKeyX, serverKeyY))
+  // Build init hash: keccak256(abi.encode(address(this), passkeyX, passkeyY, recoveryKeyX, recoveryKeyY))
   const initHash = ethers.keccak256(
     ethers.AbiCoder.defaultAbiCoder().encode(
       ["address", "bytes32", "bytes32", "bytes32", "bytes32"],
-      [walletAddress, passkey.publicKeyX, passkey.publicKeyY, serverKey.publicKeyX, serverKey.publicKeyY]
+      [walletAddress, passkey.publicKeyX, passkey.publicKeyY, recoveryKey.publicKeyX, recoveryKey.publicKeyY]
     )
   );
 
   const passkeySig = signP256(passkey.privateKey, initHash);
-  const serverSig = signP256(serverKey.privateKey, initHash);
 
   await wallet.initialize(
     passkey.publicKeyX, passkey.publicKeyY,
-    serverKey.publicKeyX, serverKey.publicKeyY,
-    passkeySig.r, passkeySig.s,
-    serverSig.r, serverSig.s
+    recoveryKey.publicKeyX, recoveryKey.publicKeyY,
+    passkeySig.r, passkeySig.s
   );
 
   return {
@@ -124,7 +122,7 @@ export async function deployAndInitialize() {
     dispatcher,
     implementation,
     passkey,
-    serverKey,
+    recoveryKey,
     domainSep,
     walletAddress,
     chainId,
@@ -133,17 +131,13 @@ export async function deployAndInitialize() {
 
 // ─── Signing Helpers ─────────────────────────────────────
 
-export function sign2of2(
+export function signPasskey(
   passkey: P256KeyPair,
-  serverKey: P256KeyPair,
   msgHash: string
-): { passkeyR: string; passkeyS: string; serverR: string; serverS: string } {
+): { passkeyR: string; passkeyS: string } {
   const passkeySig = signP256(passkey.privateKey, msgHash);
-  const serverSig = signP256(serverKey.privateKey, msgHash);
   return {
     passkeyR: passkeySig.r,
     passkeyS: passkeySig.s,
-    serverR: serverSig.r,
-    serverS: serverSig.s,
   };
 }

@@ -6,9 +6,9 @@ defmodule Sovra.Cosigner.HolderRecord do
 
   schema "holder_records" do
     field :sovra_address, :string
-    field :server_key_id, :string
-    field :server_public_key_x, :binary
-    field :server_public_key_y, :binary
+    field :recovery_key_id, :string
+    field :recovery_public_key_x, :binary
+    field :recovery_public_key_y, :binary
     field :oauth_provider, :string
     field :oauth_subject, :string
     field :status, :string, default: "active"
@@ -16,7 +16,7 @@ defmodule Sovra.Cosigner.HolderRecord do
     timestamps(type: :utc_datetime)
   end
 
-  @required ~w(sovra_address server_key_id server_public_key_x server_public_key_y oauth_provider oauth_subject)a
+  @required ~w(sovra_address recovery_key_id recovery_public_key_x recovery_public_key_y oauth_provider oauth_subject)a
 
   def create_changeset(record \\ %__MODULE__{}, attrs) do
     record
@@ -35,7 +35,7 @@ defmodule Sovra.Cosigner.HolderRecord do
 
   def update_key_changeset(record, attrs) do
     record
-    |> cast(attrs, [:server_key_id, :server_public_key_x, :server_public_key_y])
-    |> validate_required([:server_key_id, :server_public_key_x, :server_public_key_y])
+    |> cast(attrs, [:recovery_key_id, :recovery_public_key_x, :recovery_public_key_y])
+    |> validate_required([:recovery_key_id, :recovery_public_key_x, :recovery_public_key_y])
   end
 end
