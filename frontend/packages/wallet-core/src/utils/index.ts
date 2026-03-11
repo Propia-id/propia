@@ -210,6 +210,22 @@ export function buildInitHash(
   );
 }
 
+/** Build operation hash for initiateRecovery(newKeyX, newKeyY, keyToReplace). */
+export function buildInitiateRecoveryOpHash(
+  newKeyX: Uint8Array,
+  newKeyY: Uint8Array,
+  keyToReplace: bigint,
+): Uint8Array {
+  const opSelector = keccak256(new TextEncoder().encode("initiateRecovery")).slice(0, 4);
+  return keccak256(concatBytes(encodeBytes4(opSelector), padTo32(newKeyX), padTo32(newKeyY), encodeUint256(keyToReplace)));
+}
+
+/** Build operation hash for finalizeRecovery. */
+export function buildFinalizeRecoveryOpHash(): Uint8Array {
+  const opSelector = keccak256(new TextEncoder().encode("finalizeRecovery")).slice(0, 4);
+  return keccak256(encodeBytes4(opSelector));
+}
+
 /** Build operation hash for rotatePasskey/rotateRecoveryKey. */
 export function buildRotateOpHash(
   operation: "rotatePasskey" | "rotateRecoveryKey",

@@ -124,11 +124,9 @@ defmodule Sovra.Guardian do
     end
   end
 
-  def initiate_recovery(sovra_address, %{x: passkey_x, y: passkey_y}) do
+  def initiate_recovery(sovra_address, message_hash) when is_binary(message_hash) do
     with {:ok, holder} <- get_holder(sovra_address),
-         recovery_hash <-
-           :crypto.hash(:sha256, <<passkey_x::binary, passkey_y::binary>>),
-         {:ok, sig} <- Key.sign(holder.recovery_key_id, recovery_hash) do
+         {:ok, sig} <- Key.sign(holder.recovery_key_id, message_hash) do
       changeset = HolderRecord.status_changeset(holder, "recovery_pending")
 
       case Repo.update(changeset) do
@@ -138,9 +136,29 @@ defmodule Sovra.Guardian do
     end
   end
 
-  def initiate_recovery(_sovra_address, _passkey), do: {:error, :invalid_passkey}
+  def initiate_recovery(_sovra_address, _message_hash), do: {:error, :invalid_message_hash}
+
+  def finalize_recovery(sovra_address, message_hash) when is_binary(message_hash) do
+    with {:ok, holder} <- get_recovery_pending_holder(sovra_address),
+         {:ok, sig} <- Key.sign(holder.recovery_key_id, message_hash) do
+      changeset = HolderRecord.status_changeset(holder, "active")
+
+      case Repo.update(changeset) do
+        {:ok, _updated} -> {:ok, %{signature: format_signature(sig)}}
+        {:error, changeset} -> {:error, {:changeset, changeset}}
+      end
+    end
+  end
 
   # Private helpers
+
+  defp get_recovery_pending_holder(sovra_address) do
+    case Repo.get_by(HolderRecord, sovra_address: sovra_address) do
+      nil -> {:error, :holder_not_found}
+      %{status: "recovery_pending"} = holder -> {:ok, holder}
+      _ -> {:error, :not_in_recovery}
+    end
+  end
 
   defp get_active_holder(sovra_address) do
     case Repo.get_by(HolderRecord, sovra_address: sovra_address) do

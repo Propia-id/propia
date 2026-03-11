@@ -13,6 +13,10 @@ export interface SignResponse {
   signature: { r: string; s: string };
 }
 
+export interface RecoverySignatureResponse {
+  signature: { r: string; s: string };
+}
+
 export interface AuthResponse {
   sessionToken: string;
   expiresAt: number;
@@ -116,6 +120,22 @@ export class ApiClient {
     const { data } = await this.backend.post<SignResponse>(
       "/api/v1/recovery/sign",
       { hash: bytesToHex(hash) },
+    );
+    return data;
+  }
+
+  async recoveryInitiate(messageHash: string): Promise<RecoverySignatureResponse> {
+    const { data } = await this.backend.post<RecoverySignatureResponse>(
+      "/api/v1/recovery/initiate",
+      { messageHash },
+    );
+    return data;
+  }
+
+  async recoveryFinalize(messageHash: string): Promise<RecoverySignatureResponse> {
+    const { data } = await this.backend.post<RecoverySignatureResponse>(
+      "/api/v1/recovery/finalize",
+      { messageHash },
     );
     return data;
   }
