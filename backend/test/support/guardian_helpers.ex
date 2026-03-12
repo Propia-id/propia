@@ -1,9 +1,9 @@
-defmodule Sovra.CosignerHelpers do
+defmodule Sovra.GuardianHelpers do
   @moduledoc """
-  Test helpers for co-signing server tests.
+  Test helpers for guardian server tests.
   """
 
-  alias Sovra.Cosigner.HolderRecord
+  alias Sovra.Guardian.HolderRecord
   alias Sovra.Crypto.Key
   alias Sovra.Repo
 

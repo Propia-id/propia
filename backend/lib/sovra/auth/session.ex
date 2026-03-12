@@ -1,6 +1,6 @@
 defmodule Sovra.Auth.Session do
   @moduledoc """
-  JWT-based session tokens for co-signing authentication.
+  JWT-based session tokens for guardian authentication.
   Tokens are HMAC-SHA256 signed, 15-minute expiry, stateless.
   """
 
@@ -11,7 +11,7 @@ defmodule Sovra.Auth.Session do
 
     claims = %{
       "sub" => sovra_address,
-      "scope" => "cosign",
+      "scope" => "guardian",
       "iat" => now,
       "exp" => now + @session_ttl
     }
@@ -27,7 +27,7 @@ defmodule Sovra.Auth.Session do
 
     try do
       case JOSE.JWT.verify_strict(jwk, ["HS256"], token) do
-        {true, %JOSE.JWT{fields: %{"sub" => sub, "scope" => "cosign", "exp" => exp}}, _jws} ->
+        {true, %JOSE.JWT{fields: %{"sub" => sub, "scope" => "guardian", "exp" => exp}}, _jws} ->
           if exp > System.system_time(:second) do
             {:ok, %{sovra_address: sub}}
           else

@@ -1,8 +1,8 @@
-defmodule SovraWeb.Cosigner.OnboardController do
+defmodule SovraWeb.Guardian.OnboardController do
   use SovraWeb, :controller
 
   def onboard(conn, %{"sovraAddress" => sovra_address, "oauthToken" => oauth_token}) do
-    case Sovra.Cosigner.onboard(sovra_address, oauth_token) do
+    case Sovra.Guardian.onboard(sovra_address, oauth_token) do
       {:ok, result} ->
         conn |> put_status(201) |> json(%{
           recoveryPublicKey: result.recovery_public_key,

@@ -1,4 +1,4 @@
-defmodule Sovra.Cosigner.HolderRecord do
+defmodule Sovra.Guardian.HolderRecord do
   use Ecto.Schema
   import Ecto.Changeset
 

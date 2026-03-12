@@ -1,4 +1,4 @@
-defmodule SovraWeb.Cosigner.RecoveryController do
+defmodule SovraWeb.Guardian.RecoveryController do
   use SovraWeb, :controller
 
   def initiate_recovery(conn, %{"newPasskeyPublicKey" => %{"x" => x_b64, "y" => y_b64}}) do
@@ -6,7 +6,7 @@ defmodule SovraWeb.Cosigner.RecoveryController do
 
     with {:ok, x} <- Base.decode64(x_b64, padding: false),
          {:ok, y} <- Base.decode64(y_b64, padding: false) do
-      case Sovra.Cosigner.initiate_recovery(sovra_address, %{x: x, y: y}) do
+      case Sovra.Guardian.initiate_recovery(sovra_address, %{x: x, y: y}) do
         {:ok, result} ->
           json(conn, %{signature: result.signature})
 

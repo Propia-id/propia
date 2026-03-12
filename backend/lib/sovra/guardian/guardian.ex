@@ -1,10 +1,10 @@
-defmodule Sovra.Cosigner do
+defmodule Sovra.Guardian do
   @moduledoc """
-  Co-signing server context. Orchestrates onboarding, authentication,
+  Guardian server context. Orchestrates onboarding, authentication,
   blind hash co-signing, key rotation, and recovery.
   """
 
-  alias Sovra.Cosigner.HolderRecord
+  alias Sovra.Guardian.HolderRecord
   alias Sovra.Crypto.Key
   alias Sovra.Auth.Session
   alias Sovra.Repo

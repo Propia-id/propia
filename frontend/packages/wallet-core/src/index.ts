@@ -12,7 +12,7 @@ export { ApiClient } from "./api/index";
 export type {
   ApiClientConfig,
   OnboardResponse,
-  CosignResponse,
+
   AuthResponse,
   TokenResponse,
   IssuerMetadata,
@@ -30,8 +30,8 @@ export type {
   StoredCredential,
 } from "./state/index";
 
-// Co-signer client
-export { CosignerClient } from "./cosigner/index";
+// Guardian client
+export { GuardianClient } from "./guardian/index";
 
 // Identity manager
 export { IdentityManager } from "./identity/index";
