@@ -141,6 +141,69 @@ describe("Recovery", function () {
       expect(recovery[4]).to.equal(false); // active = false
     });
 
+    it("recovery key cancels recovery (signerKey = 1)", async function () {
+      const { wallet, passkey, recoveryKey, domainSep, walletAddress } = await deployAndInitialize();
+      const newPasskey = generateP256KeyPair();
+
+      // Initiate (recovery key replaces passkey)
+      const initOpHash = ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ["bytes4", "bytes32", "bytes32", "uint8"],
+          [ethers.dataSlice(ethers.keccak256(ethers.toUtf8Bytes("initiateRecovery")), 0, 4), newPasskey.publicKeyX, newPasskey.publicKeyY, 0]
+        )
+      );
+      const initMsgHash = buildMessageHash(domainSep, initOpHash, 0n);
+      const initSig = signP256(recoveryKey.privateKey, initMsgHash);
+      await wallet.initiateRecovery(newPasskey.publicKeyX, newPasskey.publicKeyY, 0, initSig.r, initSig.s);
+
+      // Cancel with recovery key (signerKey = 1)
+      const cancelOpHash = ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ["bytes4"],
+          [ethers.dataSlice(ethers.keccak256(ethers.toUtf8Bytes("cancelRecovery")), 0, 4)]
+        )
+      );
+      const cancelMsgHash = buildMessageHash(domainSep, cancelOpHash, 1n);
+      const cancelSig = signP256(recoveryKey.privateKey, cancelMsgHash);
+
+      await expect(
+        wallet.cancelRecovery(cancelSig.r, cancelSig.s, 1)
+      ).to.emit(wallet, "RecoveryCancelled").withArgs(walletAddress);
+
+      const recovery = await wallet.pendingRecovery();
+      expect(recovery[4]).to.equal(false);
+    });
+
+    it("reverts with invalid signerKey", async function () {
+      const { wallet, passkey, recoveryKey, domainSep } = await deployAndInitialize();
+      const newPasskey = generateP256KeyPair();
+
+      // Initiate
+      const initOpHash = ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ["bytes4", "bytes32", "bytes32", "uint8"],
+          [ethers.dataSlice(ethers.keccak256(ethers.toUtf8Bytes("initiateRecovery")), 0, 4), newPasskey.publicKeyX, newPasskey.publicKeyY, 0]
+        )
+      );
+      const initMsgHash = buildMessageHash(domainSep, initOpHash, 0n);
+      const initSig = signP256(recoveryKey.privateKey, initMsgHash);
+      await wallet.initiateRecovery(newPasskey.publicKeyX, newPasskey.publicKeyY, 0, initSig.r, initSig.s);
+
+      // Try cancel with signerKey = 2 (invalid)
+      const cancelOpHash = ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ["bytes4"],
+          [ethers.dataSlice(ethers.keccak256(ethers.toUtf8Bytes("cancelRecovery")), 0, 4)]
+        )
+      );
+      const cancelMsgHash = buildMessageHash(domainSep, cancelOpHash, 1n);
+      const cancelSig = signP256(passkey.privateKey, cancelMsgHash);
+
+      await expect(
+        wallet.cancelRecovery(cancelSig.r, cancelSig.s, 2)
+      ).to.be.revertedWithCustomError(wallet, "InvalidKeyIndex");
+    });
+
     it("reverts if no pending recovery", async function () {
       const { wallet, passkey, domainSep } = await deployAndInitialize();
 

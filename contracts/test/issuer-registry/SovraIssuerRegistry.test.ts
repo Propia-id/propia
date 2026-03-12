@@ -179,6 +179,31 @@ describe("SovraIssuerRegistryV1", function () {
         registry.removeIssuer(issuer2.address)
       ).to.be.revertedWithCustomError(registry, "IssuerNotRegistered");
     });
+
+    it("removes issuer from issuerList", async function () {
+      await registry.removeIssuer(issuer1.address);
+      await expect(registry.issuerList(0)).to.be.reverted;
+    });
+
+    it("swap-and-pop preserves remaining issuers", async function () {
+      await registry.registerIssuer(issuer2.address, [NATIONAL_ID]);
+
+      // Remove first issuer
+      await registry.removeIssuer(issuer1.address);
+
+      // Second issuer should now be at index 0
+      expect(await registry.issuerList(0)).to.equal(issuer2.address);
+      await expect(registry.issuerList(1)).to.be.reverted;
+    });
+
+    it("allows re-registration without duplicate in issuerList", async function () {
+      await registry.removeIssuer(issuer1.address);
+      await registry.registerIssuer(issuer1.address, [NATIONAL_ID]);
+
+      // Should have exactly one entry
+      expect(await registry.issuerList(0)).to.equal(issuer1.address);
+      await expect(registry.issuerList(1)).to.be.reverted;
+    });
   });
 
   // ─── Queries ────────────────────────────────────────

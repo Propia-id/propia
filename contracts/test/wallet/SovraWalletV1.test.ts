@@ -32,11 +32,12 @@ describe("SovraWalletV1", function () {
       const passkey = generateP256KeyPair();
       const recoveryKey = generateP256KeyPair();
       const walletAddress = await wallet.getAddress();
+      const chainId = (await ethers.provider.getNetwork()).chainId;
 
       const initHash = ethers.keccak256(
         ethers.AbiCoder.defaultAbiCoder().encode(
-          ["address", "bytes32", "bytes32", "bytes32", "bytes32"],
-          [walletAddress, passkey.publicKeyX, passkey.publicKeyY, recoveryKey.publicKeyX, recoveryKey.publicKeyY]
+          ["address", "uint256", "bytes32", "bytes32", "bytes32", "bytes32"],
+          [walletAddress, chainId, passkey.publicKeyX, passkey.publicKeyY, recoveryKey.publicKeyX, recoveryKey.publicKeyY]
         )
       );
 
@@ -53,11 +54,12 @@ describe("SovraWalletV1", function () {
 
     it("reverts on double initialization", async function () {
       const { wallet, passkey, recoveryKey } = await deployAndInitialize();
+      const chainId = (await ethers.provider.getNetwork()).chainId;
 
       const initHash = ethers.keccak256(
         ethers.AbiCoder.defaultAbiCoder().encode(
-          ["address", "bytes32", "bytes32", "bytes32", "bytes32"],
-          [await wallet.getAddress(), passkey.publicKeyX, passkey.publicKeyY, recoveryKey.publicKeyX, recoveryKey.publicKeyY]
+          ["address", "uint256", "bytes32", "bytes32", "bytes32", "bytes32"],
+          [await wallet.getAddress(), chainId, passkey.publicKeyX, passkey.publicKeyY, recoveryKey.publicKeyX, recoveryKey.publicKeyY]
         )
       );
       const passkeySig = signP256(passkey.privateKey, initHash);
@@ -68,7 +70,7 @@ describe("SovraWalletV1", function () {
           recoveryKey.publicKeyX, recoveryKey.publicKeyY,
           passkeySig.r, passkeySig.s
         )
-      ).to.be.revertedWithCustomError(wallet, "AlreadyInitialized");
+      ).to.be.revertedWithCustomError(wallet, "InvalidInitialization");
     });
 
     it("reverts on bad passkey signature", async function () {
@@ -77,11 +79,12 @@ describe("SovraWalletV1", function () {
       const recoveryKey = generateP256KeyPair();
       const badKey = generateP256KeyPair();
       const walletAddress = await wallet.getAddress();
+      const chainId = (await ethers.provider.getNetwork()).chainId;
 
       const initHash = ethers.keccak256(
         ethers.AbiCoder.defaultAbiCoder().encode(
-          ["address", "bytes32", "bytes32", "bytes32", "bytes32"],
-          [walletAddress, passkey.publicKeyX, passkey.publicKeyY, recoveryKey.publicKeyX, recoveryKey.publicKeyY]
+          ["address", "uint256", "bytes32", "bytes32", "bytes32", "bytes32"],
+          [walletAddress, chainId, passkey.publicKeyX, passkey.publicKeyY, recoveryKey.publicKeyX, recoveryKey.publicKeyY]
         )
       );
 
@@ -477,6 +480,179 @@ describe("SovraWalletV1", function () {
       // If our domain sep was wrong, all signatures would fail
       // The fact that initialize succeeded proves correctness
       expect(expected).to.be.a("string").that.has.length(66); // 0x + 64 hex chars
+    });
+  });
+
+  // ─── Reentrancy Protection ──────────────────────────────
+
+  describe("reentrancy protection", function () {
+    it("reverts on reentrant execute() call", async function () {
+      const { wallet, passkey, domainSep } = await deployAndInitialize();
+      const [signer] = await ethers.getSigners();
+
+      // Deploy attacker and fund the wallet
+      const Attacker = await ethers.getContractFactory("ReentrancyAttacker");
+      const attacker = await Attacker.deploy();
+      await attacker.setWallet(await wallet.getAddress());
+
+      await signer.sendTransaction({
+        to: await wallet.getAddress(),
+        value: ethers.parseEther("1"),
+      });
+
+      // Execute a call that sends ETH to the attacker (triggers receive())
+      const target = await attacker.getAddress();
+      const value = ethers.parseEther("0.1");
+      const data = "0x";
+      const currentNonce = await wallet.nonce();
+
+      const opHash = ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ["address", "uint256", "bytes"],
+          [target, value, data]
+        )
+      );
+      const msgHash = buildMessageHash(domainSep, opHash, currentNonce);
+      const sigs = signPasskey(passkey, msgHash);
+
+      // The outer call succeeds, but the reentrant call inside receive() fails
+      await wallet.execute(target, value, data, sigs.passkeyR, sigs.passkeyS);
+
+      // Verify the reentrant call did not succeed
+      expect(await attacker.reentrantCallSucceeded()).to.equal(false);
+      expect(await attacker.attacked()).to.equal(true);
+    });
+  });
+
+  // ─── Signature Malleability ─────────────────────────────
+
+  describe("signature malleability", function () {
+    it("rejects high-s P256 signatures", async function () {
+      const { wallet } = await deployWallet();
+      const passkey = generateP256KeyPair();
+      const recoveryKey = generateP256KeyPair();
+      const walletAddress = await wallet.getAddress();
+      const chainId = (await ethers.provider.getNetwork()).chainId;
+
+      const initHash = ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ["address", "uint256", "bytes32", "bytes32", "bytes32", "bytes32"],
+          [walletAddress, chainId, passkey.publicKeyX, passkey.publicKeyY, recoveryKey.publicKeyX, recoveryKey.publicKeyY]
+        )
+      );
+
+      // Sign with lowS: false to get a high-s signature
+      const hashBytes = Uint8Array.from(Buffer.from(initHash.slice(2), "hex"));
+      const { p256 } = await import("@noble/curves/p256");
+      const sig = p256.sign(hashBytes, passkey.privateKey, { lowS: false });
+
+      // Ensure s is actually high (flip if needed)
+      const P256_N = BigInt("0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551");
+      let s = sig.s;
+      if (s <= P256_N / 2n) {
+        s = P256_N - s; // Force high-s
+      }
+      const r = "0x" + sig.r.toString(16).padStart(64, "0");
+      const sHex = "0x" + s.toString(16).padStart(64, "0");
+
+      await expect(
+        wallet.initialize(
+          passkey.publicKeyX, passkey.publicKeyY,
+          recoveryKey.publicKeyX, recoveryKey.publicKeyY,
+          r, sHex
+        )
+      ).to.be.revertedWithCustomError(wallet, "SignatureMalleability");
+    });
+  });
+
+  // ─── Zero Key Validation ────────────────────────────────
+
+  describe("zero key validation", function () {
+    it("rejects zero passkey in initialize", async function () {
+      const { wallet } = await deployWallet();
+      const recoveryKey = generateP256KeyPair();
+
+      await expect(
+        wallet.initialize(
+          ethers.ZeroHash, ethers.ZeroHash,
+          recoveryKey.publicKeyX, recoveryKey.publicKeyY,
+          ethers.ZeroHash, ethers.ZeroHash
+        )
+      ).to.be.revertedWithCustomError(wallet, "ZeroKey");
+    });
+
+    it("rejects zero recovery key in initialize", async function () {
+      const { wallet } = await deployWallet();
+      const passkey = generateP256KeyPair();
+      const walletAddress = await wallet.getAddress();
+      const chainId = (await ethers.provider.getNetwork()).chainId;
+
+      const initHash = ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ["address", "uint256", "bytes32", "bytes32", "bytes32", "bytes32"],
+          [walletAddress, chainId, passkey.publicKeyX, passkey.publicKeyY, ethers.ZeroHash, ethers.ZeroHash]
+        )
+      );
+      const passkeySig = signP256(passkey.privateKey, initHash);
+
+      await expect(
+        wallet.initialize(
+          passkey.publicKeyX, passkey.publicKeyY,
+          ethers.ZeroHash, ethers.ZeroHash,
+          passkeySig.r, passkeySig.s
+        )
+      ).to.be.revertedWithCustomError(wallet, "ZeroKey");
+    });
+
+    it("rejects zero key in rotatePasskey", async function () {
+      const { wallet, passkey, domainSep } = await deployAndInitialize();
+
+      const opHash = ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ["bytes4", "bytes32", "bytes32"],
+          [ethers.dataSlice(ethers.keccak256(ethers.toUtf8Bytes("rotatePasskey")), 0, 4), ethers.ZeroHash, ethers.ZeroHash]
+        )
+      );
+      const msgHash = buildMessageHash(domainSep, opHash, 0n);
+      const sigs = signPasskey(passkey, msgHash);
+
+      await expect(
+        wallet.rotatePasskey(ethers.ZeroHash, ethers.ZeroHash, sigs.passkeyR, sigs.passkeyS)
+      ).to.be.revertedWithCustomError(wallet, "ZeroKey");
+    });
+
+    it("rejects zero key in rotateRecoveryKey", async function () {
+      const { wallet, passkey, domainSep } = await deployAndInitialize();
+
+      const opHash = ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ["bytes4", "bytes32", "bytes32"],
+          [ethers.dataSlice(ethers.keccak256(ethers.toUtf8Bytes("rotateRecoveryKey")), 0, 4), ethers.ZeroHash, ethers.ZeroHash]
+        )
+      );
+      const msgHash = buildMessageHash(domainSep, opHash, 0n);
+      const sigs = signPasskey(passkey, msgHash);
+
+      await expect(
+        wallet.rotateRecoveryKey(ethers.ZeroHash, ethers.ZeroHash, sigs.passkeyR, sigs.passkeyS)
+      ).to.be.revertedWithCustomError(wallet, "ZeroKey");
+    });
+
+    it("rejects zero key in initiateRecovery", async function () {
+      const { wallet, recoveryKey, domainSep } = await deployAndInitialize();
+
+      const opHash = ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ["bytes4", "bytes32", "bytes32", "uint8"],
+          [ethers.dataSlice(ethers.keccak256(ethers.toUtf8Bytes("initiateRecovery")), 0, 4), ethers.ZeroHash, ethers.ZeroHash, 0]
+        )
+      );
+      const msgHash = buildMessageHash(domainSep, opHash, 0n);
+      const sig = signP256(recoveryKey.privateKey, msgHash);
+
+      await expect(
+        wallet.initiateRecovery(ethers.ZeroHash, ethers.ZeroHash, 0, sig.r, sig.s)
+      ).to.be.revertedWithCustomError(wallet, "ZeroKey");
     });
   });
 });
