@@ -2,7 +2,7 @@ import type { ApiClient } from "../api/index";
 import type { IdentityStore } from "../state/index";
 import { hexToBytes, base64urlDecode } from "../utils/index";
 
-export class CosignerClient {
+export class GuardianClient {
   constructor(
     private api: ApiClient,
     private identityStore: ReturnType<

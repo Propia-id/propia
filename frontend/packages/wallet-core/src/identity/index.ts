@@ -1,7 +1,7 @@
 import type { PasskeyProvider } from "../platform/index";
 import type { SecureStorage } from "../platform/index";
 import type { ApiClient } from "../api/index";
-import type { CosignerClient } from "../cosigner/index";
+import type { GuardianClient } from "../guardian/index";
 import type { IdentityStore } from "../state/index";
 import {
   generateSecp256k1KeyPair,
@@ -28,7 +28,7 @@ export interface OnboardingResult {
 export class IdentityManager {
   constructor(
     private passkeyProvider: PasskeyProvider,
-    private cosignerClient: CosignerClient,
+    private guardianClient: GuardianClient,
     private api: ApiClient,
     private identityStore: ReturnType<typeof import("../state/index").createIdentityStore>,
     private storage: SecureStorage,
@@ -40,7 +40,7 @@ export class IdentityManager {
 
   /**
    * Full onboarding flow (spec section 2):
-   * 1. Register with co-signing server
+   * 1. Register with guardian server
    * 2. Create passkey
    * 3. Generate throwaway EOA
    * 4. Both keys sign init hash
@@ -51,8 +51,8 @@ export class IdentityManager {
     const throwawayKey = generateSecp256k1KeyPair();
     const eoaAddress = secp256k1AddressFromPublicKey(throwawayKey.publicKey);
 
-    // Step 2: Register with co-signing server → get recovery public key
-    const { recoveryPublicKey } = await this.cosignerClient.onboard(eoaAddress, oauthToken);
+    // Step 2: Register with guardian server → get recovery public key
+    const { recoveryPublicKey } = await this.guardianClient.onboard(eoaAddress, oauthToken);
 
     // Step 3: Create passkey (biometric prompt)
     const passkey = await this.passkeyProvider.create("sovra-user", "Sovra Wallet");

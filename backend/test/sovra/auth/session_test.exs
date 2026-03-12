@@ -27,7 +27,7 @@ defmodule Sovra.Auth.SessionTest do
 
       claims = %{
         "sub" => "0xhacker",
-        "scope" => "cosign",
+        "scope" => "guardian",
         "exp" => System.system_time(:second) + 900
       }
 

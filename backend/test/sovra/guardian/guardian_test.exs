@@ -1,14 +1,14 @@
-defmodule Sovra.CosignerTest do
+defmodule Sovra.GuardianTest do
   use Sovra.DataCase, async: true
 
-  alias Sovra.Cosigner
+  alias Sovra.Guardian
   alias Sovra.Auth.MockAuthProvider
 
-  import Sovra.CosignerHelpers
+  import Sovra.GuardianHelpers
 
   describe "onboard/2" do
     test "creates holder record and returns recovery public key" do
-      {:ok, result} = Cosigner.onboard("0xnew_holder", MockAuthProvider.valid_token())
+      {:ok, result} = Guardian.onboard("0xnew_holder", MockAuthProvider.valid_token())
 
       assert %{recovery_public_key: %{x: x, y: y}} = result
       assert is_binary(x)
@@ -16,14 +16,14 @@ defmodule Sovra.CosignerTest do
     end
 
     test "rejects duplicate sovra_address" do
-      {:ok, _} = Cosigner.onboard("0xduplicate", MockAuthProvider.valid_token())
+      {:ok, _} = Guardian.onboard("0xduplicate", MockAuthProvider.valid_token())
 
       assert {:error, :already_onboarded} =
-               Cosigner.onboard("0xduplicate", MockAuthProvider.valid_token())
+               Guardian.onboard("0xduplicate", MockAuthProvider.valid_token())
     end
 
     test "rejects invalid oauth token" do
-      assert {:error, :invalid_id_token} = Cosigner.onboard("0xholder", "bad-token")
+      assert {:error, :invalid_id_token} = Guardian.onboard("0xholder", "bad-token")
     end
   end
 
@@ -31,7 +31,7 @@ defmodule Sovra.CosignerTest do
     test "returns new public key and rotation signature" do
       holder = create_test_holder("0xrotate_holder")
 
-      {:ok, result} = Cosigner.rotate_recovery_key(holder.sovra_address)
+      {:ok, result} = Guardian.rotate_recovery_key(holder.sovra_address)
 
       assert %{new_recovery_public_key: %{x: _, y: _}, rotation_signature: %{r: _, s: _}} = result
     end
@@ -40,7 +40,7 @@ defmodule Sovra.CosignerTest do
       holder = create_test_holder("0xrotate_old_key")
       old_key_id = holder.recovery_key_id
 
-      {:ok, _} = Cosigner.rotate_recovery_key(holder.sovra_address)
+      {:ok, _} = Guardian.rotate_recovery_key(holder.sovra_address)
 
       hash = random_hash()
       assert {:error, :key_not_found} = Sovra.Crypto.Key.sign(old_key_id, hash)
@@ -53,10 +53,10 @@ defmodule Sovra.CosignerTest do
       {:ok, %{public_key_x: x, public_key_y: y}} = Sovra.Crypto.P256.generate_key_pair()
 
       {:ok, %{signature: %{r: _, s: _}}} =
-        Cosigner.initiate_recovery(holder.sovra_address, %{x: x, y: y})
+        Guardian.initiate_recovery(holder.sovra_address, %{x: x, y: y})
 
       updated =
-        Sovra.Repo.get_by!(Sovra.Cosigner.HolderRecord, sovra_address: "0xrecovery_holder")
+        Sovra.Repo.get_by!(Sovra.Guardian.HolderRecord, sovra_address: "0xrecovery_holder")
 
       assert updated.status == "recovery_pending"
     end

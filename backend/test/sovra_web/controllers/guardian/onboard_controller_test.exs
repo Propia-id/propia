@@ -1,4 +1,4 @@
-defmodule SovraWeb.Cosigner.OnboardControllerTest do
+defmodule SovraWeb.Guardian.OnboardControllerTest do
   use SovraWeb.ConnCase, async: true
 
   alias Sovra.Auth.MockAuthProvider

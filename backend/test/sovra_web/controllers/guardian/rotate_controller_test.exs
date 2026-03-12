@@ -1,7 +1,7 @@
-defmodule SovraWeb.Cosigner.RotateControllerTest do
+defmodule SovraWeb.Guardian.RotateControllerTest do
   use SovraWeb.ConnCase, async: true
 
-  import Sovra.CosignerHelpers
+  import Sovra.GuardianHelpers
 
   describe "POST /api/v1/recovery/rotate-key" do
     test "returns new public key and rotation signature", %{conn: conn} do

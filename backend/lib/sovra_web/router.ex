@@ -5,7 +5,7 @@ defmodule SovraWeb.Router do
     plug :accepts, ["json"]
   end
 
-  pipeline :cosigner_session do
+  pipeline :guardian_session do
     plug SovraWeb.Plugs.SessionPlug
   end
 
@@ -66,7 +66,7 @@ defmodule SovraWeb.Router do
   end
 
   # Holder onboarding & auth (public)
-  scope "/api/v1/holder", SovraWeb.Cosigner do
+  scope "/api/v1/holder", SovraWeb.Guardian do
     pipe_through :api
 
     post "/onboard", OnboardController, :onboard
@@ -75,8 +75,8 @@ defmodule SovraWeb.Router do
   end
 
   # Recovery operations (authenticated)
-  scope "/api/v1/recovery", SovraWeb.Cosigner do
-    pipe_through [:api, :cosigner_session]
+  scope "/api/v1/recovery", SovraWeb.Guardian do
+    pipe_through [:api, :guardian_session]
 
     post "/rotate-key", RotateController, :rotate
     post "/initiate", RecoveryController, :initiate_recovery

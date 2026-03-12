@@ -1,9 +1,9 @@
-defmodule SovraWeb.Cosigner.AuthController do
+defmodule SovraWeb.Guardian.AuthController do
   use SovraWeb, :controller
 
   # Native mobile flow: verify ID token directly, issue session
   def auth(conn, %{"oauth_token" => oauth_token}) do
-    case Sovra.Cosigner.authenticate_with_token(oauth_token) do
+    case Sovra.Guardian.authenticate_with_token(oauth_token) do
       {:ok, %{session_token: session_token, expires_at: expires_at}} ->
         json(conn, %{sessionToken: session_token, expiresAt: expires_at})
 
@@ -20,7 +20,7 @@ defmodule SovraWeb.Cosigner.AuthController do
 
   # Browser-based flow: redirect to Google OAuth
   def auth(conn, %{"sovraAddress" => sovra_address}) do
-    case Sovra.Cosigner.get_auth_url(sovra_address) do
+    case Sovra.Guardian.get_auth_url(sovra_address) do
       {:ok, url} ->
         json(conn, %{authorizationUrl: url})
 
@@ -37,7 +37,7 @@ defmodule SovraWeb.Cosigner.AuthController do
   end
 
   def callback(conn, %{"code" => code, "state" => state}) do
-    case Sovra.Cosigner.handle_auth_callback(code, state) do
+    case Sovra.Guardian.handle_auth_callback(code, state) do
       {:ok, session_token} ->
         json(conn, %{session: session_token})
 
