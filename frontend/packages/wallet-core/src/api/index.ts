@@ -73,9 +73,13 @@ export class ApiClient {
       return req;
     });
 
-    // Handle 401 responses
+    // Handle 401 (expired) and 403 session_not_fresh (step-up auth) responses
     this.backend.interceptors.response.use(undefined, async (error) => {
-      if (error.response?.status === 401 && this.onSessionExpired) {
+      const status = error.response?.status;
+      const needsRefresh =
+        status === 401 || (status === 403 && error.response?.data?.error === "session_not_fresh");
+
+      if (needsRefresh && this.onSessionExpired) {
         await this.onSessionExpired();
         return this.backend.request(error.config as AxiosRequestConfig);
       }

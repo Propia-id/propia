@@ -85,13 +85,12 @@ defmodule Sovra.Guardian do
         HolderRecord.update_key_changeset(holder, %{
           recovery_key_id: new_key_id,
           recovery_public_key_x: new_x,
-          recovery_public_key_y: new_y
+          recovery_public_key_y: new_y,
+          previous_recovery_key_id: holder.recovery_key_id
         })
 
       case Repo.update(changeset) do
         {:ok, _updated} ->
-          Key.delete_key(holder.recovery_key_id)
-
           {:ok,
            %{
              new_recovery_public_key: %{
@@ -108,8 +107,27 @@ defmodule Sovra.Guardian do
     end
   end
 
+  def confirm_rotation(sovra_address) do
+    with {:ok, holder} <- get_active_holder(sovra_address),
+         previous_key_id when is_binary(previous_key_id) <- holder.previous_recovery_key_id do
+      Key.delete_key(previous_key_id)
+
+      changeset =
+        holder
+        |> Ecto.Changeset.change(previous_recovery_key_id: nil)
+
+      case Repo.update(changeset) do
+        {:ok, _} -> :ok
+        {:error, changeset} -> {:error, {:changeset, changeset}}
+      end
+    else
+      nil -> {:error, :no_pending_rotation}
+      error -> error
+    end
+  end
+
   def initiate_recovery(sovra_address, %{x: passkey_x, y: passkey_y}) do
-    with {:ok, holder} <- get_holder(sovra_address),
+    with {:ok, holder} <- get_active_holder(sovra_address),
          recovery_hash <-
            :crypto.hash(:sha256, <<passkey_x::binary, passkey_y::binary>>),
          {:ok, sig} <- Key.sign(holder.recovery_key_id, recovery_hash) do
@@ -135,13 +153,6 @@ defmodule Sovra.Guardian do
     end
   end
 
-  defp get_holder(sovra_address) do
-    case Repo.get_by(HolderRecord, sovra_address: sovra_address) do
-      nil -> {:error, :holder_not_found}
-      holder -> {:ok, holder}
-    end
-  end
-
   defp get_holder_by_oauth_subject(oauth_subject) do
     case Repo.get_by(HolderRecord, oauth_subject: oauth_subject) do
       nil -> {:error, :holder_not_found}
@@ -164,14 +175,29 @@ defmodule Sovra.Guardian do
   end
 
   defp encode_state(sovra_address) do
-    Base.url_encode64(sovra_address, padding: false)
+    timestamp = System.system_time(:second) |> Integer.to_string()
+    payload = sovra_address <> "|" <> timestamp
+    mac = :crypto.mac(:hmac, :sha256, state_secret(), payload)
+    Base.url_encode64(payload <> "|" <> Base.encode64(mac, padding: false), padding: false)
   end
 
   defp decode_state(state) do
-    case Base.url_decode64(state, padding: false) do
-      {:ok, address} -> {:ok, address}
-      :error -> {:error, :invalid_state}
+    with {:ok, decoded} <- Base.url_decode64(state, padding: false),
+         [address, timestamp_str, mac_b64] <- String.split(decoded, "|", parts: 3),
+         {:ok, mac} <- Base.decode64(mac_b64, padding: false),
+         payload <- address <> "|" <> timestamp_str,
+         expected_mac <- :crypto.mac(:hmac, :sha256, state_secret(), payload),
+         true <- Plug.Crypto.secure_compare(mac, expected_mac),
+         {timestamp, ""} <- Integer.parse(timestamp_str),
+         true <- System.system_time(:second) - timestamp < 600 do
+      {:ok, address}
+    else
+      _ -> {:error, :invalid_state}
     end
+  end
+
+  defp state_secret do
+    Application.fetch_env!(:sovra, :session_secret)
   end
 
   defp format_signature(%{r: r, s: s}) do

@@ -4,6 +4,8 @@ defmodule Sovra.Auth.Session do
   Tokens are HMAC-SHA256 signed, 15-minute expiry, stateless.
   """
 
+  require Logger
+
   @session_ttl 900
 
   def create(sovra_address) do
@@ -12,6 +14,9 @@ defmodule Sovra.Auth.Session do
     claims = %{
       "sub" => sovra_address,
       "scope" => "guardian",
+      "iss" => "sovra-guardian",
+      "aud" => "sovra-guardian",
+      "jti" => generate_jti(),
       "iat" => now,
       "exp" => now + @session_ttl
     }
@@ -27,9 +32,19 @@ defmodule Sovra.Auth.Session do
 
     try do
       case JOSE.JWT.verify_strict(jwk, ["HS256"], token) do
-        {true, %JOSE.JWT{fields: %{"sub" => sub, "scope" => "guardian", "exp" => exp}}, _jws} ->
+        {true,
+         %JOSE.JWT{
+           fields: %{
+             "sub" => sub,
+             "scope" => "guardian",
+             "iss" => "sovra-guardian",
+             "aud" => "sovra-guardian",
+             "iat" => iat,
+             "exp" => exp
+           }
+         }, _jws} ->
           if exp > System.system_time(:second) do
-            {:ok, %{sovra_address: sub}}
+            {:ok, %{sovra_address: sub, iat: iat}}
           else
             {:error, :expired}
           end
@@ -38,7 +53,9 @@ defmodule Sovra.Auth.Session do
           {:error, :invalid}
       end
     rescue
-      _ -> {:error, :invalid}
+      e in [ArgumentError, FunctionClauseError, ErlangError] ->
+        Logger.warning("Session verification failed: #{inspect(e)}")
+        {:error, :invalid}
     end
   end
 
@@ -46,4 +63,6 @@ defmodule Sovra.Auth.Session do
     secret = Application.fetch_env!(:sovra, :session_secret)
     JOSE.JWK.from_oct(secret)
   end
+
+  defp generate_jti, do: Base.url_encode64(:crypto.strong_rand_bytes(16), padding: false)
 end

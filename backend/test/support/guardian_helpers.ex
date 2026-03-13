@@ -7,7 +7,13 @@ defmodule Sovra.GuardianHelpers do
   alias Sovra.Crypto.Key
   alias Sovra.Repo
 
-  def create_test_holder(sovra_address \\ "0xtest123") do
+  @doc "Generates a valid Ethereum address from a seed string (for testing)"
+  def test_address(seed) do
+    hash = :crypto.hash(:sha256, seed) |> Base.encode16(case: :lower)
+    "0x" <> String.slice(hash, 0, 40)
+  end
+
+  def create_test_holder(sovra_address \\ test_address("test123")) do
     {:ok, %{key_id: key_id, public_key_x: x, public_key_y: y}} =
       Key.generate_key(sovra_address)
 
