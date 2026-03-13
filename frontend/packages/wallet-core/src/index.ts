@@ -12,8 +12,8 @@ export { ApiClient } from "./api/index";
 export type {
   ApiClientConfig,
   OnboardResponse,
-
   AuthResponse,
+  RecoverySignatureResponse,
   TokenResponse,
   IssuerMetadata,
 } from "./api/index";
@@ -26,6 +26,7 @@ export {
 export type {
   IdentityStore,
   IdentityState,
+  PendingRecovery,
   CredentialStore,
   StoredCredential,
 } from "./state/index";

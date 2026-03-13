@@ -19,7 +19,17 @@ defmodule Sovra.GuardianTest do
       {:ok, _} = Guardian.onboard("0xduplicate", MockAuthProvider.valid_token())
 
       assert {:error, :already_onboarded} =
-               Guardian.onboard("0xduplicate", MockAuthProvider.valid_token())
+               Guardian.onboard("0xduplicate", MockAuthProvider.valid_token_2())
+    end
+
+    test "returns login session for same google account on different device" do
+      {:ok, first} = Guardian.onboard("0xdevice_a", MockAuthProvider.valid_token())
+      assert Map.has_key?(first, :recovery_public_key)
+
+      {:ok, second} = Guardian.onboard("0xdevice_b", MockAuthProvider.valid_token())
+      assert second.sovra_address == "0xdevice_a"
+      assert is_binary(second.session_token)
+      refute Map.has_key?(second, :recovery_public_key)
     end
 
     test "rejects invalid oauth token" do
@@ -50,15 +60,44 @@ defmodule Sovra.GuardianTest do
   describe "initiate_recovery/2" do
     test "returns signature and sets status to recovery_pending" do
       holder = create_test_holder("0xrecovery_holder")
-      {:ok, %{public_key_x: x, public_key_y: y}} = Sovra.Crypto.P256.generate_key_pair()
+      message_hash = random_hash()
 
       {:ok, %{signature: %{r: _, s: _}}} =
-        Guardian.initiate_recovery(holder.sovra_address, %{x: x, y: y})
+        Guardian.initiate_recovery(holder.sovra_address, message_hash)
 
       updated =
         Sovra.Repo.get_by!(Sovra.Guardian.HolderRecord, sovra_address: "0xrecovery_holder")
 
       assert updated.status == "recovery_pending"
+    end
+  end
+
+  describe "finalize_recovery/2" do
+    test "returns signature and sets status back to active" do
+      holder = create_test_holder("0xfinalize_holder")
+
+      {:ok, _} = Guardian.initiate_recovery(holder.sovra_address, random_hash())
+      {:ok, %{signature: %{r: r, s: s}}} =
+        Guardian.finalize_recovery(holder.sovra_address, random_hash())
+
+      assert is_binary(r)
+      assert is_binary(s)
+
+      updated =
+        Sovra.Repo.get_by!(Sovra.Guardian.HolderRecord, sovra_address: "0xfinalize_holder")
+
+      assert updated.status == "active"
+    end
+
+    test "rejects non-recovery_pending holders" do
+      holder = create_test_holder("0xfinalize_active")
+
+      assert {:error, :not_in_recovery} =
+               Guardian.finalize_recovery(holder.sovra_address, random_hash())
+    end
+
+    test "rejects unknown holders" do
+      assert {:error, :holder_not_found} = Guardian.finalize_recovery("0xunknown", random_hash())
     end
   end
 end

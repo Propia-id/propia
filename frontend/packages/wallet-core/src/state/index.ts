@@ -3,6 +3,12 @@ import type { SecureStorage } from "../platform/index";
 
 // ─── Identity Store ───────────────────────────────────
 
+export interface PendingRecovery {
+  passkeyCredentialId: string;
+  passkeyPublicKey: Uint8Array;
+  initiatedAt: number;
+}
+
 export interface IdentityState {
   did: string | null;
   eoaAddress: string | null;
@@ -13,6 +19,7 @@ export interface IdentityState {
   sessionExpiresAt: number | null;
   chainId: bigint | null;
   isOnboarded: boolean;
+  pendingRecovery: PendingRecovery | null;
 }
 
 export interface IdentityActions {
@@ -24,9 +31,16 @@ export interface IdentityActions {
     recoveryPublicKey: { x: Uint8Array; y: Uint8Array };
     chainId: bigint;
   }): void;
+  setLoginIdentity(data: {
+    did: string;
+    eoaAddress: string;
+    chainId: bigint;
+  }): void;
   setSession(token: string, expiresAt: number): void;
   clearSession(): void;
   isSessionValid(): boolean;
+  setPendingRecovery(data: PendingRecovery): void;
+  clearPendingRecovery(): void;
   reset(): void;
   persistToStorage(storage: SecureStorage): Promise<void>;
   loadFromStorage(storage: SecureStorage): Promise<void>;
@@ -47,6 +61,7 @@ export function createIdentityStore() {
     sessionExpiresAt: null,
     chainId: null,
     isOnboarded: false,
+    pendingRecovery: null,
 
     setIdentity(data) {
       set({
@@ -55,6 +70,15 @@ export function createIdentityStore() {
         passkeyCredentialId: data.passkeyCredentialId,
         passkeyPublicKey: data.passkeyPublicKey,
         recoveryPublicKey: data.recoveryPublicKey,
+        chainId: data.chainId,
+        isOnboarded: true,
+      });
+    },
+
+    setLoginIdentity(data) {
+      set({
+        did: data.did,
+        eoaAddress: data.eoaAddress,
         chainId: data.chainId,
         isOnboarded: true,
       });
@@ -74,6 +98,14 @@ export function createIdentityStore() {
       return Date.now() < sessionExpiresAt;
     },
 
+    setPendingRecovery(data) {
+      set({ pendingRecovery: data });
+    },
+
+    clearPendingRecovery() {
+      set({ pendingRecovery: null });
+    },
+
     reset() {
       set({
         did: null,
@@ -85,6 +117,7 @@ export function createIdentityStore() {
         sessionExpiresAt: null,
         chainId: null,
         isOnboarded: false,
+        pendingRecovery: null,
       });
     },
 
@@ -106,6 +139,13 @@ export function createIdentityStore() {
             }
           : null,
         chainId: state.chainId?.toString() ?? null,
+        pendingRecovery: state.pendingRecovery
+          ? {
+              passkeyCredentialId: state.pendingRecovery.passkeyCredentialId,
+              passkeyPublicKey: Array.from(state.pendingRecovery.passkeyPublicKey),
+              initiatedAt: state.pendingRecovery.initiatedAt,
+            }
+          : null,
       };
       await storage.set(IDENTITY_STORAGE_KEY, JSON.stringify(serializable));
     },
@@ -129,6 +169,13 @@ export function createIdentityStore() {
             }
           : null,
         chainId: data.chainId ? BigInt(data.chainId) : null,
+        pendingRecovery: data.pendingRecovery
+          ? {
+              passkeyCredentialId: data.pendingRecovery.passkeyCredentialId,
+              passkeyPublicKey: new Uint8Array(data.pendingRecovery.passkeyPublicKey),
+              initiatedAt: data.pendingRecovery.initiatedAt,
+            }
+          : null,
         isOnboarded: true,
       });
     },

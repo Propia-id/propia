@@ -10,22 +10,31 @@ export class GuardianClient {
     >,
   ) {}
 
-  /** Register with recovery server during onboarding. Returns recovery public key. */
+  /** Register with recovery server during onboarding, or login if account already exists. */
   async onboard(
     sovraAddress: string,
     oauthToken: string,
-  ): Promise<{
-    recoveryPublicKey: { x: Uint8Array; y: Uint8Array };
-  }> {
+  ): Promise<
+    | { type: "onboard"; recoveryPublicKey: { x: Uint8Array; y: Uint8Array } }
+    | { type: "login"; sovraAddress: string }
+  > {
     const response = await this.api.holderOnboard(sovraAddress, oauthToken);
 
     this.api.setSessionToken(response.sessionToken);
 
+    if (response.recoveryPublicKey) {
+      return {
+        type: "onboard",
+        recoveryPublicKey: {
+          x: base64urlDecode(response.recoveryPublicKey.x),
+          y: base64urlDecode(response.recoveryPublicKey.y),
+        },
+      };
+    }
+
     return {
-      recoveryPublicKey: {
-        x: base64urlDecode(response.recoveryPublicKey.x),
-        y: base64urlDecode(response.recoveryPublicKey.y),
-      },
+      type: "login",
+      sovraAddress: response.sovraAddress!,
     };
   }
 
