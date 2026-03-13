@@ -23,7 +23,9 @@ defmodule Sovra.Guardian.HolderRecord do
     record
     |> cast(attrs, @required)
     |> validate_required(@required)
-    |> validate_format(:sovra_address, ~r/^0x[0-9a-fA-F]{40}$/, message: "must be a valid Ethereum address")
+    |> validate_format(:sovra_address, ~r/^0x[0-9a-fA-F]{40}$/,
+      message: "must be a valid Ethereum address"
+    )
     |> validate_inclusion(:status, ~w(active recovery_pending deactivated))
     |> unique_constraint(:sovra_address)
     |> unique_constraint([:oauth_provider, :oauth_subject])
@@ -37,7 +39,12 @@ defmodule Sovra.Guardian.HolderRecord do
 
   def update_key_changeset(record, attrs) do
     record
-    |> cast(attrs, [:recovery_key_id, :recovery_public_key_x, :recovery_public_key_y, :previous_recovery_key_id])
+    |> cast(attrs, [
+      :recovery_key_id,
+      :recovery_public_key_x,
+      :recovery_public_key_y,
+      :previous_recovery_key_id
+    ])
     |> validate_required([:recovery_key_id, :recovery_public_key_x, :recovery_public_key_y])
   end
 end

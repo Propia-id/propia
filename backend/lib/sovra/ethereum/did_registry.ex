@@ -6,6 +6,7 @@ defmodule Sovra.Ethereum.DIDRegistry do
 
   alias Sovra.Ethereum.Client
   alias Sovra.Ethereum.Contracts.DIDRegistryContract
+  alias Sovra.Crypto.P256
 
   @doc """
   Register an issuer DID on-chain with their P-256 signing key and OID4VCI service endpoint.
@@ -33,10 +34,13 @@ defmodule Sovra.Ethereum.DIDRegistry do
   # Build a VerificationMethod tuple for the P-256 assertion key
   defp build_verification_method(pub_key_x, pub_key_y) do
     key_id = ExKeccak.hash_256("key-assert")
-    key_type = 0  # P256
-    relationships = 2  # bit 1 = assertionMethod
+    # P256
+    key_type = 0
+    # bit 1 = assertionMethod
+    relationships = 2
 
-    {key_id, key_type, pad_to_32(pub_key_x), pad_to_32(pub_key_y), relationships}
+    {key_id, key_type, P256.pad_or_trim(pub_key_x, 32), P256.pad_or_trim(pub_key_y, 32),
+     relationships}
   end
 
   # Build a ServiceEndpoint tuple for OID4VCI
@@ -45,12 +49,6 @@ defmodule Sovra.Ethereum.DIDRegistry do
     service_type = ExKeccak.hash_256("OpenID4VCIIssuer")
 
     {service_id, service_type, endpoint_url}
-  end
-
-  defp pad_to_32(bin) when byte_size(bin) == 32, do: bin
-  defp pad_to_32(bin) when byte_size(bin) < 32 do
-    padding = 32 - byte_size(bin)
-    <<0::size(padding * 8), bin::binary>>
   end
 
   defp contract_address do

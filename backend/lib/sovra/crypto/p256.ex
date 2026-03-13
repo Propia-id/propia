@@ -81,16 +81,18 @@ defmodule Sovra.Crypto.P256 do
     end
   end
 
-  # Pad to size (left with zeros) or trim leading zeros
-  defp pad_or_trim(bin, size) when byte_size(bin) == size, do: bin
+  @doc """
+  Pad to size (left with zeros) or trim leading zero bytes.
+  """
+  def pad_or_trim(bin, size) when byte_size(bin) == size, do: bin
 
-  defp pad_or_trim(bin, size) when byte_size(bin) > size do
+  def pad_or_trim(bin, size) when byte_size(bin) > size do
     # Strip leading zero bytes (DER integer may have 0x00 prefix)
     <<_::binary-size(byte_size(bin) - size), trimmed::binary-size(size)>> = bin
     trimmed
   end
 
-  defp pad_or_trim(bin, size) when byte_size(bin) < size do
+  def pad_or_trim(bin, size) when byte_size(bin) < size do
     padding = size - byte_size(bin)
     <<0::size(padding * 8), bin::binary>>
   end

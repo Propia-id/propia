@@ -4,6 +4,7 @@ defmodule Sovra.Crypto.Key do
   """
 
   def generate_key(holder_id), do: impl().generate_key(holder_id)
+  def store_key(key_id, private_key), do: impl().store_key(key_id, private_key)
   def sign(key_id, hash), do: impl().sign(key_id, hash)
   def delete_key(key_id), do: impl().delete_key(key_id)
 

@@ -4,8 +4,10 @@ defmodule Sovra.Issuer.OID4VCI do
   Builds metadata and offer responses matching the wallet's expected formats.
   """
 
+  alias Sovra.Issuer.ClaimUtils
+
   def build_metadata(issuer, schemas) do
-    base_url = base_url()
+    base_url = ClaimUtils.base_url()
 
     configs =
       Map.new(schemas, fn schema ->
@@ -26,9 +28,5 @@ defmodule Sovra.Issuer.OID4VCI do
       "credential_configurations_supported" => configs,
       "display" => [%{"name" => issuer.name}]
     }
-  end
-
-  defp base_url do
-    Application.get_env(:sovra, :issuer, []) |> Keyword.get(:base_url, "http://localhost:4000")
   end
 end

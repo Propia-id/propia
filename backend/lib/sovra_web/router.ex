@@ -17,6 +17,10 @@ defmodule SovraWeb.Router do
     plug SovraWeb.Plugs.IssuerSessionPlug
   end
 
+  pipeline :token_rate_limited do
+    plug SovraWeb.Plugs.RateLimitPlug, max_requests: 10, window_ms: 60_000
+  end
+
   # Health check
   scope "/", SovraWeb do
     pipe_through :api
@@ -27,6 +31,7 @@ defmodule SovraWeb.Router do
   scope "/", SovraWeb.Issuer do
     pipe_through :api
     get "/.well-known/openid-credential-issuer", MetadataController, :show
+    get "/.well-known/openid-credential-issuer/:issuer_id", MetadataController, :show_by_id
   end
 
   # Issuer API (OID4VCI)
@@ -35,9 +40,16 @@ defmodule SovraWeb.Router do
 
     post "/credential-offer", CredentialController, :offer
     post "/authorize", CredentialController, :authorize
-    post "/token", CredentialController, :token
     post "/credential", CredentialController, :issue
     get "/metadata", MetadataController, :show
+    get "/metadata/:issuer_id", MetadataController, :show_by_id
+  end
+
+  # Token endpoint with rate limiting
+  scope "/api/v1/issuer", SovraWeb.Issuer do
+    pipe_through [:api, :token_rate_limited]
+
+    post "/token", CredentialController, :token
   end
 
   # Issuer auth (public)

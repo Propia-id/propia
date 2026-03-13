@@ -10,13 +10,13 @@ defmodule SovraWeb.Issuer.CredentialController do
     claims = params["claims"]
 
     case Issuer.create_credential_offer(issuer_id, schema_id, holder_did, claims) do
-      {:ok, %{offer: offer, offer_uri: offer_uri}} ->
+      {:ok, %{offer: offer, offer_uri: offer_uri, pre_authorized_code: code}} ->
         conn
         |> put_status(201)
         |> json(%{
           offer_id: offer.id,
           offer_uri: offer_uri,
-          pre_authorized_code: offer.pre_authorized_code,
+          pre_authorized_code: code,
           expires_at: DateTime.to_iso8601(offer.expires_at)
         })
 
@@ -47,12 +47,13 @@ defmodule SovraWeb.Issuer.CredentialController do
       conn |> put_status(400) |> json(%{error: "unsupported_grant_type"})
     else
       case Issuer.exchange_token(code, tx_code) do
-        {:ok, %{access_token: token, c_nonce: nonce, expires_in: expires_in}} ->
+        {:ok, data} ->
           json(conn, %{
-            access_token: token,
-            c_nonce: nonce,
+            access_token: data.access_token,
+            c_nonce: data.c_nonce,
+            c_nonce_expires_in: data.c_nonce_expires_in,
             token_type: "bearer",
-            expires_in: expires_in
+            expires_in: data.expires_in
           })
 
         {:error, :invalid_code} ->
@@ -66,6 +67,9 @@ defmodule SovraWeb.Issuer.CredentialController do
 
         {:error, :code_already_used} ->
           conn |> put_status(400) |> json(%{error: "invalid_grant"})
+
+        {:error, :offer_locked} ->
+          conn |> put_status(429) |> json(%{error: "too_many_attempts"})
 
         {:error, reason} ->
           conn |> put_status(500) |> json(%{error: inspect(reason)})
