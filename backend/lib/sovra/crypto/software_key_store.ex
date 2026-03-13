@@ -55,6 +55,7 @@ defmodule Sovra.Crypto.SoftwareKeyStore do
     end
   end
 
+  @impl GenServer
   def handle_call({:delete_key, key_id}, _from, state) do
     :ets.delete(@table, key_id)
     {:reply, :ok, state}

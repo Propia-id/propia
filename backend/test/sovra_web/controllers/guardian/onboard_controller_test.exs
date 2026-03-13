@@ -3,11 +3,13 @@ defmodule SovraWeb.Guardian.OnboardControllerTest do
 
   alias Sovra.Auth.MockAuthProvider
 
+  import Sovra.GuardianHelpers
+
   describe "POST /api/v1/holder/onboard" do
     test "creates holder and returns recovery public key", %{conn: conn} do
       conn =
         post(conn, "/api/v1/holder/onboard", %{
-          "sovraAddress" => "0xonboard_test",
+          "sovraAddress" => test_address("onboard_test"),
           "oauthToken" => MockAuthProvider.valid_token()
         })
 
@@ -18,13 +20,13 @@ defmodule SovraWeb.Guardian.OnboardControllerTest do
 
     test "returns 409 for duplicate address", %{conn: conn} do
       post(conn, "/api/v1/holder/onboard", %{
-        "sovraAddress" => "0xdup_test",
+        "sovraAddress" => test_address("dup_test"),
         "oauthToken" => MockAuthProvider.valid_token()
       })
 
       conn =
         post(conn, "/api/v1/holder/onboard", %{
-          "sovraAddress" => "0xdup_test",
+          "sovraAddress" => test_address("dup_test"),
           "oauthToken" => MockAuthProvider.valid_token_2()
         })
 
@@ -52,7 +54,7 @@ defmodule SovraWeb.Guardian.OnboardControllerTest do
     test "returns 401 for invalid token", %{conn: conn} do
       conn =
         post(conn, "/api/v1/holder/onboard", %{
-          "sovraAddress" => "0xinvalid_token",
+          "sovraAddress" => test_address("invalid_token"),
           "oauthToken" => "bad-token"
         })
 

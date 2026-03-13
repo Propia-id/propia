@@ -5,7 +5,7 @@ defmodule SovraWeb.Guardian.RotateControllerTest do
 
   describe "POST /api/v1/recovery/rotate-key" do
     test "returns new public key and rotation signature", %{conn: conn} do
-      holder = create_test_holder("0xrotate_ctrl_test")
+      holder = create_test_holder(test_address("rotate_ctrl_test"))
 
       conn =
         conn

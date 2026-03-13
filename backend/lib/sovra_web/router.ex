@@ -9,6 +9,10 @@ defmodule SovraWeb.Router do
     plug SovraWeb.Plugs.SessionPlug
   end
 
+  pipeline :fresh_guardian_session do
+    plug SovraWeb.Plugs.SessionPlug, max_age: 300
+  end
+
   pipeline :issuer_session do
     plug SovraWeb.Plugs.IssuerSessionPlug
   end
@@ -74,9 +78,9 @@ defmodule SovraWeb.Router do
     post "/auth/callback", AuthController, :callback
   end
 
-  # Recovery operations (authenticated)
+  # Recovery operations (require fresh auth — token issued within last 5 minutes)
   scope "/api/v1/recovery", SovraWeb.Guardian do
-    pipe_through [:api, :guardian_session]
+    pipe_through [:api, :fresh_guardian_session]
 
     post "/rotate-key", RotateController, :rotate
     post "/initiate", RecoveryController, :initiate_recovery

@@ -9,6 +9,7 @@ defmodule Sovra.Auth.GoogleAuthProvider do
   @google_auth_url "https://accounts.google.com/o/oauth2/v2/auth"
   @google_token_url "https://oauth2.googleapis.com/token"
   @google_jwks_url "https://www.googleapis.com/oauth2/v3/certs"
+  @jwks_ttl 3600
 
   @impl true
   def get_authorization_url(state) do
@@ -58,9 +59,29 @@ defmodule Sovra.Auth.GoogleAuthProvider do
   end
 
   defp fetch_google_jwks do
+    case get_cached_jwks() do
+      {:ok, jwks} -> {:ok, jwks}
+      :miss -> fetch_and_cache_jwks()
+    end
+  end
+
+  defp get_cached_jwks do
+    case :persistent_term.get(:google_jwks_cache, nil) do
+      {jwks, cached_at} when is_list(jwks) ->
+        if System.system_time(:second) - cached_at < @jwks_ttl,
+          do: {:ok, jwks},
+          else: :miss
+
+      _ ->
+        :miss
+    end
+  end
+
+  defp fetch_and_cache_jwks do
     case Req.get(@google_jwks_url) do
       {:ok, %{status: 200, body: %{"keys" => keys}}} ->
         jwks = Enum.map(keys, &JOSE.JWK.from_map/1)
+        :persistent_term.put(:google_jwks_cache, {jwks, System.system_time(:second)})
         {:ok, jwks}
 
       _ ->
@@ -92,7 +113,9 @@ defmodule Sovra.Auth.GoogleAuthProvider do
 
     claims["iss"] in ["accounts.google.com", "https://accounts.google.com"] and
       claims["aud"] in allowed_client_ids() and
-      claims["exp"] > now
+      claims["exp"] > now and
+      is_integer(claims["iat"]) and claims["iat"] <= now and
+      claims["email_verified"] == true
   end
 
   defp allowed_client_ids do

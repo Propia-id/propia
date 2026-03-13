@@ -5,7 +5,7 @@ defmodule SovraWeb.Guardian.RecoveryControllerTest do
 
   describe "POST /api/v1/recovery/initiate" do
     test "returns recovery signature", %{conn: conn} do
-      holder = create_test_holder("0xrecovery_ctrl_test")
+      holder = create_test_holder(test_address("recovery_ctrl_test"))
       message_hash = random_hash()
 
       conn =
@@ -25,7 +25,7 @@ defmodule SovraWeb.Guardian.RecoveryControllerTest do
     end
 
     test "returns 400 for missing fields", %{conn: conn} do
-      holder = create_test_holder("0xrecovery_missing")
+      holder = create_test_holder(test_address("recovery_missing"))
 
       conn =
         conn
