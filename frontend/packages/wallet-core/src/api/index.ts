@@ -4,11 +4,16 @@ import { bytesToHex } from "../utils/index";
 // ─── Types ────────────────────────────────────────────
 
 export interface OnboardResponse {
-  recoveryPublicKey: { x: string; y: string };
+  recoveryPublicKey?: { x: string; y: string };
+  sovraAddress?: string;
   sessionToken: string;
 }
 
 export interface SignResponse {
+  signature: { r: string; s: string };
+}
+
+export interface RecoverySignatureResponse {
   signature: { r: string; s: string };
 }
 
@@ -119,6 +124,22 @@ export class ApiClient {
     const { data } = await this.backend.post<SignResponse>(
       "/api/v1/recovery/sign",
       { hash: bytesToHex(hash) },
+    );
+    return data;
+  }
+
+  async recoveryInitiate(messageHash: string): Promise<RecoverySignatureResponse> {
+    const { data } = await this.backend.post<RecoverySignatureResponse>(
+      "/api/v1/recovery/initiate",
+      { messageHash },
+    );
+    return data;
+  }
+
+  async recoveryFinalize(messageHash: string): Promise<RecoverySignatureResponse> {
+    const { data } = await this.backend.post<RecoverySignatureResponse>(
+      "/api/v1/recovery/finalize",
+      { messageHash },
     );
     return data;
   }

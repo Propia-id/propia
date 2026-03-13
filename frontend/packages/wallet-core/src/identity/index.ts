@@ -13,16 +13,24 @@ import {
   buildEIP712MessageHash,
   buildRotateOpHash,
   buildDeactivateOpHash,
+  buildInitiateRecoveryOpHash,
+  buildFinalizeRecoveryOpHash,
   signEIP7702AuthTuple,
   bytesToHex,
   hexToBytes,
   encodeFunctionCall,
+  encodeUint256,
 } from "../utils/index";
 
 export interface OnboardingResult {
   did: string;
   eoaAddress: string;
   txHash: string;
+}
+
+export interface LoginResult {
+  did: string;
+  eoaAddress: string;
 }
 
 export class IdentityManager {
@@ -46,13 +54,28 @@ export class IdentityManager {
    * 4. Both keys sign init hash
    * 5. Submit 7702 delegation + initialize tx
    */
-  async onboard(oauthToken: string): Promise<OnboardingResult> {
+  async onboard(oauthToken: string): Promise<OnboardingResult | LoginResult> {
     // Step 1: Generate throwaway secp256k1 keypair → derive EOA address
     const throwawayKey = generateSecp256k1KeyPair();
     const eoaAddress = secp256k1AddressFromPublicKey(throwawayKey.publicKey);
 
-    // Step 2: Register with guardian server → get recovery public key
-    const { recoveryPublicKey } = await this.guardianClient.onboard(eoaAddress, oauthToken);
+    // Step 2: Register with guardian server → get recovery public key (or login if account exists)
+    const onboardResult = await this.guardianClient.onboard(eoaAddress, oauthToken);
+
+    // If the Google account already exists, this is a login on a new device
+    if (onboardResult.type === "login") {
+      const did = `did:sovra:${onboardResult.sovraAddress.toLowerCase()}`;
+      const state = this.identityStore.getState();
+      state.setLoginIdentity({
+        did,
+        eoaAddress: onboardResult.sovraAddress,
+        chainId: this.config.chainId,
+      });
+      await state.persistToStorage(this.storage);
+      return { did, eoaAddress: onboardResult.sovraAddress };
+    }
+
+    const { recoveryPublicKey } = onboardResult;
 
     // Step 3: Create passkey (biometric prompt)
     const passkey = await this.passkeyProvider.create("sovra-user", "Sovra Wallet");
@@ -185,6 +208,127 @@ export class IdentityManager {
   async rotateRecoveryKey(): Promise<string> {
     // Server generates new key; this triggers the recovery server's rotation endpoint
     throw new Error("Not implemented — requires POST /api/v1/recovery/rotate-key endpoint");
+  }
+
+  /** Initiate passkey recovery — creates new passkey, server co-signs with recovery key. */
+  async initiatePasskeyRecovery(): Promise<string> {
+    const state = this.identityStore.getState();
+    if (!state.eoaAddress) throw new Error("Not onboarded");
+
+    // Step 1: Create a new passkey
+    const newPasskey = await this.passkeyProvider.create("sovra-user", "Sovra Wallet");
+    const { x: newX, y: newY } = p256PublicKeyToXY(newPasskey.publicKey);
+
+    // Step 2: Build EIP-712 message hash matching the contract
+    const opHash = buildInitiateRecoveryOpHash(newX, newY, 0n);
+    const domainSep = buildDomainSeparator(state.chainId!, state.eoaAddress);
+    const nonceHex = await this.api.ethCall(
+      state.eoaAddress,
+      bytesToHex(encodeFunctionCall("nonce()", [])),
+    );
+    const currentNonce = BigInt(nonceHex);
+    const msgHash = buildEIP712MessageHash(domainSep, opHash, currentNonce);
+
+    // Step 3: Send hash to server for recovery key signature
+    const response = await this.api.recoveryInitiate(bytesToHex(msgHash));
+    const sigR = hexToBytes(response.signature.r);
+    const sigS = hexToBytes(response.signature.s);
+
+    // Step 4: Build initiateRecovery calldata
+    const calldata = encodeFunctionCall(
+      "initiateRecovery(bytes32,bytes32,uint8,bytes32,bytes32)",
+      [newX, newY, encodeUint256(0n), sigR, sigS],
+    );
+
+    // Step 5: Submit tx
+    const txHash = await this.api.sendTransaction({
+      to: state.eoaAddress,
+      data: bytesToHex(calldata),
+      value: "0x0",
+      gas: "0x100000",
+    });
+
+    // Step 6: Wait for receipt
+    let receipt = null;
+    for (let i = 0; i < 30; i++) {
+      receipt = await this.api.getTransactionReceipt(txHash);
+      if (receipt) break;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    if (!receipt) throw new Error("Transaction not confirmed");
+    if (receipt.status !== "0x1") throw new Error("Transaction reverted");
+
+    // Step 7: Store pending recovery state
+    state.setPendingRecovery({
+      passkeyCredentialId: newPasskey.credentialId,
+      passkeyPublicKey: newPasskey.publicKey,
+      initiatedAt: Date.now(),
+    });
+    await state.persistToStorage(this.storage);
+
+    return txHash;
+  }
+
+  /** Check for pending recovery and finalize if 7+ days have passed. */
+  async checkAndFinalizeRecovery(): Promise<boolean> {
+    const state = this.identityStore.getState();
+    if (!state.eoaAddress || !state.pendingRecovery) return false;
+
+    const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+    if (Date.now() - state.pendingRecovery.initiatedAt < SEVEN_DAYS_MS) return false;
+
+    // Step 1: Build EIP-712 message hash matching the contract
+    const opHash = buildFinalizeRecoveryOpHash();
+    const domainSep = buildDomainSeparator(state.chainId!, state.eoaAddress);
+    const nonceHex = await this.api.ethCall(
+      state.eoaAddress,
+      bytesToHex(encodeFunctionCall("nonce()", [])),
+    );
+    const currentNonce = BigInt(nonceHex);
+    const msgHash = buildEIP712MessageHash(domainSep, opHash, currentNonce);
+
+    // Step 2: Send hash to server for recovery key signature
+    const response = await this.api.recoveryFinalize(bytesToHex(msgHash));
+    const sigR = hexToBytes(response.signature.r);
+    const sigS = hexToBytes(response.signature.s);
+
+    // Step 3: Build finalizeRecovery calldata
+    const calldata = encodeFunctionCall(
+      "finalizeRecovery(bytes32,bytes32)",
+      [sigR, sigS],
+    );
+
+    // Step 3: Submit tx
+    const txHash = await this.api.sendTransaction({
+      to: state.eoaAddress,
+      data: bytesToHex(calldata),
+      value: "0x0",
+      gas: "0x100000",
+    });
+
+    // Step 4: Wait for receipt
+    let receipt = null;
+    for (let i = 0; i < 30; i++) {
+      receipt = await this.api.getTransactionReceipt(txHash);
+      if (receipt) break;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    if (!receipt) throw new Error("Transaction not confirmed");
+    if (receipt.status !== "0x1") throw new Error("Transaction reverted");
+
+    // Step 5: Update identity with new passkey
+    state.setIdentity({
+      did: state.did!,
+      eoaAddress: state.eoaAddress,
+      passkeyCredentialId: state.pendingRecovery.passkeyCredentialId,
+      passkeyPublicKey: state.pendingRecovery.passkeyPublicKey,
+      recoveryPublicKey: state.recoveryPublicKey!,
+      chainId: state.chainId!,
+    });
+    state.clearPendingRecovery();
+    await state.persistToStorage(this.storage);
+
+    return true;
   }
 
   /** Deactivate DID permanently — both keys sign. */

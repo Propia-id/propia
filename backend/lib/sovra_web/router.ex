@@ -84,5 +84,6 @@ defmodule SovraWeb.Router do
 
     post "/rotate-key", RotateController, :rotate
     post "/initiate", RecoveryController, :initiate_recovery
+    post "/finalize", RecoveryController, :finalize
   end
 end

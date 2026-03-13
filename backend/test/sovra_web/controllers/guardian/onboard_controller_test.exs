@@ -19,15 +19,36 @@ defmodule SovraWeb.Guardian.OnboardControllerTest do
     end
 
     test "returns 409 for duplicate address", %{conn: conn} do
-      params = %{
+      post(conn, "/api/v1/holder/onboard", %{
         "sovraAddress" => test_address("dup_test"),
         "oauthToken" => MockAuthProvider.valid_token()
-      }
+      })
 
-      post(conn, "/api/v1/holder/onboard", params)
-      conn = post(conn, "/api/v1/holder/onboard", params)
+      conn =
+        post(conn, "/api/v1/holder/onboard", %{
+          "sovraAddress" => test_address("dup_test"),
+          "oauthToken" => MockAuthProvider.valid_token_2()
+        })
 
       assert %{"error" => "already_onboarded"} = json_response(conn, 409)
+    end
+
+    test "returns 200 login for same google account on different device", %{conn: conn} do
+      post(conn, "/api/v1/holder/onboard", %{
+        "sovraAddress" => "0xdevice_a",
+        "oauthToken" => MockAuthProvider.valid_token()
+      })
+
+      conn =
+        post(conn, "/api/v1/holder/onboard", %{
+          "sovraAddress" => "0xdevice_b",
+          "oauthToken" => MockAuthProvider.valid_token()
+        })
+
+      response = json_response(conn, 200)
+      assert response["sovraAddress"] == "0xdevice_a"
+      assert is_binary(response["sessionToken"])
+      refute Map.has_key?(response, "recoveryPublicKey")
     end
 
     test "returns 401 for invalid token", %{conn: conn} do
