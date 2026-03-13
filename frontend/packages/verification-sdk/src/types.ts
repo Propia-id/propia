@@ -17,6 +17,9 @@ export const ErrorCode = {
   KB_AUDIENCE_MISMATCH: "KB_AUDIENCE_MISMATCH",
   KB_SD_HASH_MISMATCH: "KB_SD_HASH_MISMATCH",
   KB_EXPIRED: "KB_EXPIRED",
+  IAT_INVALID: "IAT_INVALID",
+  SUBJECT_KEY_MISMATCH: "SUBJECT_KEY_MISMATCH",
+  INVALID_ADDRESS: "INVALID_ADDRESS",
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

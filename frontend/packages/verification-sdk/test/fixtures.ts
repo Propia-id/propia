@@ -50,8 +50,12 @@ export interface FixtureOptions {
   claims?: Record<string, unknown>;
   disclosableClaims?: Record<string, unknown>;
   exp?: number;
+  iat?: number;
   nonce?: string;
   audience?: string;
+  sub?: string | null;
+  /** Override raw issuer payload fields (merged after construction) */
+  rawPayloadOverrides?: Record<string, unknown>;
 }
 
 export function generateKeys(): FixtureKeys {
@@ -72,6 +76,7 @@ export function buildPresentation(
   const nonce = opts.nonce ?? "test-nonce-123";
   const audience = opts.audience ?? "did:sovra:0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
   const now = Math.floor(Date.now() / 1000);
+  const iat = opts.iat ?? now;
   const exp = opts.exp ?? now + 86400; // 24 hours from now
 
   const nonDisclosableClaims = opts.claims ?? { iss_country: "EX" };
@@ -101,16 +106,17 @@ export function buildPresentation(
 
   // Build issuer JWT
   const issuerHeader = { alg: "ES256", typ: "vc+sd-jwt" };
-  const issuerPayload = {
+  const issuerPayload: Record<string, unknown> = {
     iss: `did:sovra:${issuerAddress}`,
-    sub: `did:sovra:${holderAddress}`,
+    ...(opts.sub !== null && { sub: opts.sub ?? `did:sovra:${holderAddress}` }),
     vct,
     cnf: { kid: `did:sovra:${holderAddress}#passkey` },
-    iat: now,
+    iat,
     exp,
     _sd: sdDigests,
     _sd_alg: "sha-256",
     ...nonDisclosableClaims,
+    ...opts.rawPayloadOverrides,
   };
 
   const headerB64 = base64urlEncode(
@@ -162,7 +168,7 @@ export function buildPresentation(
     nonce,
     audience,
     exp,
-    iat: now,
+    iat,
     sdHash,
     credentialTypeId: bytesToHex(keccak256(new TextEncoder().encode(vct)), false),
   };

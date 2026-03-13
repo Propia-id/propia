@@ -1,6 +1,6 @@
 import { keccak256, bytesToHex } from "@sovra/wallet-core/utils";
 import { ErrorCode, type IssuerKeyData } from "./types";
-import { VerificationError } from "./parse";
+import { VerificationError } from "./errors";
 import {
   ethCall,
   RpcError,

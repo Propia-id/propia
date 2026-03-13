@@ -1,7 +1,8 @@
 import { sha256, base64urlEncode, keccak256, bytesToHex } from "@sovra/wallet-core/utils";
 import type { VerifyOptions, VerificationResult } from "./types";
 import { ErrorCode } from "./types";
-import { parsePresentation, VerificationError } from "./parse";
+import { parsePresentation } from "./parse";
+import { VerificationError, validateEthAddress } from "./errors";
 import { verifyES256 } from "./signature";
 import { verifyDisclosures } from "./disclosure";
 import { resolveIssuerDID, checkIssuerTrust } from "./resolve-issuer";
@@ -40,16 +41,22 @@ export async function verify(
     const presentation = parsePresentation(sdJwt);
     const { issuerPayload, issuerJwtRaw, kbJwtRaw, kbPayload, disclosures } = presentation;
 
-    const iss = issuerPayload.iss as string;
-    const vct = issuerPayload.vct as string;
-    const iat = issuerPayload.iat as number;
-    const exp = issuerPayload.exp as number | undefined;
-    const sdArray = (issuerPayload._sd as string[]) ?? [];
-    const sdAlg = (issuerPayload._sd_alg as string) ?? "sha-256";
-    const cnf = issuerPayload.cnf as { kid: string } | undefined;
+    const { iss, vct, iat, exp, sdArray, sdAlg, cnf, sub } = validateIssuerPayload(issuerPayload);
 
     // Extract issuer address from DID
     const issuerAddress = extractDIDAddress(iss);
+
+    // Validate sub vs cnf.kid consistency
+    if (sub && cnf?.kid) {
+      const subAddr = extractDIDAddress(sub);
+      const cnfAddr = extractHolderAddress(cnf.kid);
+      if (subAddr.toLowerCase() !== cnfAddr.toLowerCase()) {
+        throw new VerificationError(
+          "Credential subject (sub) does not match holder key (cnf.kid)",
+          ErrorCode.SUBJECT_KEY_MISMATCH,
+        );
+      }
+    }
 
     // Steps 3-5: On-chain issuer verification (skipped in offline mode)
     if (!options.offlineMode) {
@@ -94,8 +101,14 @@ export async function verify(
     // Step 6: Verify disclosures
     const claims = verifyDisclosures(disclosures, sdArray, sdAlg, issuerPayload);
 
-    // Step 7: Check credential expiry
+    // Step 7: Check credential timestamps
     const now = Math.floor(Date.now() / 1000);
+    if (iat > now + maxClockSkew) {
+      throw new VerificationError(
+        `Credential iat is in the future: ${new Date(iat * 1000).toISOString()}`,
+        ErrorCode.IAT_INVALID,
+      );
+    }
     if (exp !== undefined && exp < now - maxClockSkew) {
       throw new VerificationError(
         `Credential expired at ${new Date(exp * 1000).toISOString()}`,
@@ -130,10 +143,7 @@ export async function verify(
     }
 
     // Step 11: Validate KB-JWT claims
-    const kbAud = kbPayload.aud as string;
-    const kbNonce = kbPayload.nonce as string;
-    const kbIat = kbPayload.iat as number;
-    const kbSdHash = kbPayload.sd_hash as string;
+    const { aud: kbAud, nonce: kbNonce, iat: kbIat, sd_hash: kbSdHash } = validateKbPayload(kbPayload);
 
     if (kbAud !== options.expectedAudience) {
       throw new VerificationError(
@@ -201,5 +211,47 @@ function extractDIDAddress(did: string): string {
   if (!did.startsWith("did:sovra:")) {
     throw new VerificationError(`Invalid DID format: ${did}`, ErrorCode.PARSE_ERROR);
   }
-  return did.slice("did:sovra:".length);
+  const address = did.slice("did:sovra:".length);
+  validateEthAddress(address, "DID");
+  return address;
+}
+
+function validateIssuerPayload(p: Record<string, unknown>) {
+  if (typeof p.iss !== "string") throw new VerificationError("iss must be a string", ErrorCode.PARSE_ERROR);
+  if (typeof p.vct !== "string") throw new VerificationError("vct must be a string", ErrorCode.PARSE_ERROR);
+  if (typeof p.iat !== "number") throw new VerificationError("iat must be a number", ErrorCode.PARSE_ERROR);
+  if (p.exp !== undefined && typeof p.exp !== "number") throw new VerificationError("exp must be a number", ErrorCode.PARSE_ERROR);
+  if (p._sd !== undefined && (!Array.isArray(p._sd) || !p._sd.every((v: unknown) => typeof v === "string"))) {
+    throw new VerificationError("_sd must be a string array", ErrorCode.PARSE_ERROR);
+  }
+  if (p._sd_alg !== undefined && typeof p._sd_alg !== "string") throw new VerificationError("_sd_alg must be a string", ErrorCode.PARSE_ERROR);
+  if (p.cnf !== undefined && (typeof p.cnf !== "object" || p.cnf === null || typeof (p.cnf as Record<string, unknown>).kid !== "string")) {
+    throw new VerificationError("cnf must be an object with a string kid", ErrorCode.PARSE_ERROR);
+  }
+  if (p.sub !== undefined && typeof p.sub !== "string") throw new VerificationError("sub must be a string", ErrorCode.PARSE_ERROR);
+
+  return {
+    iss: p.iss as string,
+    vct: p.vct as string,
+    iat: p.iat as number,
+    exp: p.exp as number | undefined,
+    sdArray: (p._sd as string[]) ?? [],
+    sdAlg: (p._sd_alg as string) ?? "sha-256",
+    cnf: p.cnf as { kid: string } | undefined,
+    sub: p.sub as string | undefined,
+  };
+}
+
+function validateKbPayload(p: Record<string, unknown>) {
+  if (typeof p.aud !== "string") throw new VerificationError("KB-JWT aud must be a string", ErrorCode.PARSE_ERROR);
+  if (typeof p.nonce !== "string") throw new VerificationError("KB-JWT nonce must be a string", ErrorCode.PARSE_ERROR);
+  if (typeof p.iat !== "number") throw new VerificationError("KB-JWT iat must be a number", ErrorCode.PARSE_ERROR);
+  if (typeof p.sd_hash !== "string") throw new VerificationError("KB-JWT sd_hash must be a string", ErrorCode.PARSE_ERROR);
+
+  return {
+    aud: p.aud as string,
+    nonce: p.nonce as string,
+    iat: p.iat as number,
+    sd_hash: p.sd_hash as string,
+  };
 }

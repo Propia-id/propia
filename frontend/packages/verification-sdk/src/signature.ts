@@ -29,7 +29,8 @@ export function verifyES256(
 
   try {
     return p256.verify(sigBytes, messageHash, pubKey, { lowS: true, format: "compact" });
-  } catch {
+  } catch (e) {
+    console.warn("[verification-sdk] ES256 verify error:", e);
     return false;
   }
 }

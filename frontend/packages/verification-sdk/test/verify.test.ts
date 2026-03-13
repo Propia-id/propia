@@ -311,6 +311,72 @@ describe("verify", () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
+  it("returns IAT_INVALID for credential with future iat", async () => {
+    const futureIat = Math.floor(Date.now() / 1000) + 3600; // 1 hour in the future
+    const fixture = buildPresentation(keys, {
+      issuerAddress,
+      holderAddress,
+      vct,
+      iat: futureIat,
+    });
+
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+
+    const result = await verify(fixture.presentation, baseOptions, testCache);
+
+    expect(result.valid).toBe(false);
+    expect(result.errorCode).toBe(ErrorCode.IAT_INVALID);
+  });
+
+  it("returns SUBJECT_KEY_MISMATCH when sub and cnf.kid differ", async () => {
+    const differentHolder = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+    const fixture = buildPresentation(keys, {
+      issuerAddress,
+      holderAddress,
+      vct,
+      sub: `did:sovra:${differentHolder}`, // sub points to different address than cnf.kid
+    });
+
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+
+    const result = await verify(fixture.presentation, baseOptions, testCache);
+
+    expect(result.valid).toBe(false);
+    expect(result.errorCode).toBe(ErrorCode.SUBJECT_KEY_MISMATCH);
+  });
+
+  it("returns PARSE_ERROR for non-string iss", async () => {
+    const fixture = buildPresentation(keys, {
+      issuerAddress,
+      holderAddress,
+      vct,
+      rawPayloadOverrides: { iss: 12345 },
+    });
+
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+
+    const result = await verify(fixture.presentation, baseOptions, testCache);
+
+    expect(result.valid).toBe(false);
+    expect(result.errorCode).toBe(ErrorCode.PARSE_ERROR);
+  });
+
+  it("returns INVALID_ADDRESS for malformed issuer DID address", async () => {
+    const fixture = buildPresentation(keys, {
+      issuerAddress,
+      holderAddress,
+      vct,
+      rawPayloadOverrides: { iss: "did:sovra:notahexaddress" },
+    });
+
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+
+    const result = await verify(fixture.presentation, baseOptions, testCache);
+
+    expect(result.valid).toBe(false);
+    expect(result.errorCode).toBe(ErrorCode.INVALID_ADDRESS);
+  });
+
   it("returns KB_PASSKEY_SIG_INVALID with wrong passkey on-chain", async () => {
     const wrongPasskey = generateKeys();
     const modifiedKeys = { ...keys, passkey: wrongPasskey.passkey };
