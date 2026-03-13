@@ -12,6 +12,7 @@ export { ApiClient } from "./api/index";
 export type {
   ApiClientConfig,
   OnboardResponse,
+  SignResponse,
   AuthResponse,
   RecoverySignatureResponse,
   TokenResponse,
@@ -30,6 +31,8 @@ export type {
   CredentialStore,
   StoredCredential,
 } from "./state/index";
+export { createApprovalStore } from "./state/approval-store";
+export type { ApprovalStore } from "./state/approval-store";
 
 // Guardian client
 export { GuardianClient } from "./guardian/index";

@@ -95,7 +95,7 @@ export function createIdentityStore() {
     isSessionValid() {
       const { sessionToken, sessionExpiresAt } = get();
       if (!sessionToken || !sessionExpiresAt) return false;
-      return Date.now() < sessionExpiresAt;
+      return Math.floor(Date.now() / 1000) < sessionExpiresAt;
     },
 
     setPendingRecovery(data) {
@@ -154,30 +154,35 @@ export function createIdentityStore() {
       const raw = await storage.get(IDENTITY_STORAGE_KEY);
       if (!raw) return;
 
-      const data = JSON.parse(raw);
-      set({
-        did: data.did,
-        eoaAddress: data.eoaAddress,
-        passkeyCredentialId: data.passkeyCredentialId,
-        passkeyPublicKey: data.passkeyPublicKey
-          ? new Uint8Array(data.passkeyPublicKey)
-          : null,
-        recoveryPublicKey: data.recoveryPublicKey
-          ? {
-              x: new Uint8Array(data.recoveryPublicKey.x),
-              y: new Uint8Array(data.recoveryPublicKey.y),
-            }
-          : null,
-        chainId: data.chainId ? BigInt(data.chainId) : null,
-        pendingRecovery: data.pendingRecovery
-          ? {
-              passkeyCredentialId: data.pendingRecovery.passkeyCredentialId,
-              passkeyPublicKey: new Uint8Array(data.pendingRecovery.passkeyPublicKey),
-              initiatedAt: data.pendingRecovery.initiatedAt,
-            }
-          : null,
-        isOnboarded: true,
-      });
+      try {
+        const data = JSON.parse(raw);
+        set({
+          did: data.did,
+          eoaAddress: data.eoaAddress,
+          passkeyCredentialId: data.passkeyCredentialId,
+          passkeyPublicKey: data.passkeyPublicKey
+            ? new Uint8Array(data.passkeyPublicKey)
+            : null,
+          recoveryPublicKey: data.recoveryPublicKey
+            ? {
+                x: new Uint8Array(data.recoveryPublicKey.x),
+                y: new Uint8Array(data.recoveryPublicKey.y),
+              }
+            : null,
+          chainId: data.chainId ? BigInt(data.chainId) : null,
+          pendingRecovery: data.pendingRecovery
+            ? {
+                passkeyCredentialId: data.pendingRecovery.passkeyCredentialId,
+                passkeyPublicKey: new Uint8Array(data.pendingRecovery.passkeyPublicKey),
+                initiatedAt: data.pendingRecovery.initiatedAt,
+              }
+            : null,
+          isOnboarded: true,
+        });
+      } catch (err) {
+        console.warn("Corrupted identity storage, clearing:", err);
+        await storage.delete(IDENTITY_STORAGE_KEY);
+      }
     },
   }));
 }
@@ -239,18 +244,24 @@ export function createCredentialStore() {
       const indexRaw = await storage.get(CREDENTIALS_INDEX_KEY);
       if (!indexRaw) return;
 
-      const index: Array<Omit<StoredCredential, "sdJwt">> =
-        JSON.parse(indexRaw);
-      const credentials: StoredCredential[] = [];
+      try {
+        const index: Array<Omit<StoredCredential, "sdJwt">> =
+          JSON.parse(indexRaw);
+        const credentials: StoredCredential[] = [];
 
-      for (const entry of index) {
-        const sdJwt = await storage.get(`${CREDENTIAL_PREFIX}${entry.id}`);
-        if (sdJwt) {
-          credentials.push({ ...entry, sdJwt });
+        for (const entry of index) {
+          const sdJwt = await storage.get(`${CREDENTIAL_PREFIX}${entry.id}`);
+          if (sdJwt) {
+            credentials.push({ ...entry, sdJwt });
+          }
         }
-      }
 
-      set({ credentials });
+        set({ credentials });
+      } catch (err) {
+        console.warn("Corrupted credentials storage, clearing:", err);
+        await storage.delete(CREDENTIALS_INDEX_KEY);
+        set({ credentials: [] });
+      }
     },
 
     async persistToStorage(storage) {

@@ -204,6 +204,7 @@ export class IdentityManager {
     });
   }
 
+  // TODO(#13): Implement recovery key rotation via POST /api/v1/recovery/rotate-key endpoint
   /** Rotate recovery key — requires recovery flow. */
   async rotateRecoveryKey(): Promise<string> {
     // Server generates new key; this triggers the recovery server's rotation endpoint

@@ -1,4 +1,3 @@
-import { decodeSdJwt, getClaims } from "@sd-jwt/decode";
 import type { SecureStorage } from "../platform/index";
 import type { StoredCredential, CredentialStore } from "../state/index";
 import { sha256, base64urlDecode, base64urlEncode } from "../utils/index";
