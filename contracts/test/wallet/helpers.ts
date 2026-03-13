@@ -50,10 +50,16 @@ export function buildDomainSeparator(chainId: bigint, walletAddress: string): st
 }
 
 export function buildMessageHash(domainSep: string, operationHash: string, nonce: bigint): string {
-  return ethers.keccak256(
+  const structHash = ethers.keccak256(
     ethers.AbiCoder.defaultAbiCoder().encode(
-      ["bytes32", "bytes32", "uint256"],
-      [domainSep, operationHash, nonce]
+      ["bytes32", "uint256"],
+      [operationHash, nonce]
+    )
+  );
+  return ethers.keccak256(
+    ethers.solidityPacked(
+      ["bytes1", "bytes1", "bytes32", "bytes32"],
+      ["0x19", "0x01", domainSep, structHash]
     )
   );
 }
@@ -101,11 +107,11 @@ export async function deployAndInitialize() {
   const chainId = (await ethers.provider.getNetwork()).chainId;
   const domainSep = buildDomainSeparator(chainId, walletAddress);
 
-  // Build init hash: keccak256(abi.encode(address(this), passkeyX, passkeyY, recoveryKeyX, recoveryKeyY))
+  // Build init hash: keccak256(abi.encode(address(this), chainId, passkeyX, passkeyY, recoveryKeyX, recoveryKeyY))
   const initHash = ethers.keccak256(
     ethers.AbiCoder.defaultAbiCoder().encode(
-      ["address", "bytes32", "bytes32", "bytes32", "bytes32"],
-      [walletAddress, passkey.publicKeyX, passkey.publicKeyY, recoveryKey.publicKeyX, recoveryKey.publicKeyY]
+      ["address", "uint256", "bytes32", "bytes32", "bytes32", "bytes32"],
+      [walletAddress, chainId, passkey.publicKeyX, passkey.publicKeyY, recoveryKey.publicKeyX, recoveryKey.publicKeyY]
     )
   );
 

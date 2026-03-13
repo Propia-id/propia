@@ -108,6 +108,15 @@ contract SovraIssuerRegistryV1 is ISovraIssuerRegistry, Ownable2StepUpgradeable,
 
         issuers[issuer].registered = false;
 
+        // Remove from issuerList (swap-and-pop)
+        for (uint256 i = 0; i < issuerList.length; i++) {
+            if (issuerList[i] == issuer) {
+                issuerList[i] = issuerList[issuerList.length - 1];
+                issuerList.pop();
+                break;
+            }
+        }
+
         emit IssuerRemoved(issuer);
     }
 

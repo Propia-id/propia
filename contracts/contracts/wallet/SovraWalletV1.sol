@@ -2,6 +2,7 @@
 pragma solidity 0.8.31;
 
 import {ISovraWallet} from "./ISovraWallet.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 
 /// @title SovraWalletV1 - Implementation for EIP-7702 delegated holder wallets
 /// @notice All wallet logic: passkey-only P256 signature validation, arbitrary call execution,
@@ -12,7 +13,7 @@ import {ISovraWallet} from "./ISovraWallet.sol";
 /// @dev P256 verification uses the EIP-7212 precompile at address(0x0100), which exists
 ///      natively on the ethrex L2. For local Hardhat tests, a Solidity mock is etched there.
 ///      Future V2+ implementations MUST use ERC-7201 namespaced storage for new fields.
-contract SovraWalletV1 is ISovraWallet {
+contract SovraWalletV1 is ISovraWallet, ReentrancyGuardUpgradeable {
     // ─── ERC-1967 ────────────────────────────────────────
 
     /// @dev ERC-1967 implementation storage slot, written by upgrade().
@@ -23,6 +24,11 @@ contract SovraWalletV1 is ISovraWallet {
 
     /// @dev EIP-7212 P256 signature verification precompile address.
     address internal constant P256_VERIFIER = address(0x0100);
+
+    /// @dev Half of the P-256 curve order, for low-s signature enforcement.
+    /// P256_N = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
+    uint256 internal constant P256_N_DIV_2 =
+        0x7fffffff800000007fffffffffffffffde737d56d38bcf4279dce5617e3192a8;
 
     // ─── Keys ────────────────────────────────────────────
 
@@ -82,16 +88,13 @@ contract SovraWalletV1 is ISovraWallet {
         ));
     }
 
-    /// @dev Builds the final message hash that the passkey signs, binding operation + nonce + domain.
+    /// @dev Builds the final EIP-712 message hash that the passkey signs.
     /// @param operationHash The keccak256 hash of the operation-specific parameters
     /// @param _nonce The current sequential nonce for replay protection
-    /// @return The EIP-712 structured message hash
+    /// @return The EIP-712 structured message hash with \x19\x01 prefix
     function _buildMessageHash(bytes32 operationHash, uint256 _nonce) internal view returns (bytes32) {
-        return keccak256(abi.encode(
-            _domainSeparator(),
-            operationHash,
-            _nonce
-        ));
+        bytes32 structHash = keccak256(abi.encode(operationHash, _nonce));
+        return keccak256(abi.encodePacked("\x19\x01", _domainSeparator(), structHash));
     }
 
     /// @dev Verifies a single P256 signature via the EIP-7212 precompile at address(0x0100).
@@ -107,6 +110,7 @@ contract SovraWalletV1 is ISovraWallet {
         bytes32 r, bytes32 s,
         bytes32 pubKeyX, bytes32 pubKeyY
     ) internal view returns (bool) {
+        if (uint256(s) > P256_N_DIV_2) revert SignatureMalleability();
         (bool success, bytes memory result) = P256_VERIFIER.staticcall(
             abi.encode(hash, r, s, pubKeyX, pubKeyY)
         );
@@ -126,6 +130,11 @@ contract SovraWalletV1 is ISovraWallet {
         }
     }
 
+    /// @dev Reverts if the given key is the zero point (0,0).
+    function _rejectZeroKey(bytes32 x, bytes32 y) internal pure {
+        if (x == 0 && y == 0) revert ZeroKey();
+    }
+
     // ─── Functions ───────────────────────────────────────
 
     /// @inheritdoc ISovraWallet
@@ -133,11 +142,16 @@ contract SovraWalletV1 is ISovraWallet {
         bytes32 _passkeyX, bytes32 _passkeyY,
         bytes32 _recoveryKeyX, bytes32 _recoveryKeyY,
         bytes32 passkeyR, bytes32 passkeyS
-    ) external {
+    ) external initializer {
         if (didCreated != 0) revert AlreadyInitialized();
 
+        __ReentrancyGuard_init();
+
+        _rejectZeroKey(_passkeyX, _passkeyY);
+        _rejectZeroKey(_recoveryKeyX, _recoveryKeyY);
+
         bytes32 initHash = keccak256(abi.encode(
-            address(this), _passkeyX, _passkeyY, _recoveryKeyX, _recoveryKeyY
+            address(this), block.chainid, _passkeyX, _passkeyY, _recoveryKeyX, _recoveryKeyY
         ));
 
         if (!_verifyP256(initHash, passkeyR, passkeyS, _passkeyX, _passkeyY)) {
@@ -162,7 +176,7 @@ contract SovraWalletV1 is ISovraWallet {
         uint256 value,
         bytes calldata data,
         bytes32 passkeyR, bytes32 passkeyS
-    ) external returns (bytes memory) {
+    ) external nonReentrant returns (bytes memory) {
         if (didDeactivated) revert DIDIsDeactivated();
 
         bytes32 opHash = keccak256(abi.encode(target, value, data));
@@ -173,7 +187,7 @@ contract SovraWalletV1 is ISovraWallet {
         nonce++;
 
         (bool success, bytes memory result) = target.call{value: value}(data);
-        if (!success) revert CallFailed();
+        if (!success) revert CallFailed(result);
 
         emit Executed(address(this), target, value, nonce - 1);
         return result;
@@ -185,6 +199,7 @@ contract SovraWalletV1 is ISovraWallet {
         bytes32 passkeyR, bytes32 passkeyS
     ) external {
         if (didDeactivated) revert DIDIsDeactivated();
+        _rejectZeroKey(newX, newY);
 
         bytes32 opHash = keccak256(abi.encode(bytes4(keccak256("rotatePasskey")), newX, newY));
         bytes32 msgHash = _buildMessageHash(opHash, nonce);
@@ -206,6 +221,7 @@ contract SovraWalletV1 is ISovraWallet {
         bytes32 passkeyR, bytes32 passkeyS
     ) external {
         if (didDeactivated) revert DIDIsDeactivated();
+        _rejectZeroKey(newX, newY);
 
         bytes32 opHash = keccak256(abi.encode(bytes4(keccak256("rotateRecoveryKey")), newX, newY));
         bytes32 msgHash = _buildMessageHash(opHash, nonce);
@@ -271,6 +287,7 @@ contract SovraWalletV1 is ISovraWallet {
         if (didDeactivated) revert DIDIsDeactivated();
         if (pendingRecovery.active) revert RecoveryAlreadyPending();
         if (keyToReplace > 1) revert InvalidKeyIndex();
+        _rejectZeroKey(newKeyX, newKeyY);
 
         bytes32 opHash = keccak256(abi.encode(
             bytes4(keccak256("initiateRecovery")),
@@ -303,6 +320,7 @@ contract SovraWalletV1 is ISovraWallet {
         uint8 signerKey
     ) external {
         if (!pendingRecovery.active) revert NoRecoveryPending();
+        if (signerKey > 1) revert InvalidKeyIndex();
 
         bytes32 opHash = keccak256(abi.encode(bytes4(keccak256("cancelRecovery"))));
         bytes32 msgHash = _buildMessageHash(opHash, nonce);

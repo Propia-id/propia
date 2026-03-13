@@ -41,7 +41,14 @@ interface ISovraWallet {
     error InvalidSig();
 
     /// @notice Thrown when execute()'s inner call to the target address reverts.
-    error CallFailed();
+    /// @param returnData The revert data from the failed call
+    error CallFailed(bytes returnData);
+
+    /// @notice Thrown when a P256 signature has a non-normalized (high) s value.
+    error SignatureMalleability();
+
+    /// @notice Thrown when a zero (0,0) key is provided where a valid P256 key is required.
+    error ZeroKey();
 
     /// @notice Thrown when upgrade() receives the zero address as the new implementation.
     error InvalidImplementation();

@@ -27,7 +27,7 @@ describe("SovraDispatcher", function () {
         ethers.zeroPadValue("0x05", 32),
         ethers.zeroPadValue("0x06", 32)
       )
-    ).to.be.revertedWithCustomError(wallet, "AlreadyInitialized");
+    ).to.be.revertedWithCustomError(wallet, "InvalidInitialization");
   });
 
   it("uses immutable default when ERC-1967 slot is empty", async function () {
