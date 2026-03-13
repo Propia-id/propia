@@ -41,7 +41,7 @@ defmodule SovraWeb.Guardian.RecoveryControllerTest do
       holder = create_test_holder("0xfinalize_ctrl_test")
 
       # First initiate recovery to set status to recovery_pending
-      {:ok, _} = Sovra.Cosigner.initiate_recovery(holder.sovra_address, random_hash())
+      {:ok, _} = Sovra.Guardian.initiate_recovery(holder.sovra_address, random_hash())
 
       conn =
         conn
