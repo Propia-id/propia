@@ -46,7 +46,9 @@ defmodule SovraWeb.Issuer.AdminController do
         })
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        conn |> put_status(422) |> json(%{error: "validation_error", details: changeset_errors(changeset)})
+        conn
+        |> put_status(422)
+        |> json(%{error: "validation_error", details: changeset_errors(changeset)})
 
       {:error, reason} ->
         conn |> put_status(500) |> json(%{error: inspect(reason)})
@@ -109,7 +111,13 @@ defmodule SovraWeb.Issuer.AdminController do
         conn |> put_status(422) |> json(%{error: "missing_claims", details: missing})
 
       {:error, :key_not_found} ->
-        conn |> put_status(500) |> json(%{error: "signing_key_not_found", message: "Issuer signing key is unavailable. Re-register the issuer if the server was restarted."})
+        conn
+        |> put_status(500)
+        |> json(%{
+          error: "signing_key_not_found",
+          message:
+            "Issuer signing key is unavailable. Re-register the issuer if the server was restarted."
+        })
 
       {:error, :schema_not_found} ->
         conn |> put_status(404) |> json(%{error: "schema_not_found"})

@@ -11,7 +11,8 @@ defmodule SovraWeb.Plugs.IssuerSessionPlug do
 
   def call(conn, _opts) do
     with ["Bearer " <> token] <- get_req_header(conn, "authorization"),
-         {:ok, %{account_id: account_id, issuer_id: issuer_id}} <- Sovra.Auth.IssuerSession.verify(token) do
+         {:ok, %{account_id: account_id, issuer_id: issuer_id}} <-
+           Sovra.Auth.IssuerSession.verify(token) do
       assign(conn, :current_issuer_account, %{account_id: account_id, issuer_id: issuer_id})
     else
       [] ->

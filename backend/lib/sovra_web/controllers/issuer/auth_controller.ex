@@ -14,7 +14,9 @@ defmodule SovraWeb.Issuer.AuthController do
         })
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        conn |> put_status(422) |> json(%{error: "validation_error", details: changeset_errors(changeset)})
+        conn
+        |> put_status(422)
+        |> json(%{error: "validation_error", details: changeset_errors(changeset)})
 
       {:error, reason} ->
         conn |> put_status(422) |> json(%{error: inspect(reason)})

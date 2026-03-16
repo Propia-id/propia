@@ -126,7 +126,9 @@ defmodule Sovra.Issuer do
          :ok <- validate_claims(schema, claims),
          {:ok, sd_jwt} <- SDJWT.build(issuer, schema, claims, holder_did) do
       pre_authorized_code = random_hex(32)
-      expires_at = DateTime.utc_now() |> DateTime.add(86400, :second) |> DateTime.truncate(:second)
+
+      expires_at =
+        DateTime.utc_now() |> DateTime.add(86400, :second) |> DateTime.truncate(:second)
 
       changeset =
         CredentialOffer.create_changeset(%{
@@ -160,7 +162,10 @@ defmodule Sovra.Issuer do
           "urn:ietf:params:oauth:grant-type:pre-authorized_code" =>
             Map.merge(
               %{"pre-authorized_code" => offer.pre_authorized_code},
-              if(offer.tx_code, do: %{"tx_code" => %{"input_mode" => "numeric", "length" => 6}}, else: %{})
+              if(offer.tx_code,
+                do: %{"tx_code" => %{"input_mode" => "numeric", "length" => 6}},
+                else: %{}
+              )
             )
         }
       })
@@ -187,10 +192,11 @@ defmodule Sovra.Issuer do
             access_token = random_hex(32)
             c_nonce = random_hex(16)
 
-            changeset = CredentialOffer.token_exchanged_changeset(offer, %{
-              access_token: access_token,
-              c_nonce: c_nonce
-            })
+            changeset =
+              CredentialOffer.token_exchanged_changeset(offer, %{
+                access_token: access_token,
+                c_nonce: c_nonce
+              })
 
             case Repo.update(changeset) do
               {:ok, _} ->
@@ -279,6 +285,7 @@ defmodule Sovra.Issuer do
   end
 
   defp parse_claim_defs(claims) when is_list(claims), do: claims
+
   defp parse_claim_defs(claims) when is_map(claims) do
     case Map.get(claims, "claims") do
       list when is_list(list) -> list
@@ -287,6 +294,7 @@ defmodule Sovra.Issuer do
   end
 
   defp valid_proof_structure?(nil, _nonce), do: false
+
   defp valid_proof_structure?(proof, nonce) do
     with jwt when is_binary(jwt) <- Map.get(proof, "jwt") || Map.get(proof, :jwt),
          [header_b64, payload_b64 | _] <- String.split(jwt, "."),
@@ -332,14 +340,18 @@ defmodule Sovra.Issuer do
       case IssuerRegistry.is_registered(eoa_address) do
         {:ok, true} ->
           case IssuerRegistry.add_credential_types(eoa_address, [type_hash]) do
-            {:ok, _tx_hash} -> :ok
+            {:ok, _tx_hash} ->
+              :ok
+
             {:error, reason} ->
               Logger.warning("Failed to add credential type on-chain: #{inspect(reason)}")
           end
 
         {:ok, false} ->
           case IssuerRegistry.register_issuer(eoa_address, [type_hash]) do
-            {:ok, _tx_hash} -> :ok
+            {:ok, _tx_hash} ->
+              :ok
+
             {:error, reason} ->
               Logger.warning("Failed to register issuer on-chain: #{inspect(reason)}")
           end

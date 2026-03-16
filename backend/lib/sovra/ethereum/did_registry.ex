@@ -33,8 +33,10 @@ defmodule Sovra.Ethereum.DIDRegistry do
   # Build a VerificationMethod tuple for the P-256 assertion key
   defp build_verification_method(pub_key_x, pub_key_y) do
     key_id = ExKeccak.hash_256("key-assert")
-    key_type = 0  # P256
-    relationships = 2  # bit 1 = assertionMethod
+    # P256
+    key_type = 0
+    # bit 1 = assertionMethod
+    relationships = 2
 
     {key_id, key_type, pad_to_32(pub_key_x), pad_to_32(pub_key_y), relationships}
   end
@@ -48,6 +50,7 @@ defmodule Sovra.Ethereum.DIDRegistry do
   end
 
   defp pad_to_32(bin) when byte_size(bin) == 32, do: bin
+
   defp pad_to_32(bin) when byte_size(bin) < 32 do
     padding = 32 - byte_size(bin)
     <<0::size(padding * 8), bin::binary>>

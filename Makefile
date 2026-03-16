@@ -1,45 +1,142 @@
-NIX_SHELL := nix develop --command
+NIX := nix develop --command bash -c
 
-.PHONY: shell backend db.migrate db.reset wallet verifier issuer contracts test test-backend test-contracts test-frontend
+# ── Top-level ────────────────────────────────────────────────────────
+# NOTE: `make setup` requires:
+#   - PostgreSQL running on port 5432
+#   - Ethereum local node (e.g. hardhat node) running on port 8545
 
-# Nix dev shell
+.PHONY: setup format lint build check test
+
+setup: backend.setup backend.db.create contracts.setup contracts.deploy frontend.setup
+
+format: backend.format
+
+lint: backend.lint contracts.lint frontend.issuer.lint
+
+build: backend.build contracts.build frontend.issuer.build
+
+check: frontend.packages.check frontend.wallet.check frontend.verifier.check
+
+test: backend.test contracts.test frontend.packages.test
+
+# ── Dev ──────────────────────────────────────────────────────────────
+
+.PHONY: shell backend.start wallet.start verifier.start issuer.start
+
 shell:
 	nix develop
 
-# Backend (Elixir/Phoenix)
-backend:
-	$(NIX_SHELL) bash -c "cd backend && mix deps.get && iex -S mix phx.server"
+backend.start:
+	$(NIX) "cd backend && mix deps.get && iex -S mix phx.server"
 
-db.migrate:
-	$(NIX_SHELL) bash -c "cd backend && mix ecto.migrate"
+wallet.start:
+	$(NIX) "cd frontend && pnpm --filter @sovra/wallet start"
 
-db.reset:
-	$(NIX_SHELL) bash -c "cd backend && mix ecto.drop && mix ecto.create && mix ecto.migrate"
+verifier.start:
+	$(NIX) "cd frontend && pnpm --filter @sovra/verifier start"
 
-# Mobile — Wallet (React Native / Expo)
-wallet:
-	$(NIX_SHELL) bash -c "cd frontend/wallet && pnpm start"
+issuer.start:
+	$(NIX) "cd frontend && pnpm --filter @sovra/issuer dev"
 
-# Mobile — Verifier (React Native / Expo)
-verifier:
-	$(NIX_SHELL) bash -c "cd frontend/verifier && pnpm start"
+# ── Setup ────────────────────────────────────────────────────────────
 
-# Web — Issuer Portal (Vite)
-issuer:
-	$(NIX_SHELL) bash -c "cd frontend/issuer && pnpm dev"
+.PHONY: backend.setup backend.db.create contracts.setup contracts.deploy frontend.setup
 
-# Smart Contracts (Foundry)
-contracts:
-	$(NIX_SHELL) bash -c "cd contracts && forge build"
+backend.setup:
+	$(NIX) "cd backend && mix local.hex --force && mix local.rebar --force && mix deps.get"
 
-# Run all tests
-test: test-backend test-contracts test-frontend
+backend.db.create:
+	$(NIX) "cd backend && mix ecto.setup"
 
-test-backend:
-	$(NIX_SHELL) bash -c "cd backend && mix test"
+contracts.setup:
+	$(NIX) "cd contracts && npm ci"
 
-test-contracts:
-	$(NIX_SHELL) bash -c "cd contracts && forge test"
+contracts.deploy:
+	$(NIX) "cd contracts && npx hardhat run scripts/deploy.ts"
 
-test-frontend:
-	$(NIX_SHELL) bash -c "cd frontend && pnpm --filter @sovra/wallet-core tsc --noEmit"
+frontend.setup:
+	$(NIX) "cd frontend && pnpm install --frozen-lockfile"
+
+# ── Backend ──────────────────────────────────────────────────────────
+
+.PHONY: backend.format backend.lint backend.build backend.test backend.db.setup backend.db.migrate backend.db.reset
+
+backend.format:
+	$(NIX) "cd backend && mix format"
+
+backend.lint:
+	$(NIX) "cd backend && mix format --check-formatted"
+
+backend.build:
+	$(NIX) "cd backend && mix compile"
+
+backend.test:
+	$(NIX) "cd backend && mix test"
+
+backend.db.setup:
+	$(NIX) "cd backend && mix ecto.setup"
+
+backend.db.migrate:
+	$(NIX) "cd backend && mix ecto.migrate"
+
+backend.db.reset:
+	$(NIX) "cd backend && mix ecto.reset"
+
+# ── Contracts ────────────────────────────────────────────────────────
+
+.PHONY: contracts.lint contracts.build contracts.test
+
+contracts.lint:
+	$(NIX) "cd contracts && npx hardhat check"
+
+contracts.build:
+	$(NIX) "cd contracts && npx hardhat compile"
+
+contracts.test:
+	$(NIX) "cd contracts && npx hardhat test"
+
+# ── Frontend Packages ────────────────────────────────────────────────
+
+.PHONY: frontend.packages.check frontend.packages.test \
+        frontend.packages.wallet-core.check frontend.packages.wallet-core.test \
+        frontend.packages.verification-sdk.check frontend.packages.verification-sdk.test
+
+frontend.packages.check: frontend.packages.wallet-core.check frontend.packages.verification-sdk.check
+
+frontend.packages.test: frontend.packages.wallet-core.test frontend.packages.verification-sdk.test
+
+frontend.packages.wallet-core.check:
+	$(NIX) "cd frontend && pnpm --filter @sovra/wallet-core typecheck"
+
+frontend.packages.wallet-core.test:
+	$(NIX) "cd frontend && pnpm --filter @sovra/wallet-core test"
+
+frontend.packages.verification-sdk.check:
+	$(NIX) "cd frontend && pnpm --filter @sovra/verification-sdk typecheck"
+
+frontend.packages.verification-sdk.test:
+	$(NIX) "cd frontend && pnpm --filter @sovra/verification-sdk test"
+
+# ── Frontend Issuer ──────────────────────────────────────────────────
+
+.PHONY: frontend.issuer.lint frontend.issuer.build
+
+frontend.issuer.lint:
+	$(NIX) "cd frontend && pnpm --filter @sovra/issuer lint"
+
+frontend.issuer.build:
+	$(NIX) "cd frontend && pnpm --filter @sovra/issuer build"
+
+# ── Frontend Wallet ──────────────────────────────────────────────────
+
+.PHONY: frontend.wallet.check
+
+frontend.wallet.check:
+	$(NIX) "cd frontend && pnpm --filter @sovra/wallet typecheck"
+
+# ── Frontend Verifier ────────────────────────────────────────────────
+
+.PHONY: frontend.verifier.check
+
+frontend.verifier.check:
+	$(NIX) "cd frontend && pnpm --filter @sovra/verifier typecheck"
