@@ -88,9 +88,11 @@ defmodule Sovra.GuardianTest do
 
   describe "finalize_recovery/2" do
     test "returns signature and sets status back to active" do
-      holder = create_test_holder("0xfinalize_holder")
+      addr = test_address("finalize_holder")
+      holder = create_test_holder(addr)
 
       {:ok, _} = Guardian.initiate_recovery(holder.sovra_address, random_hash())
+
       {:ok, %{signature: %{r: r, s: s}}} =
         Guardian.finalize_recovery(holder.sovra_address, random_hash())
 
@@ -98,13 +100,13 @@ defmodule Sovra.GuardianTest do
       assert is_binary(s)
 
       updated =
-        Sovra.Repo.get_by!(Sovra.Guardian.HolderRecord, sovra_address: "0xfinalize_holder")
+        Sovra.Repo.get_by!(Sovra.Guardian.HolderRecord, sovra_address: addr)
 
       assert updated.status == "active"
     end
 
     test "rejects non-recovery_pending holders" do
-      holder = create_test_holder("0xfinalize_active")
+      holder = create_test_holder(test_address("finalize_active"))
 
       assert {:error, :not_in_recovery} =
                Guardian.finalize_recovery(holder.sovra_address, random_hash())
