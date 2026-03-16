@@ -34,19 +34,22 @@ defmodule SovraWeb.Guardian.OnboardControllerTest do
     end
 
     test "returns 200 login for same google account on different device", %{conn: conn} do
+      addr_a = test_address("ctrl_device_a")
+      addr_b = test_address("ctrl_device_b")
+
       post(conn, "/api/v1/holder/onboard", %{
-        "sovraAddress" => "0xdevice_a",
+        "sovraAddress" => addr_a,
         "oauthToken" => MockAuthProvider.valid_token()
       })
 
       conn =
         post(conn, "/api/v1/holder/onboard", %{
-          "sovraAddress" => "0xdevice_b",
+          "sovraAddress" => addr_b,
           "oauthToken" => MockAuthProvider.valid_token()
         })
 
       response = json_response(conn, 200)
-      assert response["sovraAddress"] == "0xdevice_a"
+      assert response["sovraAddress"] == addr_a
       assert is_binary(response["sessionToken"])
       refute Map.has_key?(response, "recoveryPublicKey")
     end

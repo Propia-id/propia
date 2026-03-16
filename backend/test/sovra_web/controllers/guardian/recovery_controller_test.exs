@@ -38,7 +38,7 @@ defmodule SovraWeb.Guardian.RecoveryControllerTest do
 
   describe "POST /api/v1/recovery/finalize" do
     test "returns signature after initiating recovery", %{conn: conn} do
-      holder = create_test_holder("0xfinalize_ctrl_test")
+      holder = create_test_holder(test_address("finalize_ctrl_test"))
 
       # First initiate recovery to set status to recovery_pending
       {:ok, _} = Sovra.Guardian.initiate_recovery(holder.sovra_address, random_hash())
@@ -54,7 +54,7 @@ defmodule SovraWeb.Guardian.RecoveryControllerTest do
     end
 
     test "returns 422 for holder not in recovery", %{conn: conn} do
-      holder = create_test_holder("0xfinalize_not_pending")
+      holder = create_test_holder(test_address("finalize_not_pending"))
 
       conn =
         conn
@@ -67,7 +67,7 @@ defmodule SovraWeb.Guardian.RecoveryControllerTest do
     end
 
     test "returns 400 for missing fields", %{conn: conn} do
-      holder = create_test_holder("0xfinalize_missing")
+      holder = create_test_holder(test_address("finalize_missing"))
 
       conn =
         conn
