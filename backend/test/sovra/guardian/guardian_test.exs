@@ -71,49 +71,39 @@ defmodule Sovra.GuardianTest do
   end
 
   describe "initiate_recovery/2" do
-    test "returns signature and sets status to recovery_pending" do
+    test "rejects invalid params" do
       addr = test_address("recovery_holder")
+      _holder = create_test_holder(addr)
+
+      assert {:error, :invalid_params} =
+               Guardian.initiate_recovery(addr, "not a map")
+    end
+
+    test "rejects deactivated holders" do
+      addr = test_address("recovery_deactivated")
       holder = create_test_holder(addr)
-      message_hash = random_hash()
 
-      {:ok, %{signature: %{r: _, s: _}}} =
-        Guardian.initiate_recovery(holder.sovra_address, message_hash)
+      Sovra.Repo.update!(Sovra.Guardian.HolderRecord.status_changeset(holder, "deactivated"))
 
-      updated =
-        Sovra.Repo.get_by!(Sovra.Guardian.HolderRecord, sovra_address: addr)
-
-      assert updated.status == "recovery_pending"
+      assert {:error, :holder_deactivated} =
+               Guardian.initiate_recovery(addr, %{
+                 new_key_x: random_hash(),
+                 new_key_y: random_hash(),
+                 key_to_replace: 0
+               })
     end
   end
 
-  describe "finalize_recovery/2" do
-    test "returns signature and sets status back to active" do
-      addr = test_address("finalize_holder")
-      holder = create_test_holder(addr)
-
-      {:ok, _} = Guardian.initiate_recovery(holder.sovra_address, random_hash())
-
-      {:ok, %{signature: %{r: r, s: s}}} =
-        Guardian.finalize_recovery(holder.sovra_address, random_hash())
-
-      assert is_binary(r)
-      assert is_binary(s)
-
-      updated =
-        Sovra.Repo.get_by!(Sovra.Guardian.HolderRecord, sovra_address: addr)
-
-      assert updated.status == "active"
-    end
-
+  describe "finalize_recovery/1" do
     test "rejects non-recovery_pending holders" do
       holder = create_test_holder(test_address("finalize_active"))
 
       assert {:error, :not_in_recovery} =
-               Guardian.finalize_recovery(holder.sovra_address, random_hash())
+               Guardian.finalize_recovery(holder.sovra_address)
     end
 
     test "rejects unknown holders" do
-      assert {:error, :holder_not_found} = Guardian.finalize_recovery("0xunknown", random_hash())
+      assert {:error, :holder_not_found} = Guardian.finalize_recovery("0xunknown")
     end
   end
 end

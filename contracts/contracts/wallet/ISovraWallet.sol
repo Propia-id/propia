@@ -50,6 +50,9 @@ interface ISovraWallet {
     /// @notice Thrown when a zero (0,0) key is provided where a valid P256 key is required.
     error ZeroKey();
 
+    /// @notice Thrown when passkey and recovery key are identical in initialize().
+    error KeysMustDiffer();
+
     /// @notice Thrown when upgrade() receives the zero address as the new implementation.
     error InvalidImplementation();
 
