@@ -1,6 +1,6 @@
 import { sha256, base64urlEncode } from "@sovra/wallet-core/utils";
 import { ErrorCode, type ParsedDisclosure } from "./types";
-import { VerificationError } from "./parse";
+import { VerificationError } from "./errors";
 
 /**
  * Verify that each disclosure's hash appears in the issuer JWT's _sd array.

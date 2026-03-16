@@ -1,6 +1,6 @@
 import { keccak256, bytesToHex, hexToBytes } from "@sovra/wallet-core/utils";
 import { ErrorCode, type HolderKeyData } from "./types";
-import { VerificationError } from "./parse";
+import { VerificationError, validateEthAddress } from "./errors";
 import { ethCall, RpcError, decodeBytes32, decodeBool, decodeUint32 } from "./rpc";
 
 /**
@@ -82,7 +82,9 @@ export function extractHolderAddress(cnfKid: string): string {
   }
   const afterPrefix = cnfKid.slice("did:sovra:".length);
   const hashIndex = afterPrefix.indexOf("#");
-  return hashIndex >= 0 ? afterPrefix.slice(0, hashIndex) : afterPrefix;
+  const address = hashIndex >= 0 ? afterPrefix.slice(0, hashIndex) : afterPrefix;
+  validateEthAddress(address, "cnf.kid");
+  return address;
 }
 
 function selectorHex(sig: string): string {

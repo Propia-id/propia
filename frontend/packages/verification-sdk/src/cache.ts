@@ -1,6 +1,7 @@
 import type { IssuerKeyData, HolderKeyData } from "./types";
 
 const TRUST_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const MAX_CACHE_SIZE = 200;
 
 interface CachedValue<T> {
   data: T;
@@ -23,6 +24,7 @@ export class VerificationCache {
   }
 
   setIssuerKeys(address: string, data: IssuerKeyData): void {
+    this.evictIfNeeded(this.issuerKeys);
     this.issuerKeys.set(address.toLowerCase(), {
       data,
       versionId: data.versionId,
@@ -35,6 +37,7 @@ export class VerificationCache {
   }
 
   setHolderKeys(address: string, data: HolderKeyData): void {
+    this.evictIfNeeded(this.holderKeys);
     this.holderKeys.set(address.toLowerCase(), {
       data,
       versionId: data.versionId,
@@ -53,8 +56,16 @@ export class VerificationCache {
   }
 
   setIssuerTrust(issuer: string, typeId: string, trusted: boolean): void {
+    this.evictIfNeeded(this.issuerTrust);
     const key = `${issuer.toLowerCase()}:${typeId}`;
     this.issuerTrust.set(key, { trusted, fetchedAt: Date.now() });
+  }
+
+  private evictIfNeeded<K, V>(map: Map<K, V>): void {
+    if (map.size >= MAX_CACHE_SIZE) {
+      const firstKey = map.keys().next().value;
+      if (firstKey !== undefined) map.delete(firstKey);
+    }
   }
 
   clear(): void {

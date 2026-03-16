@@ -1,5 +1,6 @@
 import { base64urlDecode } from "@sovra/wallet-core/utils";
 import { ErrorCode, type ParsedPresentation, type ParsedDisclosure } from "./types";
+import { VerificationError } from "./errors";
 
 /**
  * Parse an SD-JWT presentation string into its components.
@@ -103,14 +104,5 @@ function decodeJsonPart(b64: string, label: string): Record<string, unknown> {
   }
 }
 
-// ─── Error class ─────────────────────────────────────
-
-export class VerificationError extends Error {
-  constructor(
-    message: string,
-    public code: ErrorCode,
-  ) {
-    super(message);
-    this.name = "VerificationError";
-  }
-}
+// Re-export for backward compatibility
+export { VerificationError } from "./errors";
