@@ -142,19 +142,30 @@ defmodule Sovra.Guardian do
     end
   end
 
-  def initiate_recovery(sovra_address, %{new_key_x: new_key_x, new_key_y: new_key_y, key_to_replace: key_to_replace})
+  def initiate_recovery(sovra_address, %{
+        new_key_x: new_key_x,
+        new_key_y: new_key_y,
+        key_to_replace: key_to_replace
+      })
       when is_binary(new_key_x) and is_binary(new_key_y) and key_to_replace in [0, 1] do
     with {:ok, holder} <- get_active_holder(sovra_address),
          {:ok, message_hash} <-
            Sovra.Ethereum.WalletReader.build_initiate_recovery_hash(
-             sovra_address, new_key_x, new_key_y, key_to_replace
+             sovra_address,
+             new_key_x,
+             new_key_y,
+             key_to_replace
            ),
          {:ok, sig} <- Key.sign(holder.recovery_key_id, message_hash) do
       changeset = HolderRecord.status_changeset(holder, "recovery_pending")
 
       case Repo.update(changeset) do
         {:ok, _updated} ->
-          {:ok, %{signature: format_signature(sig), message_hash: "0x" <> Base.encode16(message_hash, case: :lower)}}
+          {:ok,
+           %{
+             signature: format_signature(sig),
+             message_hash: "0x" <> Base.encode16(message_hash, case: :lower)
+           }}
 
         {:error, changeset} ->
           {:error, {:changeset, changeset}}
@@ -173,7 +184,11 @@ defmodule Sovra.Guardian do
 
       case Repo.update(changeset) do
         {:ok, _updated} ->
-          {:ok, %{signature: format_signature(sig), message_hash: "0x" <> Base.encode16(message_hash, case: :lower)}}
+          {:ok,
+           %{
+             signature: format_signature(sig),
+             message_hash: "0x" <> Base.encode16(message_hash, case: :lower)
+           }}
 
         {:error, changeset} ->
           {:error, {:changeset, changeset}}

@@ -37,9 +37,16 @@ defmodule Sovra.Ethereum.WalletReader do
 
     ExKeccak.hash_256(
       ABI.TypeEncoder.encode(
-        [{@domain_typehash, {:bytes, 32}}, {@name_hash, {:bytes, 32}}, {@version_hash, {:bytes, 32}},
-         {chain_id, {:uint, 256}}, {address_bytes, :address}],
-        %ABI.FunctionSelector{types: [{:bytes, 32}, {:bytes, 32}, {:bytes, 32}, {:uint, 256}, :address]}
+        [
+          {@domain_typehash, {:bytes, 32}},
+          {@name_hash, {:bytes, 32}},
+          {@version_hash, {:bytes, 32}},
+          {chain_id, {:uint, 256}},
+          {address_bytes, :address}
+        ],
+        %ABI.FunctionSelector{
+          types: [{:bytes, 32}, {:bytes, 32}, {:bytes, 32}, {:uint, 256}, :address]
+        }
       )
     )
   end
@@ -58,8 +65,12 @@ defmodule Sovra.Ethereum.WalletReader do
       op_hash =
         ExKeccak.hash_256(
           ABI.TypeEncoder.encode(
-            [{op_selector, {:bytes, 4}}, {new_key_x, {:bytes, 32}}, {new_key_y, {:bytes, 32}},
-             {key_to_replace, {:uint, 8}}],
+            [
+              {op_selector, {:bytes, 4}},
+              {new_key_x, {:bytes, 32}},
+              {new_key_y, {:bytes, 32}},
+              {key_to_replace, {:uint, 8}}
+            ],
             %ABI.FunctionSelector{types: [{:bytes, 4}, {:bytes, 32}, {:bytes, 32}, {:uint, 8}]}
           )
         )
@@ -86,12 +97,13 @@ defmodule Sovra.Ethereum.WalletReader do
     chain_id = get_chain_id(config)
 
     with {:ok, nonce} <- read_nonce(wallet_address) do
-      op_hash = ExKeccak.hash_256(
-        ABI.TypeEncoder.encode(
-          [{ExKeccak.hash_256("finalizeRecovery") |> binary_part(0, 4), {:bytes, 4}}],
-          %ABI.FunctionSelector{types: [{:bytes, 4}]}
+      op_hash =
+        ExKeccak.hash_256(
+          ABI.TypeEncoder.encode(
+            [{ExKeccak.hash_256("finalizeRecovery") |> binary_part(0, 4), {:bytes, 4}}],
+            %ABI.FunctionSelector{types: [{:bytes, 4}]}
+          )
         )
-      )
 
       dom_sep = domain_separator(wallet_address, chain_id)
 
