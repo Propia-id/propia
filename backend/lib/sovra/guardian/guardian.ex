@@ -228,7 +228,7 @@ defmodule Sovra.Guardian do
   end
 
   defp state_secret do
-    Application.fetch_env!(:sovra, :session_secret)
+    Sovra.Auth.KeyDerivation.derive_key(:oauth_state)
   end
 
   defp format_signature(%{r: r, s: s}) do

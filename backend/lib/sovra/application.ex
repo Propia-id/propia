@@ -16,6 +16,7 @@ defmodule Sovra.Application do
         {DNSCluster, query: Application.get_env(:sovra, :dns_cluster_query) || :ignore},
         {Phoenix.PubSub, name: Sovra.PubSub},
         {Finch, name: Sovra.Finch},
+        Sovra.Auth.TokenDenylist,
         SovraWeb.Endpoint
       ]
       |> maybe_add_key_store()

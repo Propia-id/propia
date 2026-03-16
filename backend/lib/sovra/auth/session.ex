@@ -60,8 +60,7 @@ defmodule Sovra.Auth.Session do
   end
 
   defp signing_key do
-    secret = Application.fetch_env!(:sovra, :session_secret)
-    JOSE.JWK.from_oct(secret)
+    Sovra.Auth.KeyDerivation.derive_key(:guardian_session) |> JOSE.JWK.from_oct()
   end
 
   defp generate_jti, do: Base.url_encode64(:crypto.strong_rand_bytes(16), padding: false)

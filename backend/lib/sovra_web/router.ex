@@ -65,6 +65,7 @@ defmodule SovraWeb.Router do
     pipe_through [:api, :auth_rate_limited]
 
     post "/login", AuthController, :login
+    post "/logout", AuthController, :logout
   end
 
   # Issuer admin API (authenticated)

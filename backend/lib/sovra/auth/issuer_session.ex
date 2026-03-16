@@ -1,10 +1,12 @@
 defmodule Sovra.Auth.IssuerSession do
   @moduledoc """
   JWT-based session tokens for issuer dashboard authentication.
-  Tokens are HMAC-SHA256 signed, 1-hour expiry, stateless.
+  Tokens are HMAC-SHA256 signed, 1-hour expiry, with revocation support.
   """
 
   require Logger
+
+  alias Sovra.Auth.TokenDenylist
 
   @session_ttl 3600
 
@@ -45,15 +47,20 @@ defmodule Sovra.Auth.IssuerSession do
                "exp" => exp
              } = fields
          }, _jws} ->
-          if exp > System.system_time(:second) do
-            {:ok,
-             %{
-               account_id: sub,
-               issuer_id: fields["issuer_id"],
-               role: fields["role"] || "issuer"
-             }}
-          else
-            {:error, :expired}
+          cond do
+            exp <= System.system_time(:second) ->
+              {:error, :expired}
+
+            TokenDenylist.revoked?(fields["jti"]) ->
+              {:error, :revoked}
+
+            true ->
+              {:ok,
+               %{
+                 account_id: sub,
+                 issuer_id: fields["issuer_id"],
+                 role: fields["role"] || "issuer"
+               }}
           end
 
         _ ->
@@ -66,9 +73,26 @@ defmodule Sovra.Auth.IssuerSession do
     end
   end
 
+  @doc "Revoke the given token so it cannot be used again."
+  def revoke(token) do
+    jwk = signing_key()
+
+    try do
+      case JOSE.JWT.verify_strict(jwk, ["HS256"], token) do
+        {true, %JOSE.JWT{fields: %{"jti" => jti, "exp" => exp}}, _jws} ->
+          TokenDenylist.revoke(jti, exp)
+          :ok
+
+        _ ->
+          :ok
+      end
+    rescue
+      _ -> :ok
+    end
+  end
+
   defp signing_key do
-    secret = Application.fetch_env!(:sovra, :session_secret)
-    JOSE.JWK.from_oct(secret)
+    Sovra.Auth.KeyDerivation.derive_key(:issuer_session) |> JOSE.JWK.from_oct()
   end
 
   defp generate_jti, do: Base.url_encode64(:crypto.strong_rand_bytes(16), padding: false)

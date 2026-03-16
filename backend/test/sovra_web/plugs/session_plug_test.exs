@@ -40,7 +40,7 @@ defmodule SovraWeb.Plugs.SessionPlugTest do
       now = System.system_time(:second)
       old_iat = now - 600
 
-      jwk = JOSE.JWK.from_oct(Application.fetch_env!(:sovra, :session_secret))
+      jwk = Sovra.Auth.KeyDerivation.derive_key(:guardian_session) |> JOSE.JWK.from_oct()
 
       claims = %{
         "sub" => @test_address,

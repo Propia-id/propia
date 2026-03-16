@@ -48,7 +48,7 @@ defmodule Sovra.Auth.SessionTest do
     end
 
     test "rejects token without iss/aud claims" do
-      jwk = JOSE.JWK.from_oct(Application.fetch_env!(:sovra, :session_secret))
+      jwk = Sovra.Auth.KeyDerivation.derive_key(:guardian_session) |> JOSE.JWK.from_oct()
       jws = %{"alg" => "HS256"}
 
       claims = %{
