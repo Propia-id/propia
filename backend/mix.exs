@@ -56,6 +56,7 @@ defmodule Sovra.MixProject do
       {:ex_keccak, "~> 0.7"},
       {:ex_secp256k1, "~> 0.7"},
       {:bcrypt_elixir, "~> 3.0"},
+      {:hammer, "~> 6.2"},
       {:cors_plug, "~> 3.0"},
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"}

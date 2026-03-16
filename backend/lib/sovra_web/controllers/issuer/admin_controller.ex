@@ -96,7 +96,7 @@ defmodule SovraWeb.Issuer.AdminController do
            params["holder_did"],
            params["claims"] || %{}
          ) do
-      {:ok, %{offer: offer, offer_uri: offer_uri}} ->
+      {:ok, %{offer: offer, offer_uri: offer_uri, pre_authorized_code: code}} ->
         conn
         |> put_status(201)
         |> json(%{
@@ -104,6 +104,7 @@ defmodule SovraWeb.Issuer.AdminController do
           status: offer.status,
           holder_did: offer.holder_did,
           offer_uri: offer_uri,
+          pre_authorized_code: code,
           expires_at: DateTime.to_iso8601(offer.expires_at)
         })
 

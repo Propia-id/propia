@@ -7,7 +7,8 @@ defmodule Sovra.Issuer.SDJWT do
   Issuer JWT payload contains _sd array of base64url(SHA-256(disclosure)) digests.
   """
 
-  alias Sovra.Crypto.Key
+  alias Sovra.Crypto.{Key, P256}
+  alias Sovra.Issuer.ClaimUtils
 
   @doc """
   Build a complete SD-JWT string for a credential.
@@ -21,7 +22,7 @@ defmodule Sovra.Issuer.SDJWT do
     exp = now + validity_seconds
 
     # Separate claims into disclosable vs non-disclosable based on schema
-    claim_defs = parse_claim_defs(schema.claims)
+    claim_defs = ClaimUtils.parse_claim_defs(schema.claims)
     {disclosable_claims, non_disclosable_claims} = split_claims(claim_defs, claims)
 
     # Build disclosures for disclosable claims
@@ -71,36 +72,12 @@ defmodule Sovra.Issuer.SDJWT do
 
     case Key.sign(signing_key_id, hash) do
       {:ok, %{r: r, s: s}} ->
-        raw_sig = pad_to_32(r) <> pad_to_32(s)
+        raw_sig = P256.pad_or_trim(r, 32) <> P256.pad_or_trim(s, 32)
         sig_b64 = Base.url_encode64(raw_sig, padding: false)
         {:ok, "#{signing_input}.#{sig_b64}"}
 
       {:error, _} = error ->
         error
-    end
-  end
-
-  defp pad_to_32(bin) when byte_size(bin) == 32, do: bin
-
-  defp pad_to_32(bin) when byte_size(bin) < 32 do
-    padding = 32 - byte_size(bin)
-    <<0::size(padding * 8)>> <> bin
-  end
-
-  defp pad_to_32(bin) when byte_size(bin) > 32 do
-    # Trim leading zeros if longer than 32 bytes
-    skip = byte_size(bin) - 32
-    <<_::binary-size(skip), trimmed::binary-size(32)>> = bin
-    trimmed
-  end
-
-  defp parse_claim_defs(claims) when is_list(claims), do: claims
-
-  defp parse_claim_defs(claims) when is_map(claims) do
-    # Handle both {"claims" => [...]} and direct list formats
-    case Map.get(claims, "claims") do
-      list when is_list(list) -> list
-      _ -> []
     end
   end
 
