@@ -4,6 +4,7 @@ defmodule Sovra.Repo.Migrations.AddRoleToIssuerAccounts do
   def up do
     alter table(:issuer_accounts) do
       add :role, :string, null: false, default: "issuer"
+
       modify :issuer_id, references(:issuers, type: :binary_id, on_delete: :delete_all),
         null: true,
         from: references(:issuers, type: :binary_id, on_delete: :delete_all)
@@ -16,6 +17,7 @@ defmodule Sovra.Repo.Migrations.AddRoleToIssuerAccounts do
 
     alter table(:issuer_accounts) do
       remove :role
+
       modify :issuer_id, references(:issuers, type: :binary_id, on_delete: :delete_all),
         null: false,
         from: references(:issuers, type: :binary_id, on_delete: :delete_all)
