@@ -2,6 +2,31 @@ defmodule SovraWeb.Issuer.AdminController do
   use SovraWeb, :controller
 
   alias Sovra.Issuer
+  alias Sovra.Issuer.Accounts
+
+  def create_issuer_account(conn, %{
+        "email" => email,
+        "password" => password,
+        "issuer_name" => issuer_name
+      }) do
+    case Accounts.register_issuer(email, password, issuer_name) do
+      {:ok, %{token: _token, account: _account, issuer: issuer}} ->
+        conn
+        |> put_status(201)
+        |> json(%{
+          issuer: %{id: issuer.id, name: issuer.name, did: issuer.did, status: issuer.status},
+          email: String.downcase(email)
+        })
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        conn
+        |> put_status(422)
+        |> json(%{error: "validation_error", details: changeset_errors(changeset)})
+
+      {:error, _reason} ->
+        conn |> put_status(422) |> json(%{error: "registration_failed"})
+    end
+  end
 
   def get_issuer(conn, _params) do
     issuer_id = conn.assigns.current_issuer_account.issuer_id
@@ -50,8 +75,8 @@ defmodule SovraWeb.Issuer.AdminController do
         |> put_status(422)
         |> json(%{error: "validation_error", details: changeset_errors(changeset)})
 
-      {:error, reason} ->
-        conn |> put_status(500) |> json(%{error: inspect(reason)})
+      {:error, _reason} ->
+        conn |> put_status(500) |> json(%{error: "internal_error"})
     end
   end
 

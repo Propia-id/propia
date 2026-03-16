@@ -9,6 +9,7 @@ defmodule Sovra.Issuer.IssuerAccount do
     field :email, :string
     field :password, :string, virtual: true, redact: true
     field :password_hash, :string, redact: true
+    field :role, :string, default: "issuer"
 
     belongs_to :issuer, Sovra.Issuer.IssuerRecord
 
@@ -18,11 +19,25 @@ defmodule Sovra.Issuer.IssuerAccount do
   def registration_changeset(account \\ %__MODULE__{}, attrs) do
     account
     |> cast(attrs, [:email, :password, :issuer_id])
+    |> update_change(:email, &String.downcase/1)
     |> validate_required([:email, :password, :issuer_id])
     |> validate_format(:email, ~r/^[^\s]+@[^\s]+\.[^\s]+$/, message: "must be a valid email")
     |> validate_length(:password, min: 12, message: "must be at least 12 characters")
     |> unique_constraint(:email)
     |> unique_constraint(:issuer_id)
+    |> put_change(:role, "issuer")
+    |> put_password_hash()
+  end
+
+  def admin_changeset(account \\ %__MODULE__{}, attrs) do
+    account
+    |> cast(attrs, [:email, :password])
+    |> update_change(:email, &String.downcase/1)
+    |> validate_required([:email, :password])
+    |> validate_format(:email, ~r/^[^\s]+@[^\s]+\.[^\s]+$/, message: "must be a valid email")
+    |> validate_length(:password, min: 12, message: "must be at least 12 characters")
+    |> unique_constraint(:email)
+    |> put_change(:role, "admin")
     |> put_password_hash()
   end
 

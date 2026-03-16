@@ -1,11 +1,18 @@
 # Script for populating the database. You can run it as:
 #
 #     mix run priv/repo/seeds.exs
-#
-# Inside the script, you can read and write to any of your
-# repositories directly:
-#
-#     Sovra.Repo.insert!(%Sovra.SomeSchema{})
-#
-# We recommend using the bang functions (`insert!`, `update!`
-# and so on) as they will fail if something goes wrong.
+
+alias Sovra.Issuer.Accounts
+
+# Create a default admin account for development
+case Accounts.create_admin("admin@sovra.dev", "password1234") do
+  {:ok, account} ->
+    IO.puts("Admin account created: #{account.email}")
+
+  {:error, changeset} ->
+    if Keyword.has_key?(changeset.errors, :email) do
+      IO.puts("Admin account already exists: admin@sovra.dev")
+    else
+      IO.puts("Failed to create admin: #{inspect(changeset.errors)}")
+    end
+end

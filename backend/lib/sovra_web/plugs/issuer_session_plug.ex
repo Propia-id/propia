@@ -11,9 +11,13 @@ defmodule SovraWeb.Plugs.IssuerSessionPlug do
 
   def call(conn, _opts) do
     with ["Bearer " <> token] <- get_req_header(conn, "authorization"),
-         {:ok, %{account_id: account_id, issuer_id: issuer_id}} <-
+         {:ok, %{account_id: account_id, issuer_id: issuer_id, role: role}} <-
            Sovra.Auth.IssuerSession.verify(token) do
-      assign(conn, :current_issuer_account, %{account_id: account_id, issuer_id: issuer_id})
+      assign(conn, :current_issuer_account, %{
+        account_id: account_id,
+        issuer_id: issuer_id,
+        role: role
+      })
     else
       [] ->
         conn |> put_status(401) |> json(%{error: "missing_authorization"}) |> halt()

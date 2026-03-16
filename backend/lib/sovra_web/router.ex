@@ -21,6 +21,14 @@ defmodule SovraWeb.Router do
     plug SovraWeb.Plugs.RateLimitPlug, max_requests: 10, window_ms: 60_000
   end
 
+  pipeline :auth_rate_limited do
+    plug SovraWeb.Plugs.RateLimitPlug, max_requests: 5, window_ms: 60_000
+  end
+
+  pipeline :require_admin do
+    plug SovraWeb.Plugs.RequireAdminPlug
+  end
+
   # Health check
   scope "/", SovraWeb do
     pipe_through :api
@@ -52,11 +60,10 @@ defmodule SovraWeb.Router do
     post "/token", CredentialController, :token
   end
 
-  # Issuer auth (public)
+  # Issuer auth (public, rate limited)
   scope "/api/v1/issuer/auth", SovraWeb.Issuer do
-    pipe_through :api
+    pipe_through [:api, :auth_rate_limited]
 
-    post "/register", AuthController, :register
     post "/login", AuthController, :login
   end
 
@@ -71,6 +78,13 @@ defmodule SovraWeb.Router do
     post "/offers", AdminController, :create_offer
     get "/offers", AdminController, :list_offers
     get "/credentials", AdminController, :list_issued_credentials
+  end
+
+  # Super-admin API (admin role required)
+  scope "/api/v1/issuer/admin", SovraWeb.Issuer do
+    pipe_through [:api, :issuer_session, :require_admin]
+
+    post "/issuers", AdminController, :create_issuer_account
   end
 
   # Verification API

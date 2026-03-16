@@ -8,12 +8,13 @@ defmodule Sovra.Auth.IssuerSession do
 
   @session_ttl 3600
 
-  def create(account_id, issuer_id) do
+  def create(account_id, issuer_id, role \\ "issuer") do
     now = System.system_time(:second)
 
     claims = %{
       "sub" => account_id,
       "issuer_id" => issuer_id,
+      "role" => role,
       "scope" => "issuer_admin",
       "iss" => "sovra-issuer",
       "aud" => "sovra-issuer",
@@ -35,17 +36,22 @@ defmodule Sovra.Auth.IssuerSession do
       case JOSE.JWT.verify_strict(jwk, ["HS256"], token) do
         {true,
          %JOSE.JWT{
-           fields: %{
-             "sub" => sub,
-             "issuer_id" => issuer_id,
-             "scope" => "issuer_admin",
-             "iss" => "sovra-issuer",
-             "aud" => "sovra-issuer",
-             "exp" => exp
-           }
+           fields:
+             %{
+               "sub" => sub,
+               "scope" => "issuer_admin",
+               "iss" => "sovra-issuer",
+               "aud" => "sovra-issuer",
+               "exp" => exp
+             } = fields
          }, _jws} ->
           if exp > System.system_time(:second) do
-            {:ok, %{account_id: sub, issuer_id: issuer_id}}
+            {:ok,
+             %{
+               account_id: sub,
+               issuer_id: fields["issuer_id"],
+               role: fields["role"] || "issuer"
+             }}
           else
             {:error, :expired}
           end
