@@ -443,6 +443,95 @@ describe("SovraWalletV1", function () {
     });
   });
 
+  // ─── Reset to Beacon ──────────────────────────────────────
+
+  describe("resetToBeacon", function () {
+    it("clears ERC-1967 slot and emits ResetToBeacon", async function () {
+      const { wallet, passkey, domainSep, walletAddress } = await deployAndInitialize();
+
+      // First pin to a specific impl via upgrade()
+      const SovraWalletV1 = await ethers.getContractFactory("SovraWalletV1");
+      const newImpl = await SovraWalletV1.deploy();
+      await newImpl.waitForDeployment();
+      const newImplAddr = await newImpl.getAddress();
+
+      const upgradeOpHash = ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ["bytes4", "address"],
+          [ethers.dataSlice(ethers.keccak256(ethers.toUtf8Bytes("upgrade")), 0, 4), newImplAddr]
+        )
+      );
+      let msgHash = buildMessageHash(domainSep, upgradeOpHash, 0n);
+      let sigs = signPasskey(passkey, msgHash);
+      await wallet.upgrade(newImplAddr, sigs.passkeyR, sigs.passkeyS);
+
+      // Now reset to beacon
+      const resetOpHash = ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ["bytes4"],
+          [ethers.dataSlice(ethers.keccak256(ethers.toUtf8Bytes("resetToBeacon")), 0, 4)]
+        )
+      );
+      msgHash = buildMessageHash(domainSep, resetOpHash, 1n);
+      sigs = signPasskey(passkey, msgHash);
+
+      await expect(
+        wallet.resetToBeacon(sigs.passkeyR, sigs.passkeyS)
+      ).to.emit(wallet, "ResetToBeacon").withArgs(walletAddress);
+
+      // Wallet still works (falls back to beacon)
+      expect(await wallet.didVersionId()).to.equal(1);
+      expect(await wallet.nonce()).to.equal(2);
+    });
+
+    it("reverts when deactivated", async function () {
+      const { wallet, passkey, domainSep } = await deployAndInitialize();
+
+      // Deactivate
+      const deactOpHash = ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ["bytes4"],
+          [ethers.dataSlice(ethers.keccak256(ethers.toUtf8Bytes("deactivate")), 0, 4)]
+        )
+      );
+      const deactMsgHash = buildMessageHash(domainSep, deactOpHash, 0n);
+      const deactSigs = signPasskey(passkey, deactMsgHash);
+      await wallet.deactivate(deactSigs.passkeyR, deactSigs.passkeyS);
+
+      // Try resetToBeacon
+      const resetOpHash = ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ["bytes4"],
+          [ethers.dataSlice(ethers.keccak256(ethers.toUtf8Bytes("resetToBeacon")), 0, 4)]
+        )
+      );
+      const msgHash = buildMessageHash(domainSep, resetOpHash, 1n);
+      const sigs = signPasskey(passkey, msgHash);
+
+      await expect(
+        wallet.resetToBeacon(sigs.passkeyR, sigs.passkeyS)
+      ).to.be.revertedWithCustomError(wallet, "DIDIsDeactivated");
+    });
+
+    it("reverts on bad signature", async function () {
+      const { wallet, domainSep } = await deployAndInitialize();
+      const badKey = generateP256KeyPair();
+
+      const resetOpHash = ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ["bytes4"],
+          [ethers.dataSlice(ethers.keccak256(ethers.toUtf8Bytes("resetToBeacon")), 0, 4)]
+        )
+      );
+      const msgHash = buildMessageHash(domainSep, resetOpHash, 0n);
+      const badSig = signP256(badKey.privateKey, msgHash);
+
+      await expect(
+        wallet.resetToBeacon(badSig.r, badSig.s)
+      ).to.be.revertedWithCustomError(wallet, "InvalidPasskeySig");
+    });
+  });
+
   // ─── Nonce Replay Protection ────────────────────────────
 
   describe("nonce replay protection", function () {

@@ -21,8 +21,23 @@ async function main() {
     throw new Error(`No code at SovraWalletV1 address ${implAddr} — deployment failed`);
   }
 
+  // ─── Beacon ──────────────────────────────────────────
+  const SovraBeacon = await ethers.getContractFactory("SovraBeacon", deployer);
+  const beacon = await SovraBeacon.deploy(implAddr, deployer.address, deployer.address);
+  const beaconTx = beacon.deploymentTransaction()!;
+  console.log("SovraBeacon deploy tx:", beaconTx.hash);
+  await beacon.waitForDeployment();
+  const beaconAddr = await beacon.getAddress();
+  console.log("SovraBeacon deployed to:", beaconAddr);
+
+  const beaconCode = await ethers.provider.getCode(beaconAddr);
+  if (beaconCode === "0x") {
+    throw new Error(`No code at SovraBeacon address ${beaconAddr} — deployment failed`);
+  }
+
+  // ─── Dispatcher ──────────────────────────────────────
   const SovraDispatcher = await ethers.getContractFactory("SovraDispatcher", deployer);
-  const dispatcher = await SovraDispatcher.deploy(implAddr);
+  const dispatcher = await SovraDispatcher.deploy(beaconAddr);
   const dispatcherTx = dispatcher.deploymentTransaction()!;
   console.log("SovraDispatcher deploy tx:", dispatcherTx.hash);
   await dispatcher.waitForDeployment();
@@ -70,6 +85,7 @@ async function main() {
   // ─── Summary ──────────────────────────────────────
   console.log("\n=== Deployment Summary ===");
   console.log("SovraWalletV1:          ", implAddr);
+  console.log("SovraBeacon:            ", beaconAddr);
   console.log("SovraDispatcher:        ", dispatcherAddr);
   console.log("SovraDIDRegistry:       ", didRegistryAddr);
   console.log("SovraIssuerRegistryV1:  ", issuerRegistryAddr);

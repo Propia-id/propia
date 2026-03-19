@@ -113,6 +113,11 @@ interface ISovraWallet {
     /// @param newImplementation The new implementation contract address
     event Upgraded(address indexed identity, address newImplementation);
 
+    /// @notice Emitted when a wallet clears its per-account implementation override,
+    ///         reverting to the beacon-managed implementation.
+    /// @param identity The wallet (EOA) address that reset to beacon
+    event ResetToBeacon(address indexed identity);
+
     // ─── Functions ───────────────────────────────────────
 
     /// @notice One-time initialization called atomically with the EIP-7702 delegation.
@@ -177,11 +182,21 @@ interface ISovraWallet {
     /// @notice Change the implementation contract (UUPS upgrade). Requires passkey signature.
     ///         Writes the new address to the ERC-1967 implementation slot. The dispatcher
     ///         will delegatecall the new implementation for all subsequent calls.
+    ///         This pins the wallet to a specific version, opting out of beacon-managed upgrades.
     /// @param newImplementation Address of the new implementation contract (must have code)
     /// @param passkeyR r component of the passkey's P256 signature
     /// @param passkeyS s component of the passkey's P256 signature
     function upgrade(
         address newImplementation,
+        bytes32 passkeyR, bytes32 passkeyS
+    ) external;
+
+    /// @notice Clear the per-account implementation override, reverting to the beacon-managed
+    ///         implementation. Requires passkey signature. After this call, the dispatcher will
+    ///         resolve the implementation via the beacon contract instead of the ERC-1967 slot.
+    /// @param passkeyR r component of the passkey's P256 signature
+    /// @param passkeyS s component of the passkey's P256 signature
+    function resetToBeacon(
         bytes32 passkeyR, bytes32 passkeyS
     ) external;
 

@@ -279,6 +279,26 @@ contract SovraWalletV1 is ISovraWallet, ReentrancyGuardUpgradeable {
     }
 
     /// @inheritdoc ISovraWallet
+    function resetToBeacon(
+        bytes32 passkeyR, bytes32 passkeyS
+    ) external {
+        if (didDeactivated) revert DIDIsDeactivated();
+
+        bytes32 opHash = keccak256(abi.encode(bytes4(keccak256("resetToBeacon"))));
+        bytes32 msgHash = _buildMessageHash(opHash, nonce);
+
+        _verifyPasskey(msgHash, passkeyR, passkeyS);
+
+        nonce++;
+
+        assembly {
+            sstore(IMPL_SLOT, 0)
+        }
+
+        emit ResetToBeacon(address(this));
+    }
+
+    /// @inheritdoc ISovraWallet
     function initiateRecovery(
         bytes32 newKeyX, bytes32 newKeyY,
         uint8 keyToReplace,
