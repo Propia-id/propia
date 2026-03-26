@@ -51,7 +51,7 @@ Create `/etc/nixos/flake.nix`:
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
-    sovra.url = "github:lambdaclass/sovra-system";
+    sovra.url = "github:lambdaclass/sovra";
   };
 
   outputs = { nixpkgs, sovra, ... }: {
