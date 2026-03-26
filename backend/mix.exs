@@ -10,6 +10,7 @@ defmodule Sovra.MixProject do
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
       deps: deps(),
+      releases: releases(),
       listeners: [Phoenix.CodeReloader]
     ]
   end
@@ -27,6 +28,14 @@ defmodule Sovra.MixProject do
   def cli do
     [
       preferred_envs: [precommit: :test]
+    ]
+  end
+
+  defp releases do
+    [
+      sovra: [
+        include_executables_for: [:unix]
+      ]
     ]
   end
 

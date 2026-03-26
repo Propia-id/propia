@@ -7,12 +7,11 @@
 #   services.sovra = {
 #     enable = true;
 #     domain = "sovra.example.com";
+#     backendPath = "/opt/sovra/backend";
+#     issuerPath = "/opt/sovra/issuer";
 #     secretKeyBaseFile = "/run/secrets/sovra-secret-key-base";
 #     databaseUrl = "ecto://sovra:password@localhost/sovra_prod";
 #   };
-#
-# The `package` option has no default — set it to a Mix release derivation
-# once one is built (e.g. via `mix release` in a Nix build).
 
 { config, lib, pkgs, ... }:
 
@@ -45,9 +44,16 @@ in
       description = "Ecto database URL (ecto://USER:PASS@HOST/DATABASE).";
     };
 
-    package = lib.mkOption {
-      type = lib.types.package;
-      description = "Sovra Mix release package.";
+    backendPath = lib.mkOption {
+      type = lib.types.str;
+      default = "/opt/sovra/backend";
+      description = "Path to the deployed Mix release directory.";
+    };
+
+    issuerPath = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "Path to the deployed issuer frontend static files. When set, Nginx serves them at /.";
     };
 
     localPostgres = lib.mkOption {
@@ -110,8 +116,8 @@ in
         User = "sovra";
         Group = "sovra";
         WorkingDirectory = "/var/lib/sovra";
-        ExecStart = "${cfg.package}/bin/sovra start";
-        ExecStop = "${cfg.package}/bin/sovra stop";
+        ExecStart = "${cfg.backendPath}/bin/sovra start";
+        ExecStop = "${cfg.backendPath}/bin/sovra stop";
         Restart = "on-failure";
         RestartSec = 5;
 
@@ -165,7 +171,23 @@ in
         forceSSL = cfg.nginx.enableACME;
         enableACME = cfg.nginx.enableACME;
 
-        locations."/" = {
+        # API routes → Phoenix backend
+        locations."/api" = {
+          proxyPass = "http://127.0.0.1:${toString cfg.port}";
+          proxyWebsockets = true;
+        };
+
+        # WebSocket endpoint
+        locations."/live" = {
+          proxyPass = "http://127.0.0.1:${toString cfg.port}";
+          proxyWebsockets = true;
+        };
+
+        # Issuer frontend at / (SPA with fallback to index.html)
+        locations."/" = if cfg.issuerPath != null then {
+          root = cfg.issuerPath;
+          tryFiles = "$uri $uri/ /index.html";
+        } else {
           proxyPass = "http://127.0.0.1:${toString cfg.port}";
           proxyWebsockets = true;
         };
