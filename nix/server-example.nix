@@ -5,9 +5,8 @@
 # Prerequisites on the server:
 #   1. NixOS installed
 #   2. Tailscale enabled for SSH access from CI
-#   3. A `deploy` user with sudo access to `systemctl restart sovra`
+#   3. An `admin` user with sudo access (created by nixos-infect)
 #   4. Secret key base stored at the configured path
-#   5. /opt/sovra/backend and /opt/sovra/issuer directories owned by `deploy`
 #
 # Required GitHub Secrets:
 #   - TS_OAUTH_CLIENT_ID / TS_OAUTH_SECRET — Tailscale OAuth client credentials
@@ -30,15 +29,9 @@
   # Tailscale for secure access from CI
   services.tailscale.enable = true;
 
-  # Deploy user — CI connects as this user via Tailscale SSH
-  users.users.deploy = {
-    isNormalUser = true;
-    extraGroups = [ "wheel" ];
-  };
-
-  # Allow deploy user to restart Sovra and run rsync to /opt/sovra
+  # Allow admin user to restart Sovra (used by CI)
   security.sudo.extraRules = [{
-    users = [ "deploy" ];
+    users = [ "admin" ];
     commands = [
       { command = "/run/current-system/sw/bin/systemctl restart sovra"; options = [ "NOPASSWD" ]; }
     ];
@@ -46,7 +39,7 @@
 
   # Ensure deploy directories exist
   systemd.tmpfiles.rules = [
-    "d /opt/sovra/backend 0755 deploy deploy -"
-    "d /opt/sovra/issuer 0755 deploy deploy -"
+    "d /opt/sovra/backend 0755 admin users -"
+    "d /opt/sovra/issuer 0755 admin users -"
   ];
 }

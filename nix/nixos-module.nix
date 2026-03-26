@@ -121,8 +121,17 @@ in
         Restart = "on-failure";
         RestartSec = 5;
 
-        # Read secret key base from file
-        LoadCredential = "secret_key_base:${cfg.secretKeyBaseFile}";
+        # Read SECRET_KEY_BASE from file and write it to an EnvironmentFile.
+        # The "+" prefix runs as root so we can read the secret file,
+        # then the main process runs as sovra with the env loaded.
+        ExecStartPre = "+" + (pkgs.writeShellScript "sovra-env" ''
+          SECRET_KEY_BASE=$(cat ${cfg.secretKeyBaseFile})
+          echo "SECRET_KEY_BASE=$SECRET_KEY_BASE" > /run/sovra/env
+          chmod 600 /run/sovra/env
+          chown sovra:sovra /run/sovra/env
+        '');
+        EnvironmentFile = "/run/sovra/env";
+        RuntimeDirectory = "sovra";
 
         # Security hardening
         NoNewPrivileges = true;
@@ -135,11 +144,6 @@ in
         ProtectControlGroups = true;
         ReadWritePaths = [ "/var/lib/sovra" "/tmp/sovra" ];
       };
-
-      # Inject SECRET_KEY_BASE from credential file
-      preStart = ''
-        export SECRET_KEY_BASE=$(cat ''${CREDENTIALS_DIRECTORY}/secret_key_base)
-      '';
     };
 
     # ── PostgreSQL ──────────────────────────────────────────────────────────

@@ -43,7 +43,25 @@ Start from a fresh [NixOS installation](https://nixos.org/manual/nixos/stable/#s
 - `/etc/nixos/configuration.nix` -- system config
 - `/etc/nixos/hardware-configuration.nix` -- auto-generated hardware config
 
-### 2. Convert to a flake-based config
+### 2. Migrate to flake-based config (if using nixos-infect)
+
+If your server was provisioned with `nixos-infect`, it uses **channel-based** NixOS with a pattern like:
+
+```nix
+let
+  unstable = import <nixos-unstable> { config = {}; overlays = []; };
+in { config, lib, pkgs, ... }: {
+  imports = [ ./hardware-configuration.nix ./networking.nix ];
+  # ...
+}
+```
+
+To use the Sovra NixOS module, convert to a flake:
+
+1. Remove the `let unstable = import <nixos-unstable> ...` block from `configuration.nix`
+2. Change the function signature to accept `unstable` via specialArgs: `{ config, lib, pkgs, unstable, ... }:`
+3. Create `/etc/nixos/flake.nix` (below) which passes `unstable` and imports the Sovra module
+4. Run `nixos-rebuild switch --flake /etc/nixos#sovra-server` instead of `nixos-rebuild switch`
 
 Create `/etc/nixos/flake.nix`:
 
@@ -51,13 +69,17 @@ Create `/etc/nixos/flake.nix`:
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
     sovra.url = "github:lambdaclass/sovra";
   };
 
-  outputs = { nixpkgs, sovra, ... }: {
+  outputs = { nixpkgs, nixpkgs-unstable, sovra, ... }: {
     nixosConfigurations.sovra-server = nixpkgs.lib.nixosSystem {
       system = "x86_64-linux";
-      specialArgs = { inherit sovra; };
+      specialArgs = {
+        inherit sovra;
+        unstable = nixpkgs-unstable.legacyPackages.x86_64-linux;
+      };
       modules = [
         ./hardware-configuration.nix
         ./configuration.nix
@@ -90,14 +112,9 @@ Add to `/etc/nixos/configuration.nix`:
   # Tailscale for CI access
   services.tailscale.enable = true;
 
-  # Deploy user for CI
-  users.users.deploy = {
-    isNormalUser = true;
-    extraGroups = [ "wheel" ];
-  };
-
+  # Allow admin to restart Sovra without password (used by CI)
   security.sudo.extraRules = [{
-    users = [ "deploy" ];
+    users = [ "admin" ];
     commands = [
       { command = "/run/current-system/sw/bin/systemctl restart sovra";
         options = [ "NOPASSWD" ]; }
@@ -106,8 +123,8 @@ Add to `/etc/nixos/configuration.nix`:
 
   # Create deploy directories
   systemd.tmpfiles.rules = [
-    "d /opt/sovra/backend 0755 deploy deploy -"
-    "d /opt/sovra/issuer 0755 deploy deploy -"
+    "d /opt/sovra/backend 0755 admin users -"
+    "d /opt/sovra/issuer 0755 admin users -"
   ];
 }
 ```
@@ -126,7 +143,7 @@ chmod 600 /run/secrets/sovra-secret-key-base
 nixos-rebuild switch --flake /etc/nixos#sovra-server
 ```
 
-This sets up PostgreSQL, Redis, Nginx (with Let's Encrypt TLS), the systemd service, firewall rules, and the deploy user.
+This sets up PostgreSQL, Redis, Nginx (with Let's Encrypt TLS), the systemd service, and firewall rules.
 
 ### 5. Connect Tailscale
 
