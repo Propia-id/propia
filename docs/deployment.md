@@ -169,7 +169,7 @@ The workflow:
 
 | Secret | Description |
 |---|---|
-| `TS_OAUTH_CLIENT_ID` | Tailscale OAuth client ID (create at [admin.tailscale.com](https://login.tailscale.com/admin/settings/oauth), tag: `ci`) |
+| `TS_OAUTH_CLIENT_ID` | Tailscale OAuth client ID (create at [admin.tailscale.com](https://login.tailscale.com/admin/settings/oauth), tag: `ci`). Stored as a **variable**, not a secret. |
 | `TS_OAUTH_SECRET` | Tailscale OAuth client secret |
 | `DEPLOY_HOST` | Tailscale hostname of the server |
 
