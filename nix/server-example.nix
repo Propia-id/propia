@@ -6,7 +6,7 @@
 #   1. NixOS installed
 #   2. Tailscale enabled for SSH access from CI
 #   3. An `admin` user with sudo access (created by nixos-infect)
-#   4. Secret key base stored at the configured path
+#   4. Env file at /etc/sovra/env with all required secrets
 #
 # Required GitHub Secrets:
 #   - TS_OAUTH_CLIENT_ID / TS_OAUTH_SECRET — Tailscale OAuth client credentials
@@ -22,8 +22,7 @@
     domain = "sovra.example.com";
     backendPath = "/opt/sovra/backend";
     issuerPath = "/opt/sovra/issuer";
-    secretKeyBaseFile = "/run/secrets/sovra-secret-key-base";
-    databaseUrl = "ecto://sovra@localhost/sovra";
+    envFile = "/etc/sovra/env";
     nginx.acmeEmail = "admin@example.com";
   };
 

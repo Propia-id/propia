@@ -105,8 +105,7 @@ Add to `/etc/nixos/configuration.nix`:
     domain = "yourdomain.com";
     backendPath = "/opt/sovra/backend";
     issuerPath = "/opt/sovra/issuer";
-    secretKeyBaseFile = "/run/secrets/sovra-secret-key-base";
-    databaseUrl = "ecto://sovra@localhost/sovra";
+    envFile = "/etc/sovra/env";
     nginx.acmeEmail = "admin@yourdomain.com";
   };
 
@@ -132,13 +131,21 @@ Add to `/etc/nixos/configuration.nix`:
 
 See [`nix/server-example.nix`](../nix/server-example.nix) for a complete reference.
 
-### 4. Generate secrets and apply
+### 4. Create the env file and apply
+
+Create `/etc/sovra/env` with all required secrets:
 
 ```bash
-# Generate the secret key base
-mkdir -p /run/secrets
-openssl rand -base64 64 | tr -d '\n' > /run/secrets/sovra-secret-key-base
-chmod 600 /run/secrets/sovra-secret-key-base
+sudo mkdir -p /etc/sovra
+sudo tee /etc/sovra/env > /dev/null <<'EOF'
+DATABASE_URL=ecto://sovra@localhost/sovra
+SECRET_KEY_BASE=<run: openssl rand -base64 64 | tr -d '\n'>
+GUARDIAN_SESSION_SECRET=<run: openssl rand -base64 64 | tr -d '\n'>
+GOOGLE_CLIENT_ID=your-google-client-id
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+GOOGLE_REDIRECT_URI=https://yourdomain.com/api/v1/holder/auth/callback
+EOF
+sudo chmod 600 /etc/sovra/env
 
 # Apply the configuration
 nixos-rebuild switch --flake /etc/nixos#sovra-server
@@ -183,19 +190,26 @@ The CD workflow only updates application code. You need to SSH into the server a
 
 ## Environment Variables
 
-These are required on the server in production:
+All runtime config lives in `/etc/sovra/env` on the server. This file is loaded by both the systemd service and the migration command.
 
-| Variable | Source | Description |
-|---|---|---|
-| `DATABASE_URL` | NixOS config | Ecto database URL |
-| `SECRET_KEY_BASE` | systemd credential file | Cookie/session signing key |
-| `PHX_HOST` | NixOS config | Public domain name |
-| `PHX_SERVER` | NixOS config | Set to `true` |
-| `PORT` | NixOS config | Phoenix listen port (default 4000) |
-| `GUARDIAN_SESSION_SECRET` | Server env | Session signing secret |
-| `GOOGLE_CLIENT_ID` | Server env | Google OAuth client ID (wallet auth) |
-| `GOOGLE_CLIENT_SECRET` | Server env | Google OAuth client secret |
-| `GOOGLE_REDIRECT_URI` | Server env | OAuth callback URL |
+Required:
+
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | Ecto database URL (e.g. `ecto://sovra@localhost/sovra`) |
+| `SECRET_KEY_BASE` | Cookie/session signing key (64+ chars) |
+| `GUARDIAN_SESSION_SECRET` | Session signing secret |
+| `GOOGLE_CLIENT_ID` | Google OAuth client ID (wallet auth) |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
+| `GOOGLE_REDIRECT_URI` | OAuth callback URL |
+
+Set automatically by the NixOS module (not in env file):
+
+| Variable | Description |
+|---|---|
+| `PHX_HOST` | Public domain name (from `services.sovra.domain`) |
+| `PHX_SERVER` | Always `true` |
+| `PORT` | Phoenix listen port (default 4000) |
 
 Optional (for on-chain features):
 

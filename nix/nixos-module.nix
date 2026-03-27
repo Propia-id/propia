@@ -9,10 +9,17 @@
 #     domain = "sovra.example.com";
 #     backendPath = "/opt/sovra/backend";
 #     issuerPath = "/opt/sovra/issuer";
-#     secretKeyBaseFile = "/run/secrets/sovra-secret-key-base";
-#     databaseUrl = "ecto://sovra@localhost/sovra";
+#     envFile = "/etc/sovra/env";
 #     nginx.acmeEmail = "admin@example.com";
 #   };
+#
+# The env file must contain at minimum:
+#   DATABASE_URL=ecto://sovra@localhost/sovra
+#   SECRET_KEY_BASE=<64+ char secret>
+#   GUARDIAN_SESSION_SECRET=<secret>
+#   GOOGLE_CLIENT_ID=<id>
+#   GOOGLE_CLIENT_SECRET=<secret>
+#   GOOGLE_REDIRECT_URI=https://yourdomain.com/api/v1/holder/auth/callback
 
 { config, lib, pkgs, ... }:
 
@@ -35,14 +42,14 @@ in
       description = "Port the Phoenix server listens on.";
     };
 
-    secretKeyBaseFile = lib.mkOption {
+    envFile = lib.mkOption {
       type = lib.types.path;
-      description = "Path to file containing SECRET_KEY_BASE.";
-    };
-
-    databaseUrl = lib.mkOption {
-      type = lib.types.str;
-      description = "Ecto database URL (ecto://USER:PASS@HOST/DATABASE).";
+      default = "/etc/sovra/env";
+      description = ''
+        Path to environment file containing all runtime secrets and config.
+        Must contain DATABASE_URL, SECRET_KEY_BASE, GUARDIAN_SESSION_SECRET,
+        GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URI.
+      '';
     };
 
     backendPath = lib.mkOption {
@@ -114,7 +121,6 @@ in
         PHX_SERVER = "true";
         PHX_HOST = cfg.domain;
         PORT = toString cfg.port;
-        DATABASE_URL = cfg.databaseUrl;
         RELEASE_TMP = "/tmp/sovra";
       };
 
@@ -128,17 +134,8 @@ in
         Restart = "on-failure";
         RestartSec = 5;
 
-        # Read SECRET_KEY_BASE from file and write it to an EnvironmentFile.
-        # The "+" prefix runs as root so we can read the secret file,
-        # then the main process runs as sovra with the env loaded.
-        ExecStartPre = "+" + (pkgs.writeShellScript "sovra-env" ''
-          SECRET_KEY_BASE=$(cat ${cfg.secretKeyBaseFile})
-          echo "SECRET_KEY_BASE=$SECRET_KEY_BASE" > /run/sovra/env
-          chmod 600 /run/sovra/env
-          chown sovra:sovra /run/sovra/env
-        '');
-        EnvironmentFile = "/run/sovra/env";
-        RuntimeDirectory = "sovra";
+        # Load all secrets and config from the env file
+        EnvironmentFile = cfg.envFile;
 
         # Security hardening
         NoNewPrivileges = true;
