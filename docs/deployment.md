@@ -137,15 +137,33 @@ Create `/etc/sovra/env` with all required secrets:
 
 ```bash
 sudo mkdir -p /etc/sovra
-sudo tee /etc/sovra/env > /dev/null <<'EOF'
-DATABASE_URL=ecto://sovra@localhost/sovra
-SECRET_KEY_BASE=<run: openssl rand -base64 64 | tr -d '\n'>
-GUARDIAN_SESSION_SECRET=<run: openssl rand -base64 64 | tr -d '\n'>
+sudo tee /etc/sovra/env > /dev/null <<EOF
+DATABASE_URL=ecto://sovra:sovra@localhost/sovra
+SECRET_KEY_BASE=$(openssl rand -base64 64 | tr -d '\n')
+GUARDIAN_SESSION_SECRET=$(openssl rand -base64 64 | tr -d '\n')
 GOOGLE_CLIENT_ID=your-google-client-id
 GOOGLE_CLIENT_SECRET=your-google-client-secret
 GOOGLE_REDIRECT_URI=https://yourdomain.com/api/v1/holder/auth/callback
 EOF
 sudo chmod 600 /etc/sovra/env
+sudo chown sovra:sovra /etc/sovra/env
+```
+
+Set a password for the PostgreSQL `sovra` user (NixOS creates it with peer auth only):
+
+```bash
+sudo -u postgres psql -c "ALTER USER sovra PASSWORD 'sovra';"
+```
+
+Optionally, add on-chain config to `/etc/sovra/env` (the backend starts without these, but on-chain features won't work):
+
+```bash
+# Append to /etc/sovra/env
+ADMIN_PRIVATE_KEY=0x...
+L2_RPC_URL=https://your-l2-rpc-endpoint
+DID_REGISTRY_ADDRESS=0x...
+ISSUER_REGISTRY_ADDRESS=0x...
+```
 
 # Apply the configuration
 nixos-rebuild switch --flake /etc/nixos#sovra-server
@@ -196,7 +214,7 @@ Required:
 
 | Variable | Description |
 |---|---|
-| `DATABASE_URL` | Ecto database URL (e.g. `ecto://sovra@localhost/sovra`) |
+| `DATABASE_URL` | Ecto database URL (e.g. `ecto://sovra:sovra@localhost/sovra`) |
 | `SECRET_KEY_BASE` | Cookie/session signing key (64+ chars) |
 | `GUARDIAN_SESSION_SECRET` | Session signing secret |
 | `GOOGLE_CLIENT_ID` | Google OAuth client ID (wallet auth) |
@@ -211,14 +229,22 @@ Set automatically by the NixOS module (not in env file):
 | `PHX_SERVER` | Always `true` |
 | `PORT` | Phoenix listen port (default 4000) |
 
-Optional (for on-chain features):
+Optional (on-chain features -- omit `ADMIN_PRIVATE_KEY` to skip all):
 
 | Variable | Description |
 |---|---|
 | `ADMIN_PRIVATE_KEY` | Ethereum admin key for contract interactions |
-| `L2_RPC_URL` | SovraChain RPC endpoint |
+| `L2_RPC_URL` | SovraChain RPC endpoint (default: `http://127.0.0.1:1729`) |
 | `DID_REGISTRY_ADDRESS` | Deployed DID registry contract address |
 | `ISSUER_REGISTRY_ADDRESS` | Deployed issuer registry contract address |
+
+Optional (tuning):
+
+| Variable | Description |
+|---|---|
+| `POOL_SIZE` | Database connection pool size (default: 10) |
+| `ECTO_IPV6` | Enable IPv6 for database connections (`true`/`1`) |
+| `DNS_CLUSTER_QUERY` | DNS query for clustering multiple nodes |
 
 ## Local Testing
 
