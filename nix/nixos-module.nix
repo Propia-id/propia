@@ -121,7 +121,6 @@ in
         PHX_SERVER = "true";
         PHX_HOST = cfg.domain;
         PORT = toString cfg.port;
-        RELEASE_TMP = "/tmp/sovra";
       };
 
       serviceConfig = {
@@ -146,7 +145,7 @@ in
         ProtectKernelTunables = true;
         ProtectKernelModules = true;
         ProtectControlGroups = true;
-        ReadWritePaths = [ "/var/lib/sovra" "/tmp/sovra" ];
+        ReadWritePaths = [ "/var/lib/sovra" ];
       };
     };
 
