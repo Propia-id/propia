@@ -70,7 +70,7 @@ Create `/etc/nixos/flake.nix`:
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
-    sovra.url = "github:lambdaclass/sovra";
+    sovra.url = "git+ssh://git@github.com/lambdaclass/sovra";
   };
 
   outputs = { nixpkgs, nixpkgs-unstable, sovra, ... }: {
@@ -106,7 +106,8 @@ Add to `/etc/nixos/configuration.nix`:
     backendPath = "/opt/sovra/backend";
     issuerPath = "/opt/sovra/issuer";
     secretKeyBaseFile = "/run/secrets/sovra-secret-key-base";
-    databaseUrl = "ecto://sovra:yourpassword@localhost/sovra_prod";
+    databaseUrl = "ecto://sovra@localhost/sovra";
+    nginx.acmeEmail = "admin@yourdomain.com";
   };
 
   # Tailscale for CI access
@@ -136,7 +137,7 @@ See [`nix/server-example.nix`](../nix/server-example.nix) for a complete referen
 ```bash
 # Generate the secret key base
 mkdir -p /run/secrets
-nix-shell -p elixir --run "mix phx.gen.secret" > /run/secrets/sovra-secret-key-base
+openssl rand -base64 64 | tr -d '\n' > /run/secrets/sovra-secret-key-base
 chmod 600 /run/secrets/sovra-secret-key-base
 
 # Apply the configuration

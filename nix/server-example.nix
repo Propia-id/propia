@@ -23,7 +23,8 @@
     backendPath = "/opt/sovra/backend";
     issuerPath = "/opt/sovra/issuer";
     secretKeyBaseFile = "/run/secrets/sovra-secret-key-base";
-    databaseUrl = "ecto://sovra:password@localhost/sovra_prod";
+    databaseUrl = "ecto://sovra@localhost/sovra";
+    nginx.acmeEmail = "admin@example.com";
   };
 
   # Tailscale for secure access from CI

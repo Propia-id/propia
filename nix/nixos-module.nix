@@ -10,7 +10,8 @@
 #     backendPath = "/opt/sovra/backend";
 #     issuerPath = "/opt/sovra/issuer";
 #     secretKeyBaseFile = "/run/secrets/sovra-secret-key-base";
-#     databaseUrl = "ecto://sovra:password@localhost/sovra_prod";
+#     databaseUrl = "ecto://sovra@localhost/sovra";
+#     nginx.acmeEmail = "admin@example.com";
 #   };
 
 { config, lib, pkgs, ... }:
@@ -79,6 +80,12 @@ in
         type = lib.types.bool;
         default = true;
         description = "Whether to enable ACME/Let's Encrypt TLS.";
+      };
+
+      acmeEmail = lib.mkOption {
+        type = lib.types.str;
+        description = "Email address for ACME/Let's Encrypt certificate registration.";
+        example = "admin@example.com";
       };
     };
   };
@@ -149,7 +156,7 @@ in
     # ── PostgreSQL ──────────────────────────────────────────────────────────
     services.postgresql = lib.mkIf cfg.localPostgres {
       enable = true;
-      ensureDatabases = [ "sovra_prod" ];
+      ensureDatabases = [ "sovra" ];
       ensureUsers = [{
         name = "sovra";
         ensureDBOwnership = true;
@@ -201,6 +208,7 @@ in
     # ── ACME ────────────────────────────────────────────────────────────────
     security.acme = lib.mkIf (cfg.nginx.enable && cfg.nginx.enableACME) {
       acceptTerms = true;
+      defaults.email = cfg.nginx.acmeEmail;
     };
 
     # ── Firewall ────────────────────────────────────────────────────────────
