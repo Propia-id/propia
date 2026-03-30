@@ -2,13 +2,22 @@
 pragma solidity 0.8.31;
 
 import {ISovraIssuerRegistry} from "./ISovraIssuerRegistry.sol";
-import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
 /// @title SovraIssuerRegistryV1 - UUPS-upgradeable issuer trust registry
 /// @notice Stores which issuers are trusted for which credential types.
-///         Admin (owner) manages issuers; verifiers query via isTrusted().
-contract SovraIssuerRegistryV1 is ISovraIssuerRegistry, Ownable2StepUpgradeable, UUPSUpgradeable {
+///         ISSUER_MANAGER_ROLE manages issuers; UPGRADER_ROLE manages upgrades;
+///         DEFAULT_ADMIN_ROLE grants and revokes roles. Verifiers query via isTrusted().
+contract SovraIssuerRegistryV1 is ISovraIssuerRegistry, AccessControlUpgradeable, UUPSUpgradeable {
+    // ─── Roles ─────────────────────────────────────────
+
+    /// @notice Role that can register/remove issuers and manage credential types.
+    bytes32 public constant ISSUER_MANAGER_ROLE = keccak256("ISSUER_MANAGER_ROLE");
+
+    /// @notice Role that can perform UUPS upgrades.
+    bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
+
     // ─── Storage ────────────────────────────────────────
 
     /// @notice On-chain record for a registered issuer.
@@ -41,17 +50,20 @@ contract SovraIssuerRegistryV1 is ISovraIssuerRegistry, Ownable2StepUpgradeable,
 
     // ─── Initialization ─────────────────────────────────
 
-    /// @notice Initialize the registry with an owner. Called once via proxy.
-    /// @param _owner The initial owner address
-    function initialize(address _owner) external initializer {
-        __Ownable_init(_owner);
+    /// @notice Initialize the registry with an admin. Called once via proxy.
+    /// @param admin The initial admin address (receives all roles)
+    function initialize(address admin) external initializer {
+        __AccessControl_init();
         __UUPSUpgradeable_init();
+        _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        _grantRole(ISSUER_MANAGER_ROLE, admin);
+        _grantRole(UPGRADER_ROLE, admin);
     }
 
     // ─── UUPS ───────────────────────────────────────────
 
-    /// @dev Restricts upgrades to the owner.
-    function _authorizeUpgrade(address) internal override onlyOwner {}
+    /// @dev Restricts upgrades to accounts with UPGRADER_ROLE.
+    function _authorizeUpgrade(address) internal override onlyRole(UPGRADER_ROLE) {}
 
     // ─── Issuer Management ──────────────────────────────
 
@@ -59,7 +71,7 @@ contract SovraIssuerRegistryV1 is ISovraIssuerRegistry, Ownable2StepUpgradeable,
     function registerIssuer(
         address issuer,
         bytes32[] calldata credentialTypeIds
-    ) external onlyOwner {
+    ) external onlyRole(ISSUER_MANAGER_ROLE) {
         if (issuers[issuer].registered) revert AlreadyRegistered();
 
         issuers[issuer].registered = true;
@@ -77,7 +89,7 @@ contract SovraIssuerRegistryV1 is ISovraIssuerRegistry, Ownable2StepUpgradeable,
     function addCredentialTypes(
         address issuer,
         bytes32[] calldata credentialTypeIds
-    ) external onlyOwner {
+    ) external onlyRole(ISSUER_MANAGER_ROLE) {
         if (!issuers[issuer].registered) revert IssuerNotRegistered();
 
         for (uint256 i = 0; i < credentialTypeIds.length; i++) {
@@ -92,7 +104,7 @@ contract SovraIssuerRegistryV1 is ISovraIssuerRegistry, Ownable2StepUpgradeable,
     function removeCredentialTypes(
         address issuer,
         bytes32[] calldata credentialTypeIds
-    ) external onlyOwner {
+    ) external onlyRole(ISSUER_MANAGER_ROLE) {
         if (!issuers[issuer].registered) revert IssuerNotRegistered();
 
         for (uint256 i = 0; i < credentialTypeIds.length; i++) {
@@ -103,7 +115,7 @@ contract SovraIssuerRegistryV1 is ISovraIssuerRegistry, Ownable2StepUpgradeable,
     }
 
     /// @inheritdoc ISovraIssuerRegistry
-    function removeIssuer(address issuer) external onlyOwner {
+    function removeIssuer(address issuer) external onlyRole(ISSUER_MANAGER_ROLE) {
         if (!issuers[issuer].registered) revert IssuerNotRegistered();
 
         issuers[issuer].registered = false;

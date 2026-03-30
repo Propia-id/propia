@@ -102,6 +102,11 @@ The deploy script (`scripts/deploy.ts`) deploys in order:
 1. `SovraWalletV1` — implementation
 2. `SovraBeacon` — with implementation address, owner, and security council
 3. `SovraDispatcher` — with beacon address
-4. DID and Issuer registries (unchanged)
+4. `SovraDIDRegistryV1` — implementation + ERC1967Proxy (UUPS)
+5. `SovraIssuerRegistryV1` — implementation + ERC1967Proxy (UUPS)
 
-After deployment, transfer beacon ownership to a multisig and set the security council to the appropriate address via `setSecurityCouncil()`.
+Both registries use UUPS upgradeability with `AccessControlUpgradeable` (issuer registry) or `Ownable2StepUpgradeable` (DID registry). The initial deployer receives all roles/ownership.
+
+After deployment:
+- Transfer beacon ownership to a multisig and set the security council via `setSecurityCouncil()`
+- On the issuer registry, grant `ISSUER_MANAGER_ROLE` and `UPGRADER_ROLE` to the appropriate addresses, then revoke them from the deployer if it should not retain them
