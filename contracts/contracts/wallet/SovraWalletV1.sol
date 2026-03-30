@@ -3,6 +3,7 @@ pragma solidity 0.8.31;
 
 import {ISovraWallet} from "./ISovraWallet.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 
 /// @title SovraWalletV1 - Implementation for EIP-7702 delegated holder wallets
 /// @notice All wallet logic: passkey-only P256 signature validation, arbitrary call execution,
@@ -13,7 +14,7 @@ import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/ut
 /// @dev P256 verification uses the EIP-7212 precompile at address(0x0100), which exists
 ///      natively on the ethrex L2. For local Hardhat tests, a Solidity mock is etched there.
 ///      Future V2+ implementations MUST use ERC-7201 namespaced storage for new fields.
-contract SovraWalletV1 is ISovraWallet, ReentrancyGuardUpgradeable {
+contract SovraWalletV1 is ISovraWallet, ReentrancyGuardUpgradeable, EIP712Upgradeable {
     // ─── ERC-1967 ────────────────────────────────────────
 
     /// @dev ERC-1967 implementation storage slot, written by upgrade().
@@ -64,29 +65,7 @@ contract SovraWalletV1 is ISovraWallet, ReentrancyGuardUpgradeable {
     /// @inheritdoc ISovraWallet
     uint64 public constant RECOVERY_DELAY = 7 days;
 
-    // ─── EIP-712 ─────────────────────────────────────────
-
-    /// @dev EIP-712 domain separator typehash.
-    bytes32 internal constant DOMAIN_TYPEHASH =
-        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
-    /// @dev keccak256("SovraWallet") - cached for domain separator computation.
-    bytes32 internal constant NAME_HASH = keccak256("SovraWallet");
-    /// @dev keccak256("1") - cached for domain separator computation.
-    bytes32 internal constant VERSION_HASH = keccak256("1");
-
     // ─── Internal Helpers ────────────────────────────────
-
-    /// @dev Computes the EIP-712 domain separator for this wallet on the current chain.
-    /// @return The domain separator hash
-    function _domainSeparator() internal view returns (bytes32) {
-        return keccak256(abi.encode(
-            DOMAIN_TYPEHASH,
-            NAME_HASH,
-            VERSION_HASH,
-            block.chainid,
-            address(this)
-        ));
-    }
 
     /// @dev Builds the final EIP-712 message hash that the passkey signs.
     /// @param operationHash The keccak256 hash of the operation-specific parameters
@@ -94,7 +73,7 @@ contract SovraWalletV1 is ISovraWallet, ReentrancyGuardUpgradeable {
     /// @return The EIP-712 structured message hash with \x19\x01 prefix
     function _buildMessageHash(bytes32 operationHash, uint256 _nonce) internal view returns (bytes32) {
         bytes32 structHash = keccak256(abi.encode(operationHash, _nonce));
-        return keccak256(abi.encodePacked("\x19\x01", _domainSeparator(), structHash));
+        return _hashTypedDataV4(structHash);
     }
 
     /// @dev Verifies a single P256 signature via the EIP-7212 precompile at address(0x0100).
@@ -146,6 +125,7 @@ contract SovraWalletV1 is ISovraWallet, ReentrancyGuardUpgradeable {
         if (didCreated != 0) revert AlreadyInitialized();
 
         __ReentrancyGuard_init();
+        __EIP712_init("SovraWallet", "1");
 
         _rejectZeroKey(_passkeyX, _passkeyY);
         _rejectZeroKey(_recoveryKeyX, _recoveryKeyY);
