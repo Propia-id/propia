@@ -140,3 +140,36 @@ frontend.wallet.check:
 
 frontend.verifier.check:
 	$(NIX) "cd frontend && pnpm --filter @sovra/verifier typecheck"
+
+# ── Deploy ──────────────────────────────────────────────────────────
+
+.PHONY: deploy.build deploy.local deploy.local.stop
+
+deploy.build:
+	nix build .#sovra-backend --print-build-logs
+	nix build .#sovra-issuer --print-build-logs
+
+deploy.local: deploy.build
+	@echo "Starting Sovra locally from release builds..."
+	@echo ""
+	@echo "  Backend: http://localhost:4000/api"
+	@echo "  Issuer:  http://localhost:3000"
+	@echo ""
+	@# Serve the issuer frontend in the background
+	@$(NIX) "npx serve $$(nix path-info .#sovra-issuer) -l 3000 &"
+	@# Start the backend release
+	SECRET_KEY_BASE=$$($(NIX) "cd backend && mix phx.gen.secret") \
+	DATABASE_URL="ecto://postgres:postgres@localhost/sovra_dev" \
+	GUARDIAN_SESSION_SECRET="local-dev-secret-min-64-chars-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+	GOOGLE_CLIENT_ID="fake" \
+	GOOGLE_CLIENT_SECRET="fake" \
+	GOOGLE_REDIRECT_URI="http://localhost:4000/auth/google/callback" \
+	PHX_HOST="localhost" \
+	PHX_SERVER="true" \
+	PORT=4000 \
+		$$(nix path-info .#sovra-backend)/bin/sovra start
+
+deploy.local.stop:
+	@$$(nix path-info .#sovra-backend)/bin/sovra stop 2>/dev/null || true
+	@pkill -f "serve.*sovra-issuer" 2>/dev/null || true
+	@echo "Stopped."

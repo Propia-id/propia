@@ -99,6 +99,30 @@ describe("SovraWalletV1", function () {
         )
       ).to.be.revertedWithCustomError(wallet, "InvalidPasskeySig");
     });
+
+    it("reverts when passkey and recovery key are identical", async function () {
+      const { wallet } = await deployWallet();
+      const passkey = generateP256KeyPair();
+      const walletAddress = await wallet.getAddress();
+      const chainId = (await ethers.provider.getNetwork()).chainId;
+
+      // Use the same key for both passkey and recovery
+      const initHash = ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(
+          ["address", "uint256", "bytes32", "bytes32", "bytes32", "bytes32"],
+          [walletAddress, chainId, passkey.publicKeyX, passkey.publicKeyY, passkey.publicKeyX, passkey.publicKeyY]
+        )
+      );
+      const passkeySig = signP256(passkey.privateKey, initHash);
+
+      await expect(
+        wallet.initialize(
+          passkey.publicKeyX, passkey.publicKeyY,
+          passkey.publicKeyX, passkey.publicKeyY,
+          passkeySig.r, passkeySig.s
+        )
+      ).to.be.revertedWithCustomError(wallet, "KeysMustDiffer");
+    });
   });
 
   // ─── Execute ────────────────────────────────────────────

@@ -142,28 +142,56 @@ defmodule Sovra.Guardian do
     end
   end
 
-  def initiate_recovery(sovra_address, message_hash) when is_binary(message_hash) do
+  def initiate_recovery(sovra_address, %{
+        new_key_x: new_key_x,
+        new_key_y: new_key_y,
+        key_to_replace: key_to_replace
+      })
+      when is_binary(new_key_x) and is_binary(new_key_y) and key_to_replace in [0, 1] do
     with {:ok, holder} <- get_active_holder(sovra_address),
+         {:ok, message_hash} <-
+           Sovra.Ethereum.WalletReader.build_initiate_recovery_hash(
+             sovra_address,
+             new_key_x,
+             new_key_y,
+             key_to_replace
+           ),
          {:ok, sig} <- Key.sign(holder.recovery_key_id, message_hash) do
       changeset = HolderRecord.status_changeset(holder, "recovery_pending")
 
       case Repo.update(changeset) do
-        {:ok, _updated} -> {:ok, %{signature: format_signature(sig)}}
-        {:error, changeset} -> {:error, {:changeset, changeset}}
+        {:ok, _updated} ->
+          {:ok,
+           %{
+             signature: format_signature(sig),
+             message_hash: "0x" <> Base.encode16(message_hash, case: :lower)
+           }}
+
+        {:error, changeset} ->
+          {:error, {:changeset, changeset}}
       end
     end
   end
 
-  def initiate_recovery(_sovra_address, _message_hash), do: {:error, :invalid_message_hash}
+  def initiate_recovery(_sovra_address, _params), do: {:error, :invalid_params}
 
-  def finalize_recovery(sovra_address, message_hash) when is_binary(message_hash) do
+  def finalize_recovery(sovra_address) do
     with {:ok, holder} <- get_recovery_pending_holder(sovra_address),
+         {:ok, message_hash} <-
+           Sovra.Ethereum.WalletReader.build_finalize_recovery_hash(sovra_address),
          {:ok, sig} <- Key.sign(holder.recovery_key_id, message_hash) do
       changeset = HolderRecord.status_changeset(holder, "active")
 
       case Repo.update(changeset) do
-        {:ok, _updated} -> {:ok, %{signature: format_signature(sig)}}
-        {:error, changeset} -> {:error, {:changeset, changeset}}
+        {:ok, _updated} ->
+          {:ok,
+           %{
+             signature: format_signature(sig),
+             message_hash: "0x" <> Base.encode16(message_hash, case: :lower)
+           }}
+
+        {:error, changeset} ->
+          {:error, {:changeset, changeset}}
       end
     end
   end

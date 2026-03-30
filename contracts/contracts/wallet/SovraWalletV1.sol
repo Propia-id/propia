@@ -136,6 +136,7 @@ contract SovraWalletV1 is ISovraWallet, ReentrancyGuardUpgradeable, EIP712Upgrad
 
         _rejectZeroKey(_passkeyX, _passkeyY);
         _rejectZeroKey(_recoveryKeyX, _recoveryKeyY);
+        if (_passkeyX == _recoveryKeyX && _passkeyY == _recoveryKeyY) revert KeysMustDiffer();
 
         bytes32 initHash = keccak256(abi.encode(
             address(this), block.chainid, _passkeyX, _passkeyY, _recoveryKeyX, _recoveryKeyY

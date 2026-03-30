@@ -7,12 +7,19 @@
 #   services.sovra = {
 #     enable = true;
 #     domain = "sovra.example.com";
-#     secretKeyBaseFile = "/run/secrets/sovra-secret-key-base";
-#     databaseUrl = "ecto://sovra:password@localhost/sovra_prod";
+#     backendPath = "/opt/sovra/backend";
+#     issuerPath = "/opt/sovra/issuer";
+#     envFile = "/etc/sovra/env";
+#     nginx.acmeEmail = "admin@example.com";
 #   };
 #
-# The `package` option has no default — set it to a Mix release derivation
-# once one is built (e.g. via `mix release` in a Nix build).
+# The env file must contain at minimum:
+#   DATABASE_URL=ecto://sovra@localhost/sovra
+#   SECRET_KEY_BASE=<64+ char secret>
+#   GUARDIAN_SESSION_SECRET=<secret>
+#   GOOGLE_CLIENT_ID=<id>
+#   GOOGLE_CLIENT_SECRET=<secret>
+#   GOOGLE_REDIRECT_URI=https://yourdomain.com/api/v1/holder/auth/callback
 
 { config, lib, pkgs, ... }:
 
@@ -35,19 +42,26 @@ in
       description = "Port the Phoenix server listens on.";
     };
 
-    secretKeyBaseFile = lib.mkOption {
+    envFile = lib.mkOption {
       type = lib.types.path;
-      description = "Path to file containing SECRET_KEY_BASE.";
+      default = "/etc/sovra/env";
+      description = ''
+        Path to environment file containing all runtime secrets and config.
+        Must contain DATABASE_URL, SECRET_KEY_BASE, GUARDIAN_SESSION_SECRET,
+        GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URI.
+      '';
     };
 
-    databaseUrl = lib.mkOption {
+    backendPath = lib.mkOption {
       type = lib.types.str;
-      description = "Ecto database URL (ecto://USER:PASS@HOST/DATABASE).";
+      default = "/opt/sovra/backend";
+      description = "Path to the deployed Mix release directory.";
     };
 
-    package = lib.mkOption {
-      type = lib.types.package;
-      description = "Sovra Mix release package.";
+    issuerPath = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "Path to the deployed issuer frontend static files. When set, Nginx serves them at /.";
     };
 
     localPostgres = lib.mkOption {
@@ -73,6 +87,12 @@ in
         type = lib.types.bool;
         default = true;
         description = "Whether to enable ACME/Let's Encrypt TLS.";
+      };
+
+      acmeEmail = lib.mkOption {
+        type = lib.types.str;
+        description = "Email address for ACME/Let's Encrypt certificate registration.";
+        example = "admin@example.com";
       };
     };
   };
@@ -101,8 +121,6 @@ in
         PHX_SERVER = "true";
         PHX_HOST = cfg.domain;
         PORT = toString cfg.port;
-        DATABASE_URL = cfg.databaseUrl;
-        RELEASE_TMP = "/tmp/sovra";
       };
 
       serviceConfig = {
@@ -110,13 +128,13 @@ in
         User = "sovra";
         Group = "sovra";
         WorkingDirectory = "/var/lib/sovra";
-        ExecStart = "${cfg.package}/bin/sovra start";
-        ExecStop = "${cfg.package}/bin/sovra stop";
+        ExecStart = "${cfg.backendPath}/bin/sovra start";
+        ExecStop = "${cfg.backendPath}/bin/sovra stop";
         Restart = "on-failure";
         RestartSec = 5;
 
-        # Read secret key base from file
-        LoadCredential = "secret_key_base:${cfg.secretKeyBaseFile}";
+        # Load all secrets and config from the env file
+        EnvironmentFile = cfg.envFile;
 
         # Security hardening
         NoNewPrivileges = true;
@@ -127,19 +145,14 @@ in
         ProtectKernelTunables = true;
         ProtectKernelModules = true;
         ProtectControlGroups = true;
-        ReadWritePaths = [ "/var/lib/sovra" "/tmp/sovra" ];
+        ReadWritePaths = [ "/var/lib/sovra" ];
       };
-
-      # Inject SECRET_KEY_BASE from credential file
-      preStart = ''
-        export SECRET_KEY_BASE=$(cat ''${CREDENTIALS_DIRECTORY}/secret_key_base)
-      '';
     };
 
     # ── PostgreSQL ──────────────────────────────────────────────────────────
     services.postgresql = lib.mkIf cfg.localPostgres {
       enable = true;
-      ensureDatabases = [ "sovra_prod" ];
+      ensureDatabases = [ "sovra" ];
       ensureUsers = [{
         name = "sovra";
         ensureDBOwnership = true;
@@ -165,7 +178,23 @@ in
         forceSSL = cfg.nginx.enableACME;
         enableACME = cfg.nginx.enableACME;
 
-        locations."/" = {
+        # API routes → Phoenix backend
+        locations."/api" = {
+          proxyPass = "http://127.0.0.1:${toString cfg.port}";
+          proxyWebsockets = true;
+        };
+
+        # WebSocket endpoint
+        locations."/live" = {
+          proxyPass = "http://127.0.0.1:${toString cfg.port}";
+          proxyWebsockets = true;
+        };
+
+        # Issuer frontend at / (SPA with fallback to index.html)
+        locations."/" = if cfg.issuerPath != null then {
+          root = cfg.issuerPath;
+          tryFiles = "$uri $uri/ /index.html";
+        } else {
           proxyPass = "http://127.0.0.1:${toString cfg.port}";
           proxyWebsockets = true;
         };
@@ -175,6 +204,7 @@ in
     # ── ACME ────────────────────────────────────────────────────────────────
     security.acme = lib.mkIf (cfg.nginx.enable && cfg.nginx.enableACME) {
       acceptTerms = true;
+      defaults.email = cfg.nginx.acmeEmail;
     };
 
     # ── Firewall ────────────────────────────────────────────────────────────

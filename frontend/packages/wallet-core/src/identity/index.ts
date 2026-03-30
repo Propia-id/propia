@@ -205,11 +205,61 @@ export class IdentityManager {
     });
   }
 
-  // TODO(#13): Implement recovery key rotation via POST /api/v1/recovery/rotate-key endpoint
-  /** Rotate recovery key — requires recovery flow. */
+  /** Rotate recovery key — server generates new key, passkey signs the on-chain rotation. */
   async rotateRecoveryKey(): Promise<string> {
-    // Server generates new key; this triggers the recovery server's rotation endpoint
-    throw new Error("Not implemented — requires POST /api/v1/recovery/rotate-key endpoint");
+    const state = this.identityStore.getState();
+    if (!state.eoaAddress) throw new Error("Not onboarded");
+
+    // Step 1: Server generates new recovery key and signs the rotation
+    const result = await this.api.rotateRecoveryKey();
+
+    const newX = hexToBytes(result.newRecoveryPublicKey.x);
+    const newY = hexToBytes(result.newRecoveryPublicKey.y);
+
+    // Step 2: Build the on-chain rotateRecoveryKey calldata with passkey signature
+    const opHash = buildRotateOpHash("rotateRecoveryKey", newX, newY);
+    const domainSep = buildDomainSeparator(state.chainId!, state.eoaAddress);
+
+    const nonceHex = await this.api.ethCall(
+      state.eoaAddress,
+      bytesToHex(encodeFunctionCall("nonce()", [])),
+    );
+    const currentNonce = BigInt(nonceHex);
+
+    const msgHash = buildEIP712MessageHash(domainSep, opHash, currentNonce);
+
+    const passkeySig = await this.passkeyProvider.sign(
+      state.passkeyCredentialId!,
+      msgHash,
+    );
+    const passkeyR = passkeySig.signature.slice(0, 32);
+    const passkeyS = passkeySig.signature.slice(32, 64);
+
+    // Step 3: Submit the on-chain transaction
+    const calldata = encodeFunctionCall(
+      "rotateRecoveryKey(bytes32,bytes32,bytes32,bytes32)",
+      [newX, newY, passkeyR, passkeyS],
+    );
+
+    const txHash = await this.api.sendTransaction({
+      to: state.eoaAddress,
+      data: bytesToHex(calldata),
+      value: "0x0",
+      gas: "0x100000",
+    });
+
+    // Step 4: Update local state with new recovery key
+    state.setIdentity({
+      did: state.did!,
+      eoaAddress: state.eoaAddress!,
+      passkeyCredentialId: state.passkeyCredentialId!,
+      passkeyPublicKey: state.passkeyPublicKey!,
+      recoveryPublicKey: { x: newX, y: newY },
+      chainId: state.chainId!,
+    });
+    await state.persistToStorage(this.storage);
+
+    return txHash;
   }
 
   /** Initiate passkey recovery — creates new passkey, server co-signs with recovery key. */
@@ -221,18 +271,12 @@ export class IdentityManager {
     const newPasskey = await this.passkeyProvider.create("sovra-user", "Sovra Wallet");
     const { x: newX, y: newY } = p256PublicKeyToXY(newPasskey.publicKey);
 
-    // Step 2: Build EIP-712 message hash matching the contract
-    const opHash = buildInitiateRecoveryOpHash(newX, newY, 0n);
-    const domainSep = buildDomainSeparator(state.chainId!, state.eoaAddress);
-    const nonceHex = await this.api.ethCall(
-      state.eoaAddress,
-      bytesToHex(encodeFunctionCall("nonce()", [])),
-    );
-    const currentNonce = BigInt(nonceHex);
-    const msgHash = buildEIP712MessageHash(domainSep, opHash, currentNonce);
-
-    // Step 3: Send hash to server for recovery key signature
-    const response = await this.api.recoveryInitiate(bytesToHex(msgHash));
+    // Step 2: Send structured params to server — server constructs and signs the hash
+    const response = await this.api.recoveryInitiate({
+      newKeyX: bytesToHex(newX),
+      newKeyY: bytesToHex(newY),
+      keyToReplace: 0,
+    });
     const sigR = hexToBytes(response.signature.r);
     const sigS = hexToBytes(response.signature.s);
 
@@ -279,18 +323,8 @@ export class IdentityManager {
     const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
     if (Date.now() - state.pendingRecovery.initiatedAt < SEVEN_DAYS_MS) return false;
 
-    // Step 1: Build EIP-712 message hash matching the contract
-    const opHash = buildFinalizeRecoveryOpHash();
-    const domainSep = buildDomainSeparator(state.chainId!, state.eoaAddress);
-    const nonceHex = await this.api.ethCall(
-      state.eoaAddress,
-      bytesToHex(encodeFunctionCall("nonce()", [])),
-    );
-    const currentNonce = BigInt(nonceHex);
-    const msgHash = buildEIP712MessageHash(domainSep, opHash, currentNonce);
-
-    // Step 2: Send hash to server for recovery key signature
-    const response = await this.api.recoveryFinalize(bytesToHex(msgHash));
+    // Step 1: Server constructs the hash and signs it
+    const response = await this.api.recoveryFinalize();
     const sigR = hexToBytes(response.signature.r);
     const sigS = hexToBytes(response.signature.s);
 

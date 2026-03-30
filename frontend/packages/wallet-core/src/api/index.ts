@@ -15,6 +15,12 @@ export interface SignResponse {
 
 export interface RecoverySignatureResponse {
   signature: { r: string; s: string };
+  messageHash: string;
+}
+
+export interface RotateRecoveryKeyResponse {
+  newRecoveryPublicKey: { x: string; y: string };
+  rotationSignature: { r: string; s: string };
 }
 
 export interface AuthResponse {
@@ -130,18 +136,30 @@ export class ApiClient {
     return data;
   }
 
-  async recoveryInitiate(messageHash: string): Promise<RecoverySignatureResponse> {
+  async recoveryInitiate(params: {
+    newKeyX: string;
+    newKeyY: string;
+    keyToReplace: number;
+  }): Promise<RecoverySignatureResponse> {
     const { data } = await this.backend.post<RecoverySignatureResponse>(
       "/api/v1/recovery/initiate",
-      { messageHash },
+      { newKeyX: params.newKeyX, newKeyY: params.newKeyY, keyToReplace: params.keyToReplace },
     );
     return data;
   }
 
-  async recoveryFinalize(messageHash: string): Promise<RecoverySignatureResponse> {
+  async recoveryFinalize(): Promise<RecoverySignatureResponse> {
     const { data } = await this.backend.post<RecoverySignatureResponse>(
       "/api/v1/recovery/finalize",
-      { messageHash },
+      {},
+    );
+    return data;
+  }
+
+  async rotateRecoveryKey(): Promise<RotateRecoveryKeyResponse> {
+    const { data } = await this.backend.post<RotateRecoveryKeyResponse>(
+      "/api/v1/recovery/rotate-key",
+      {},
     );
     return data;
   }
