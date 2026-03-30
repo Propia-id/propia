@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import { ethers } from "hardhat";
+import { ethers, upgrades } from "hardhat";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 import { SovraIssuerRegistryV1, SovraIssuerRegistryV2Mock } from "../../typechain-types";
 
@@ -20,22 +20,12 @@ const UPGRADER_ROLE = ethers.keccak256(
 );
 
 async function deployRegistry(admin: HardhatEthersSigner) {
-  const ImplFactory = await ethers.getContractFactory(
-    "SovraIssuerRegistryV1"
-  );
-  const impl = await ImplFactory.deploy();
-
-  const ProxyFactory = await ethers.getContractFactory("ERC1967Proxy");
-  const proxy = await ProxyFactory.deploy(
-    await impl.getAddress(),
-    impl.interface.encodeFunctionData("initialize", [admin.address])
-  );
-
-  const registry = ImplFactory.attach(
-    await proxy.getAddress()
-  ) as SovraIssuerRegistryV1;
-
-  return { registry, impl, proxy };
+  const Factory = await ethers.getContractFactory("SovraIssuerRegistryV1");
+  const registry = await upgrades.deployProxy(Factory, [admin.address], {
+    kind: "uups",
+  }) as unknown as SovraIssuerRegistryV1;
+  await registry.waitForDeployment();
+  return { registry };
 }
 
 describe("SovraIssuerRegistryV1", function () {
@@ -345,19 +335,14 @@ describe("SovraIssuerRegistryV1", function () {
       // Register issuer before upgrade
       await registry.registerIssuer(issuer1.address, [DRIVING_LICENCE]);
 
-      // Deploy V2
+      // Upgrade via plugin (validates storage layout compatibility)
       const V2Factory = await ethers.getContractFactory(
         "SovraIssuerRegistryV2Mock"
       );
-      const v2Impl = await V2Factory.deploy();
-
-      // Upgrade
-      await registry.upgradeToAndCall(await v2Impl.getAddress(), "0x");
-
-      // Attach V2 ABI
-      const registryV2 = V2Factory.attach(
-        await registry.getAddress()
-      ) as SovraIssuerRegistryV2Mock;
+      const registryV2 = await upgrades.upgradeProxy(
+        await registry.getAddress(),
+        V2Factory
+      ) as unknown as SovraIssuerRegistryV2Mock;
 
       // State preserved
       expect(await registryV2.isRegistered(issuer1.address)).to.be.true;
