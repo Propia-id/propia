@@ -194,6 +194,7 @@ export function buildEIP712MessageHash(
 /** Build the init hash matching SovraWalletV1.initialize(). */
 export function buildInitHash(
   walletAddress: string,
+  chainId: bigint,
   passkeyX: Uint8Array,
   passkeyY: Uint8Array,
   recoveryKeyX: Uint8Array,
@@ -202,6 +203,7 @@ export function buildInitHash(
   return keccak256(
     encodeAbiValues([
       encodeAddress(walletAddress),
+      encodeUint256(chainId),
       passkeyX,
       passkeyY,
       recoveryKeyX,
