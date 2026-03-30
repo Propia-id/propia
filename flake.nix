@@ -21,7 +21,11 @@
           pkgs.inotify-tools
         ];
 
+        packages = import ./nix/packages.nix { inherit pkgs; };
+
       in {
+        inherit packages;
+
         devShells.default = pkgs.mkShell {
           buildInputs = [
             # Elixir / Erlang
