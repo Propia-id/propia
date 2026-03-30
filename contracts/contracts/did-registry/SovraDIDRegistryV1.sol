@@ -75,6 +75,7 @@ contract SovraDIDRegistryV1 is ISovraDIDRegistry, Ownable2StepUpgradeable, UUPSU
         DIDRecord storage record = records[identity];
         if (record.created == 0) revert DIDNotFound();
         if (record.deactivated) revert DIDIsDeactivated();
+        if (methods.length == 0) revert NoVerificationMethods();
 
         _clearMethods(record);
         _clearServices(record);
