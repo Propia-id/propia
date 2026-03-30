@@ -65,6 +65,13 @@ contract SovraWalletV1 is ISovraWallet, ReentrancyGuardUpgradeable, EIP712Upgrad
     /// @inheritdoc ISovraWallet
     uint64 public constant RECOVERY_DELAY = 7 days;
 
+    // ─── Constructor ─────────────────────────────────────
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
     // ─── Internal Helpers ────────────────────────────────
 
     /// @dev Builds the final EIP-712 message hash that the passkey signs.
