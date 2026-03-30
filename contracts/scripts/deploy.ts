@@ -14,8 +14,12 @@ async function main() {
   console.log("SovraWalletV1 deployed to:", implAddr);
 
   // ─── Beacon ──────────────────────────────────────────
+  const councilAddr = process.env.SECURITY_COUNCIL_ADDRESS || deployer.address;
+  if (councilAddr === deployer.address) {
+    console.warn("⚠ WARNING: deployer is being used as security council. Set SECURITY_COUNCIL_ADDRESS for production deployments.");
+  }
   const SovraBeacon = await ethers.getContractFactory("SovraBeacon", deployer);
-  const beacon = await SovraBeacon.deploy(implAddr, deployer.address, deployer.address);
+  const beacon = await SovraBeacon.deploy(implAddr, deployer.address, councilAddr);
   await beacon.waitForDeployment();
   const beaconAddr = await beacon.getAddress();
   console.log("SovraBeacon deployed to:", beaconAddr);

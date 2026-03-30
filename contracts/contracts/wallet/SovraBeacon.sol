@@ -30,6 +30,9 @@ contract SovraBeacon is IBeacon, Ownable2Step {
     /// @notice Thrown when the security council address is the zero address.
     error InvalidSecurityCouncil();
 
+    /// @notice Thrown when a new upgrade is scheduled while one is already pending.
+    error UpgradeAlreadyPending();
+
     // ─── Events ──────────────────────────────────────────
 
     /// @notice Emitted when a timelocked upgrade is scheduled.
@@ -102,6 +105,7 @@ contract SovraBeacon is IBeacon, Ownable2Step {
     /// @notice Schedule an upgrade to a new implementation. Takes effect after UPGRADE_DELAY.
     /// @param newImplementation The proposed new implementation address
     function scheduleUpgrade(address newImplementation) external onlyOwner {
+        if (pendingImplementation != address(0)) revert UpgradeAlreadyPending();
         _validateImplementation(newImplementation);
 
         pendingImplementation = newImplementation;
@@ -149,6 +153,7 @@ contract SovraBeacon is IBeacon, Ownable2Step {
         if (pendingImplementation != address(0)) {
             delete pendingImplementation;
             delete activationTime;
+            emit UpgradeCancelled();
         }
 
         emit EmergencyUpgrade(newImplementation);

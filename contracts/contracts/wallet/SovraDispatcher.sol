@@ -13,6 +13,8 @@ pragma solidity 0.8.31;
 ///      contract controls per-account upgrades via its upgrade() function writing
 ///      to the ERC-1967 slot. The beacon controls the global default.
 contract SovraDispatcher {
+    /// @notice Thrown when the resolved implementation address is the zero address.
+    error NoImplementation();
     /// @dev ERC-1967 implementation storage slot:
     ///      bytes32(uint256(keccak256("eip1967.proxy.implementation")) - 1)
     bytes32 internal constant IMPL_SLOT =
@@ -40,6 +42,11 @@ contract SovraDispatcher {
                 let ok := staticcall(gas(), beacon, 0x00, 0x04, 0x00, 0x20)
                 if iszero(ok) { revert(0, 0) }
                 impl := mload(0x00)
+                // NoImplementation() selector: 0xc6745ca8
+                if iszero(impl) {
+                    mstore(0x00, 0xc6745ca800000000000000000000000000000000000000000000000000000000)
+                    revert(0x00, 0x04)
+                }
             }
             calldatacopy(0, 0, calldatasize())
             let result := delegatecall(gas(), impl, 0, calldatasize(), 0, 0)

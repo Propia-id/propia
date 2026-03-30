@@ -94,6 +94,7 @@ At L2 gas prices, the beacon lookup is negligible.
 | Beacon owner key compromised | Ownable2Step (2-tx transfer), owner should be multisig |
 | Council key compromised | Council can only upgrade to valid contracts (code check), owner can replace council |
 | User disagrees with upgrade | Pin via `upgrade()` — beacon cannot override ERC-1967 slot |
+| Beacon destroyed / bricked | `_beacon` is immutable in dispatcher — if beacon loses its code, all unpinned wallets are bricked. Mitigated: beacon has no `selfdestruct`, owner is multisig, post-Dencun `selfdestruct` no longer destroys code. Pinned wallets are unaffected. |
 
 ## Deployment
 
