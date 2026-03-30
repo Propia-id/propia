@@ -2,12 +2,13 @@
 pragma solidity 0.8.31;
 
 import {ISovraDIDRegistry} from "./ISovraDIDRegistry.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
-/// @title SovraDIDRegistry - On-chain DID document storage for issuers and verifiers
+/// @title SovraDIDRegistryV1 - UUPS-upgradeable on-chain DID document storage
 /// @notice Admin (owner) creates and manages DIDs on behalf of identity addresses.
-///         Anyone can resolve a DID. No upgradeability — deploy a new contract if needed.
-contract SovraDIDRegistry is ISovraDIDRegistry, Ownable {
+///         Anyone can resolve a DID.
+contract SovraDIDRegistryV1 is ISovraDIDRegistry, Ownable2StepUpgradeable, UUPSUpgradeable {
     // ─── Storage ────────────────────────────────────────
 
     struct DIDRecord {
@@ -23,7 +24,24 @@ contract SovraDIDRegistry is ISovraDIDRegistry, Ownable {
 
     // ─── Constructor ────────────────────────────────────
 
-    constructor(address _owner) Ownable(_owner) {}
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    // ─── Initialization ─────────────────────────────────
+
+    /// @notice Initialize the registry with an owner. Called once via proxy.
+    /// @param _owner The initial owner address
+    function initialize(address _owner) external initializer {
+        __Ownable_init(_owner);
+        __UUPSUpgradeable_init();
+    }
+
+    // ─── UUPS ───────────────────────────────────────────
+
+    /// @dev Restricts upgrades to the owner.
+    function _authorizeUpgrade(address) internal override onlyOwner {}
 
     // ─── Create ─────────────────────────────────────────
 

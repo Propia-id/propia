@@ -49,18 +49,25 @@ async function main() {
     throw new Error(`No code at SovraDispatcher address ${dispatcherAddr} — deployment failed`);
   }
 
-  // ─── DID Registry ──────────────────────────────────
-  const SovraDIDRegistry = await ethers.getContractFactory("SovraDIDRegistry", deployer);
-  const didRegistry = await SovraDIDRegistry.deploy(deployer.address);
-  const didRegistryTx = didRegistry.deploymentTransaction()!;
-  console.log("SovraDIDRegistry deploy tx:", didRegistryTx.hash);
-  await didRegistry.waitForDeployment();
-  const didRegistryAddr = await didRegistry.getAddress();
-  console.log("SovraDIDRegistry deployed to:", didRegistryAddr);
+  // ─── Proxy factory (shared by UUPS deployments) ────
+  const ERC1967Proxy = await ethers.getContractFactory("ERC1967Proxy", deployer);
+
+  // ─── DID Registry (UUPS proxy) ─────────────────────
+  const SovraDIDRegistryV1 = await ethers.getContractFactory("SovraDIDRegistryV1", deployer);
+  const didRegistryImpl = await SovraDIDRegistryV1.deploy();
+  await didRegistryImpl.waitForDeployment();
+  const didRegistryImplAddr = await didRegistryImpl.getAddress();
+  console.log("SovraDIDRegistryV1 impl deployed to:", didRegistryImplAddr);
+
+  const didInitData = SovraDIDRegistryV1.interface.encodeFunctionData("initialize", [deployer.address]);
+  const didRegistryProxy = await ERC1967Proxy.deploy(didRegistryImplAddr, didInitData);
+  await didRegistryProxy.waitForDeployment();
+  const didRegistryAddr = await didRegistryProxy.getAddress();
+  console.log("SovraDIDRegistryV1 proxy deployed to:", didRegistryAddr);
 
   const didRegistryCode = await ethers.provider.getCode(didRegistryAddr);
   if (didRegistryCode === "0x") {
-    throw new Error(`No code at SovraDIDRegistry address ${didRegistryAddr} — deployment failed`);
+    throw new Error(`No code at SovraDIDRegistryV1 proxy address ${didRegistryAddr} — deployment failed`);
   }
 
   // ─── Issuer Registry (UUPS proxy) ─────────────────
@@ -70,7 +77,6 @@ async function main() {
   const issuerRegistryImplAddr = await issuerRegistryImpl.getAddress();
   console.log("SovraIssuerRegistryV1 impl deployed to:", issuerRegistryImplAddr);
 
-  const ERC1967Proxy = await ethers.getContractFactory("ERC1967Proxy", deployer);
   const initData = SovraIssuerRegistryV1.interface.encodeFunctionData("initialize", [deployer.address]);
   const issuerRegistryProxy = await ERC1967Proxy.deploy(issuerRegistryImplAddr, initData);
   await issuerRegistryProxy.waitForDeployment();
@@ -87,7 +93,7 @@ async function main() {
   console.log("SovraWalletV1:          ", implAddr);
   console.log("SovraBeacon:            ", beaconAddr);
   console.log("SovraDispatcher:        ", dispatcherAddr);
-  console.log("SovraDIDRegistry:       ", didRegistryAddr);
+  console.log("SovraDIDRegistryV1:     ", didRegistryAddr);
   console.log("SovraIssuerRegistryV1:  ", issuerRegistryAddr);
 }
 
