@@ -80,6 +80,14 @@ export async function etchP256Verifier() {
   ]);
 }
 
+export async function deployBeacon(implAddress: string) {
+  const [deployer] = await ethers.getSigners();
+  const SovraBeacon = await ethers.getContractFactory("SovraBeacon");
+  const beacon = await SovraBeacon.deploy(implAddress, deployer.address, deployer.address);
+  await beacon.waitForDeployment();
+  return beacon;
+}
+
 export async function deployWallet() {
   await etchP256Verifier();
 
@@ -87,18 +95,20 @@ export async function deployWallet() {
   const implementation = await SovraWalletV1.deploy();
   await implementation.waitForDeployment();
 
+  const beacon = await deployBeacon(await implementation.getAddress());
+
   const SovraDispatcher = await ethers.getContractFactory("SovraDispatcher");
-  const dispatcher = await SovraDispatcher.deploy(await implementation.getAddress());
+  const dispatcher = await SovraDispatcher.deploy(await beacon.getAddress());
   await dispatcher.waitForDeployment();
 
   // Get wallet interface through dispatcher
   const wallet = SovraWalletV1.attach(await dispatcher.getAddress()) as typeof implementation;
 
-  return { wallet, dispatcher, implementation };
+  return { wallet, dispatcher, implementation, beacon };
 }
 
 export async function deployAndInitialize() {
-  const { wallet, dispatcher, implementation } = await deployWallet();
+  const { wallet, dispatcher, implementation, beacon } = await deployWallet();
 
   const passkey = generateP256KeyPair();
   const recoveryKey = generateP256KeyPair();
@@ -127,6 +137,7 @@ export async function deployAndInitialize() {
     wallet,
     dispatcher,
     implementation,
+    beacon,
     passkey,
     recoveryKey,
     domainSep,
