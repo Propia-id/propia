@@ -94,6 +94,7 @@ At L2 gas prices, the beacon lookup is negligible.
 | Beacon owner key compromised | Ownable2Step (2-tx transfer), owner should be multisig |
 | Council key compromised | Council can only upgrade to valid contracts (code check), owner can replace council |
 | User disagrees with upgrade | Pin via `upgrade()` — beacon cannot override ERC-1967 slot |
+| Beacon destroyed / bricked | `_beacon` is immutable in dispatcher — if beacon loses its code, all unpinned wallets are bricked. Mitigated: beacon has no `selfdestruct`, owner is multisig, post-Dencun `selfdestruct` no longer destroys code. Pinned wallets are unaffected. |
 
 ## Deployment
 
@@ -102,6 +103,12 @@ The deploy script (`scripts/deploy.ts`) deploys in order:
 1. `SovraWalletV1` — implementation
 2. `SovraBeacon` — with implementation address, owner, and security council
 3. `SovraDispatcher` — with beacon address
-4. DID and Issuer registries (unchanged)
+4. `SovraDIDRegistryV1` — implementation + ERC1967Proxy (UUPS)
+5. `SovraIssuerRegistryV1` — implementation + ERC1967Proxy (UUPS)
 
-After deployment, transfer beacon ownership to a multisig and set the security council to the appropriate address via `setSecurityCouncil()`.
+Both registries use UUPS upgradeability with `AccessControlUpgradeable`. The initial deployer receives all roles (`DEFAULT_ADMIN_ROLE`, manager role, `UPGRADER_ROLE`).
+
+After deployment:
+- Transfer beacon ownership to a multisig and set the security council via `setSecurityCouncil()`
+- On the issuer registry, grant `ISSUER_MANAGER_ROLE` and `UPGRADER_ROLE` to the appropriate addresses, then revoke them from the deployer if it should not retain them
+- On the DID registry, grant `DID_MANAGER_ROLE` and `UPGRADER_ROLE` to the appropriate addresses (e.g., the backend service key), then revoke them from the deployer if it should not retain them

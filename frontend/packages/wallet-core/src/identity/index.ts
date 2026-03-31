@@ -85,6 +85,7 @@ export class IdentityManager {
     // (steps renumbered: EOA generated first so address is available for onboard)
     const initHash = buildInitHash(
       eoaAddress,
+      this.config.chainId,
       passkeyXY.x,
       passkeyXY.y,
       recoveryPublicKey.x,

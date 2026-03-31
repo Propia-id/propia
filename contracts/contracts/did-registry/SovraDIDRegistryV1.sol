@@ -2,12 +2,22 @@
 pragma solidity 0.8.31;
 
 import {ISovraDIDRegistry} from "./ISovraDIDRegistry.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
-/// @title SovraDIDRegistry - On-chain DID document storage for issuers and verifiers
-/// @notice Admin (owner) creates and manages DIDs on behalf of identity addresses.
-///         Anyone can resolve a DID. No upgradeability — deploy a new contract if needed.
-contract SovraDIDRegistry is ISovraDIDRegistry, Ownable {
+/// @title SovraDIDRegistryV1 - UUPS-upgradeable on-chain DID document storage
+/// @notice DID_MANAGER_ROLE creates and manages DIDs on behalf of identity addresses;
+///         UPGRADER_ROLE manages upgrades; DEFAULT_ADMIN_ROLE grants and revokes roles.
+///         Anyone can resolve a DID.
+contract SovraDIDRegistryV1 is ISovraDIDRegistry, AccessControlUpgradeable, UUPSUpgradeable {
+    // ─── Roles ─────────────────────────────────────────
+
+    /// @notice Role that can create, update, and deactivate DIDs.
+    bytes32 public constant DID_MANAGER_ROLE = keccak256("DID_MANAGER_ROLE");
+
+    /// @notice Role that can perform UUPS upgrades.
+    bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
+
     // ─── Storage ────────────────────────────────────────
 
     struct DIDRecord {
@@ -23,7 +33,27 @@ contract SovraDIDRegistry is ISovraDIDRegistry, Ownable {
 
     // ─── Constructor ────────────────────────────────────
 
-    constructor(address _owner) Ownable(_owner) {}
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    // ─── Initialization ─────────────────────────────────
+
+    /// @notice Initialize the registry with an admin. Called once via proxy.
+    /// @param admin The initial admin address (receives all roles)
+    function initialize(address admin) external initializer {
+        __AccessControl_init();
+        __UUPSUpgradeable_init();
+        _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        _grantRole(DID_MANAGER_ROLE, admin);
+        _grantRole(UPGRADER_ROLE, admin);
+    }
+
+    // ─── UUPS ───────────────────────────────────────────
+
+    /// @dev Restricts upgrades to accounts with UPGRADER_ROLE.
+    function _authorizeUpgrade(address) internal override onlyRole(UPGRADER_ROLE) {}
 
     // ─── Create ─────────────────────────────────────────
 
@@ -32,7 +62,7 @@ contract SovraDIDRegistry is ISovraDIDRegistry, Ownable {
         address identity,
         VerificationMethod[] calldata methods,
         ServiceEndpoint[] calldata services
-    ) external onlyOwner {
+    ) external onlyRole(DID_MANAGER_ROLE) {
         if (records[identity].created != 0) revert DIDAlreadyExists();
         if (methods.length == 0) revert NoVerificationMethods();
 
@@ -53,10 +83,11 @@ contract SovraDIDRegistry is ISovraDIDRegistry, Ownable {
         address identity,
         VerificationMethod[] calldata methods,
         ServiceEndpoint[] calldata services
-    ) external onlyOwner {
+    ) external onlyRole(DID_MANAGER_ROLE) {
         DIDRecord storage record = records[identity];
         if (record.created == 0) revert DIDNotFound();
         if (record.deactivated) revert DIDIsDeactivated();
+        if (methods.length == 0) revert NoVerificationMethods();
 
         _clearMethods(record);
         _clearServices(record);
@@ -71,7 +102,7 @@ contract SovraDIDRegistry is ISovraDIDRegistry, Ownable {
     // ─── Deactivate ─────────────────────────────────────
 
     /// @inheritdoc ISovraDIDRegistry
-    function deactivate(address identity) external onlyOwner {
+    function deactivate(address identity) external onlyRole(DID_MANAGER_ROLE) {
         DIDRecord storage record = records[identity];
         if (record.created == 0) revert DIDNotFound();
         if (record.deactivated) revert DIDIsDeactivated();

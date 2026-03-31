@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import { ethers } from "hardhat";
+import { ethers, upgrades } from "hardhat";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 import { SovraIssuerRegistryV1, SovraIssuerRegistryV2Mock } from "../../typechain-types";
 
@@ -11,51 +11,50 @@ const NATIONAL_ID = ethers.keccak256(
 );
 const DIPLOMA = ethers.keccak256(ethers.toUtf8Bytes("DiplomaCredential"));
 
-async function deployRegistry(owner: HardhatEthersSigner) {
-  const ImplFactory = await ethers.getContractFactory(
-    "SovraIssuerRegistryV1"
-  );
-  const impl = await ImplFactory.deploy();
+const DEFAULT_ADMIN_ROLE = ethers.ZeroHash;
+const ISSUER_MANAGER_ROLE = ethers.keccak256(
+  ethers.toUtf8Bytes("ISSUER_MANAGER_ROLE")
+);
+const UPGRADER_ROLE = ethers.keccak256(
+  ethers.toUtf8Bytes("UPGRADER_ROLE")
+);
 
-  const ProxyFactory = await ethers.getContractFactory("ERC1967Proxy");
-  const proxy = await ProxyFactory.deploy(
-    await impl.getAddress(),
-    impl.interface.encodeFunctionData("initialize", [owner.address])
-  );
-
-  const registry = ImplFactory.attach(
-    await proxy.getAddress()
-  ) as SovraIssuerRegistryV1;
-
-  return { registry, impl, proxy };
+async function deployRegistry(admin: HardhatEthersSigner) {
+  const Factory = await ethers.getContractFactory("SovraIssuerRegistryV1");
+  const registry = await upgrades.deployProxy(Factory, [admin.address], {
+    kind: "uups",
+  }) as unknown as SovraIssuerRegistryV1;
+  await registry.waitForDeployment();
+  return { registry };
 }
 
 describe("SovraIssuerRegistryV1", function () {
-  let owner: HardhatEthersSigner;
+  let admin: HardhatEthersSigner;
+  let manager: HardhatEthersSigner;
   let other: HardhatEthersSigner;
   let issuer1: HardhatEthersSigner;
   let issuer2: HardhatEthersSigner;
   let registry: SovraIssuerRegistryV1;
 
   beforeEach(async function () {
-    [owner, other, issuer1, issuer2] = await ethers.getSigners();
-    ({ registry } = await deployRegistry(owner));
+    [admin, manager, other, issuer1, issuer2] = await ethers.getSigners();
+    ({ registry } = await deployRegistry(admin));
   });
 
   // ─── Initialization ─────────────────────────────────
 
   describe("initialize", function () {
-    it("sets the owner", async function () {
-      expect(await registry.owner()).to.equal(owner.address);
+    it("grants all roles to admin", async function () {
+      expect(await registry.hasRole(DEFAULT_ADMIN_ROLE, admin.address)).to.be.true;
+      expect(await registry.hasRole(ISSUER_MANAGER_ROLE, admin.address)).to.be.true;
+      expect(await registry.hasRole(UPGRADER_ROLE, admin.address)).to.be.true;
     });
 
-    it("emits OwnershipTransferred on init", async function () {
+    it("emits RoleGranted events on init", async function () {
       const { registry: fresh } = await deployRegistry(other);
-      const filter = fresh.filters.OwnershipTransferred;
+      const filter = fresh.filters.RoleGranted;
       const events = await fresh.queryFilter(filter);
-      expect(events.length).to.equal(1);
-      expect(events[0].args.previousOwner).to.equal(ethers.ZeroAddress);
-      expect(events[0].args.newOwner).to.equal(other.address);
+      expect(events.length).to.equal(3);
     });
 
     it("reverts on double initialization", async function () {
@@ -230,112 +229,36 @@ describe("SovraIssuerRegistryV1", function () {
   // ─── Access Control ─────────────────────────────────
 
   describe("access control", function () {
-    it("non-owner cannot registerIssuer", async function () {
+    it("account without ISSUER_MANAGER_ROLE cannot registerIssuer", async function () {
       await expect(
         registry.connect(other).registerIssuer(issuer1.address, [])
-      ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount");
+      ).to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
     });
 
-    it("non-owner cannot addCredentialTypes", async function () {
+    it("account without ISSUER_MANAGER_ROLE cannot addCredentialTypes", async function () {
       await registry.registerIssuer(issuer1.address, []);
       await expect(
         registry.connect(other).addCredentialTypes(issuer1.address, [DIPLOMA])
-      ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount");
+      ).to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
     });
 
-    it("non-owner cannot removeCredentialTypes", async function () {
+    it("account without ISSUER_MANAGER_ROLE cannot removeCredentialTypes", async function () {
       await registry.registerIssuer(issuer1.address, [DRIVING_LICENCE]);
       await expect(
         registry
           .connect(other)
           .removeCredentialTypes(issuer1.address, [DRIVING_LICENCE])
-      ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount");
+      ).to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
     });
 
-    it("non-owner cannot removeIssuer", async function () {
+    it("account without ISSUER_MANAGER_ROLE cannot removeIssuer", async function () {
       await registry.registerIssuer(issuer1.address, []);
       await expect(
         registry.connect(other).removeIssuer(issuer1.address)
-      ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount");
+      ).to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
     });
 
-    it("non-owner cannot transferOwnership", async function () {
-      await expect(
-        registry.connect(other).transferOwnership(other.address)
-      ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount");
-    });
-  });
-
-  // ─── Ownership ──────────────────────────────────────
-
-  describe("transferOwnership (2-step)", function () {
-    it("sets pending owner but does not transfer immediately", async function () {
-      await registry.transferOwnership(other.address);
-      expect(await registry.owner()).to.equal(owner.address);
-      expect(await registry.pendingOwner()).to.equal(other.address);
-    });
-
-    it("completes transfer when new owner accepts", async function () {
-      await registry.transferOwnership(other.address);
-      await expect(registry.connect(other).acceptOwnership())
-        .to.emit(registry, "OwnershipTransferred")
-        .withArgs(owner.address, other.address);
-
-      expect(await registry.owner()).to.equal(other.address);
-      expect(await registry.pendingOwner()).to.equal(ethers.ZeroAddress);
-
-      // New owner can operate
-      await registry
-        .connect(other)
-        .registerIssuer(issuer1.address, [DRIVING_LICENCE]);
-      expect(await registry.isRegistered(issuer1.address)).to.be.true;
-
-      // Old owner cannot
-      await expect(
-        registry.registerIssuer(issuer2.address, [])
-      ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount");
-    });
-
-    it("only pending owner can accept", async function () {
-      await registry.transferOwnership(other.address);
-      await expect(
-        registry.connect(issuer1).acceptOwnership()
-      ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount");
-    });
-  });
-
-  // ─── UUPS Upgrade ──────────────────────────────────
-
-  describe("UUPS upgrade", function () {
-    it("owner can upgrade and state is preserved", async function () {
-      // Register issuer before upgrade
-      await registry.registerIssuer(issuer1.address, [DRIVING_LICENCE]);
-
-      // Deploy V2
-      const V2Factory = await ethers.getContractFactory(
-        "SovraIssuerRegistryV2Mock"
-      );
-      const v2Impl = await V2Factory.deploy();
-
-      // Upgrade
-      await registry.upgradeToAndCall(await v2Impl.getAddress(), "0x");
-
-      // Attach V2 ABI
-      const registryV2 = V2Factory.attach(
-        await registry.getAddress()
-      ) as SovraIssuerRegistryV2Mock;
-
-      // State preserved
-      expect(await registryV2.isRegistered(issuer1.address)).to.be.true;
-      expect(await registryV2.isTrusted(issuer1.address, DRIVING_LICENCE)).to
-        .be.true;
-      expect(await registryV2.owner()).to.equal(owner.address);
-
-      // New functionality works
-      expect(await registryV2.version()).to.equal(2n);
-    });
-
-    it("non-owner cannot upgrade", async function () {
+    it("account without UPGRADER_ROLE cannot upgrade", async function () {
       const V2Factory = await ethers.getContractFactory(
         "SovraIssuerRegistryV2Mock"
       );
@@ -345,7 +268,90 @@ describe("SovraIssuerRegistryV1", function () {
         registry
           .connect(other)
           .upgradeToAndCall(await v2Impl.getAddress(), "0x")
-      ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount");
+      ).to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+    });
+  });
+
+  // ─── Role Management ───────────────────────────────
+
+  describe("role management", function () {
+    it("admin can grant ISSUER_MANAGER_ROLE to another account", async function () {
+      await registry.grantRole(ISSUER_MANAGER_ROLE, manager.address);
+      expect(await registry.hasRole(ISSUER_MANAGER_ROLE, manager.address)).to.be.true;
+
+      // New manager can operate
+      await registry
+        .connect(manager)
+        .registerIssuer(issuer1.address, [DRIVING_LICENCE]);
+      expect(await registry.isRegistered(issuer1.address)).to.be.true;
+    });
+
+    it("admin can revoke ISSUER_MANAGER_ROLE", async function () {
+      await registry.grantRole(ISSUER_MANAGER_ROLE, manager.address);
+      await registry.revokeRole(ISSUER_MANAGER_ROLE, manager.address);
+
+      await expect(
+        registry.connect(manager).registerIssuer(issuer1.address, [])
+      ).to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+    });
+
+    it("non-admin cannot grant roles", async function () {
+      await expect(
+        registry.connect(other).grantRole(ISSUER_MANAGER_ROLE, other.address)
+      ).to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+    });
+
+    it("account can renounce its own role", async function () {
+      await registry.grantRole(ISSUER_MANAGER_ROLE, manager.address);
+      await registry.connect(manager).renounceRole(ISSUER_MANAGER_ROLE, manager.address);
+      expect(await registry.hasRole(ISSUER_MANAGER_ROLE, manager.address)).to.be.false;
+    });
+
+    it("UPGRADER_ROLE is separate from ISSUER_MANAGER_ROLE", async function () {
+      // Grant only ISSUER_MANAGER_ROLE
+      await registry.grantRole(ISSUER_MANAGER_ROLE, manager.address);
+
+      // Manager can manage issuers
+      await registry.connect(manager).registerIssuer(issuer1.address, [DRIVING_LICENCE]);
+
+      // But cannot upgrade
+      const V2Factory = await ethers.getContractFactory(
+        "SovraIssuerRegistryV2Mock"
+      );
+      const v2Impl = await V2Factory.deploy();
+
+      await expect(
+        registry
+          .connect(manager)
+          .upgradeToAndCall(await v2Impl.getAddress(), "0x")
+      ).to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+    });
+  });
+
+  // ─── UUPS Upgrade ──────────────────────────────────
+
+  describe("UUPS upgrade", function () {
+    it("upgrader can upgrade and state is preserved", async function () {
+      // Register issuer before upgrade
+      await registry.registerIssuer(issuer1.address, [DRIVING_LICENCE]);
+
+      // Upgrade via plugin (validates storage layout compatibility)
+      const V2Factory = await ethers.getContractFactory(
+        "SovraIssuerRegistryV2Mock"
+      );
+      const registryV2 = await upgrades.upgradeProxy(
+        await registry.getAddress(),
+        V2Factory
+      ) as unknown as SovraIssuerRegistryV2Mock;
+
+      // State preserved
+      expect(await registryV2.isRegistered(issuer1.address)).to.be.true;
+      expect(await registryV2.isTrusted(issuer1.address, DRIVING_LICENCE)).to
+        .be.true;
+      expect(await registryV2.hasRole(DEFAULT_ADMIN_ROLE, admin.address)).to.be.true;
+
+      // New functionality works
+      expect(await registryV2.version()).to.equal(2n);
     });
   });
 });

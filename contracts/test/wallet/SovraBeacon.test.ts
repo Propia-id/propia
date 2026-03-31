@@ -110,6 +110,37 @@ describe("SovraBeacon", function () {
         beacon.connect(owner).scheduleUpgrade(other.address)
       ).to.be.revertedWithCustomError(beacon, "NotAContract");
     });
+
+    it("reverts when an upgrade is already pending", async function () {
+      const { beacon, impl2Addr, owner } = await deployBeaconFixture();
+
+      await beacon.connect(owner).scheduleUpgrade(impl2Addr);
+
+      const SovraWalletV1 = await ethers.getContractFactory("SovraWalletV1");
+      const impl3 = await SovraWalletV1.deploy();
+      await impl3.waitForDeployment();
+
+      await expect(
+        beacon.connect(owner).scheduleUpgrade(await impl3.getAddress())
+      ).to.be.revertedWithCustomError(beacon, "UpgradeAlreadyPending");
+    });
+
+    it("allows scheduling after cancelling a pending upgrade", async function () {
+      const { beacon, impl2Addr, owner } = await deployBeaconFixture();
+
+      await beacon.connect(owner).scheduleUpgrade(impl2Addr);
+      await beacon.connect(owner).cancelUpgrade();
+
+      const SovraWalletV1 = await ethers.getContractFactory("SovraWalletV1");
+      const impl3 = await SovraWalletV1.deploy();
+      await impl3.waitForDeployment();
+      const impl3Addr = await impl3.getAddress();
+
+      await expect(beacon.connect(owner).scheduleUpgrade(impl3Addr))
+        .to.emit(beacon, "UpgradeScheduled");
+
+      expect(await beacon.pendingImplementation()).to.equal(impl3Addr);
+    });
   });
 
   describe("executeUpgrade", function () {
@@ -245,6 +276,29 @@ describe("SovraBeacon", function () {
       expect(await beacon.implementation()).to.equal(impl3Addr);
       expect(await beacon.pendingImplementation()).to.equal(ethers.ZeroAddress);
       expect(await beacon.activationTime()).to.equal(0);
+    });
+
+    it("emits UpgradeCancelled when clearing a pending upgrade", async function () {
+      const { beacon, impl2Addr, owner, council } = await deployBeaconFixture();
+
+      await beacon.connect(owner).scheduleUpgrade(impl2Addr);
+
+      const SovraWalletV1 = await ethers.getContractFactory("SovraWalletV1");
+      const impl3 = await SovraWalletV1.deploy();
+      await impl3.waitForDeployment();
+      const impl3Addr = await impl3.getAddress();
+
+      await expect(beacon.connect(council).emergencyUpgrade(impl3Addr))
+        .to.emit(beacon, "UpgradeCancelled")
+        .and.to.emit(beacon, "EmergencyUpgrade")
+        .withArgs(impl3Addr);
+    });
+
+    it("does not emit UpgradeCancelled when no pending upgrade", async function () {
+      const { beacon, impl2Addr, council } = await deployBeaconFixture();
+
+      await expect(beacon.connect(council).emergencyUpgrade(impl2Addr))
+        .to.not.emit(beacon, "UpgradeCancelled");
     });
 
     it("reverts for non-council caller", async function () {
