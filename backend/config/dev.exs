@@ -2,10 +2,9 @@ import Config
 
 # Configure your database
 config :sovra, Sovra.Repo,
-  username: "postgres",
-  password: "postgres",
-  hostname: "localhost",
-  database: "sovra_dev",
+  username: System.get_env("PGUSER", System.get_env("USER")),
+  database: System.get_env("PGDATABASE", "sovra_dev"),
+  socket_dir: System.get_env("PGHOST", "/tmp"),
   stacktrace: true,
   show_sensitive_data_on_connection_error: true,
   pool_size: 10

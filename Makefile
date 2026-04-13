@@ -1,9 +1,32 @@
 NIX := nix develop --command bash -c
 
+# ── Services ─────────────────────────────────────────────────────────
+
+.PHONY: services.start services.stop services.status pg.start pg.stop pg.status redis.start redis.stop
+
+services.start: pg.start redis.start
+
+services.stop: pg.stop redis.stop
+
+services.status: pg.status
+
+pg.start:
+	$(NIX) "mkdir -p .pg-socket && pg_ctl status -D .pg-data >/dev/null 2>&1 || pg_ctl start -D .pg-data -l .pg-data/postgres.log -o \"-k $$PWD/.pg-socket -c listen_addresses=\""
+
+pg.stop:
+	$(NIX) "pg_ctl stop -D .pg-data 2>/dev/null || true"
+
+pg.status:
+	$(NIX) "pg_ctl status -D .pg-data || true"
+
+redis.start:
+	$(NIX) "redis-server --daemonize yes --dir $$PWD --dbfilename .redis-dump.rdb --logfile .redis.log"
+
+redis.stop:
+	$(NIX) "redis-cli shutdown nosave 2>/dev/null || true"
+
 # ── Top-level ────────────────────────────────────────────────────────
-# NOTE: `make setup` requires:
-#   - PostgreSQL running on port 5432
-#   - Ethereum local node (e.g. hardhat node) running on port 8545
+# NOTE: `make setup` requires services running (`make services.start`)
 
 .PHONY: setup format lint build check test
 

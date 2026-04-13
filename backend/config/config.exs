@@ -8,6 +8,7 @@
 import Config
 
 config :sovra,
+  env: config_env(),
   ecto_repos: [Sovra.Repo],
   generators: [timestamp_type: :utc_datetime],
   key_store: Sovra.Crypto.VaultKeyStore,

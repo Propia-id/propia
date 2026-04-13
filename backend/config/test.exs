@@ -6,10 +6,9 @@ import Config
 # to provide built-in test partitioning in CI environment.
 # Run `mix help test` for more information.
 config :sovra, Sovra.Repo,
-  username: "postgres",
-  password: "postgres",
-  hostname: "localhost",
+  username: System.get_env("PGUSER", System.get_env("USER")),
   database: "sovra_test#{System.get_env("MIX_TEST_PARTITION")}",
+  socket_dir: System.get_env("PGHOST", "/tmp"),
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: System.schedulers_online() * 2
 

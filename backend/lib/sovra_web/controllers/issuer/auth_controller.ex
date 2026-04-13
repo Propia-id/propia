@@ -7,7 +7,7 @@ defmodule SovraWeb.Issuer.AuthController do
   @cookie_name "issuer_session"
   @cookie_opts [
     http_only: true,
-    secure: true,
+    secure: Application.compile_env(:sovra, :env) == :prod,
     same_site: "Strict",
     path: "/api/v1/issuer",
     max_age: 3600

@@ -52,11 +52,27 @@
           ] ++ linuxOnlyPackages;
 
           shellHook = ''
-            # Postgres — match backend/config/dev.exs
-            export PGUSER="''${PGUSER:-postgres}"
-            export PGPASSWORD="''${PGPASSWORD:-postgres}"
+            # Postgres — local instance via Unix socket (no TCP)
+            export PGDATA="$PWD/.pg-data"
+            export PGHOST="$PWD/.pg-socket"
+            export PGUSER="''${USER}"
             export PGDATABASE="''${PGDATABASE:-sovra_dev}"
-            export PGHOST="''${PGHOST:-localhost}"
+
+            # Initialise cluster on first entry
+            if [ ! -d "$PGDATA" ]; then
+              echo "Initialising PostgreSQL data directory…"
+              initdb --no-locale --encoding=UTF8 -U "$PGUSER" >/dev/null
+            fi
+
+            # Ensure socket directory exists
+            mkdir -p "$PGHOST"
+
+            # Start Postgres if not already running
+            if ! pg_isready -q 2>/dev/null; then
+              pg_ctl start -l "$PGDATA/postgres.log" \
+                -o "-k $PGHOST -c listen_addresses=" \
+                >/dev/null
+            fi
 
             # Elixir/Mix config
             export MIX_HOME="''${MIX_HOME:-$PWD/.nix-mix}"
@@ -64,6 +80,7 @@
             export ERL_AFLAGS="''${ERL_AFLAGS:--kernel shell_history enabled}"
 
             echo "Sovra dev environment"
+            echo "  Postgres: socket at $PGHOST (user: $PGUSER)"
             echo ""
             echo "Quick start:"
             echo "  make backend    # Phoenix server on :4000"
