@@ -22,6 +22,19 @@ end
 
 config :sovra, SovraWeb.Endpoint, http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+# Issuer base URL — set by NixOS module in production, env var in dev
+if base_url = System.get_env("ISSUER_BASE_URL") do
+  config :sovra, :issuer, base_url: base_url
+end
+
+# Vault/OpenBao config — available in all environments when VAULT_ADDR is set
+if System.get_env("VAULT_ADDR") do
+  config :sovra, :vault,
+    url: System.fetch_env!("VAULT_ADDR"),
+    token: System.fetch_env!("VAULT_TOKEN"),
+    transit_mount: System.get_env("VAULT_TRANSIT_MOUNT", "transit")
+end
+
 # Ethereum config — available in all environments at runtime
 if System.get_env("ADMIN_PRIVATE_KEY") do
   config :sovra, :ethereum,

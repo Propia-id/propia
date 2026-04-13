@@ -85,6 +85,7 @@ defmodule SovraWeb.Router do
   scope "/api/v1/issuer/admin", SovraWeb.Issuer do
     pipe_through [:api, :issuer_session, :require_admin]
 
+    get "/issuers", AdminController, :list_issuers
     post "/issuers", AdminController, :create_issuer_account
   end
 

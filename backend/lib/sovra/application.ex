@@ -38,10 +38,19 @@ defmodule Sovra.Application do
   defp maybe_add_key_store(children) do
     case Application.get_env(:sovra, :key_store) do
       Sovra.Crypto.SoftwareKeyStore ->
-        Logger.info("Starting SoftwareKeyStore (dev/test only — use HSM/KMS in production)")
+        Logger.info("Starting SoftwareKeyStore (dev/test only)")
         children ++ [Sovra.Crypto.SoftwareKeyStore]
 
-      _ ->
+      Sovra.Crypto.DatabaseKeyStore ->
+        Logger.info("Using DatabaseKeyStore (PostgreSQL)")
+        children
+
+      Sovra.Crypto.VaultKeyStore ->
+        Logger.info("Using VaultKeyStore (OpenBao Transit)")
+        children
+
+      other ->
+        Logger.info("Using key store: #{inspect(other)}")
         children
     end
   end

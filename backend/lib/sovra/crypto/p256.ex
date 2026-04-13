@@ -24,11 +24,18 @@ defmodule Sovra.Crypto.P256 do
   """
   def sign(<<hash::binary-size(32)>>, private_key) when is_binary(private_key) do
     der = :crypto.sign(:ecdsa, :sha256, {:digest, hash}, [private_key, @curve])
-    %{r: r, s: s} = der_to_rs(der)
-    {:ok, %{r: r, s: normalize_s(s)}}
+    parse_der_signature(der)
   end
 
   def sign(_hash, _private_key), do: {:error, :invalid_hash_size}
+
+  @doc """
+  Parses a DER-encoded ECDSA signature into normalized {r, s} components.
+  """
+  def parse_der_signature(der) when is_binary(der) do
+    %{r: r, s: s} = der_to_rs(der)
+    {:ok, %{r: r, s: normalize_s(s)}}
+  end
 
   @doc """
   Verifies a P-256 signature against a 32-byte hash and public key coordinates.

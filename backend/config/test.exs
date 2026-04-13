@@ -22,6 +22,7 @@ config :sovra, SovraWeb.Endpoint,
 
 # Co-signing server test config
 config :sovra,
+  key_store: Sovra.Crypto.SoftwareKeyStore,
   auth_provider: Sovra.Auth.MockAuthProvider,
   session_secret: "test-secret-must-be-at-least-32-bytes-long-for-hmac!",
   google_client_id: "test-client-id",

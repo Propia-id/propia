@@ -11,7 +11,5 @@ defmodule Sovra.Crypto.KeyStore do
   @callback sign(key_id :: String.t(), hash :: binary()) ::
               {:ok, %{r: binary(), s: binary()}} | {:error, term()}
 
-  @callback store_key(key_id :: String.t(), private_key :: binary()) :: :ok | {:error, term()}
-
   @callback delete_key(key_id :: String.t()) :: :ok | {:error, term()}
 end

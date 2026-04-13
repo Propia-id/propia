@@ -7,6 +7,7 @@
 #   2. Tailscale enabled for SSH access from CI
 #   3. An `admin` user with sudo access (created by nixos-infect)
 #   4. Env file at /etc/sovra/env with all required secrets
+#   5. OpenBao initialized and unsealed (see docs/deployment.md § "Initialize OpenBao")
 #
 # Required GitHub Secrets:
 #   - TS_OAUTH_CLIENT_ID / TS_OAUTH_SECRET — Tailscale OAuth client credentials

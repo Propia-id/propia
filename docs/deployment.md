@@ -131,7 +131,44 @@ Add to `/etc/nixos/configuration.nix`:
 
 See [`nix/server-example.nix`](../nix/server-example.nix) for a complete reference.
 
-### 4. Create the env file and apply
+### 4. Initialize OpenBao
+
+After the first `nixos-rebuild switch`, OpenBao is running but needs one-time initialization:
+
+```bash
+export BAO_ADDR=http://127.0.0.1:8200
+
+# Initialize (save the unseal key and root token securely!)
+bao operator init -key-shares=1 -key-threshold=1
+
+# Unseal
+bao operator unseal <unseal-key>
+
+# Enable Transit engine
+bao secrets enable transit
+
+# Create a scoped policy for Sovra
+bao policy write sovra-transit - <<EOF
+path "transit/keys/*" {
+  capabilities = ["create", "read", "update", "delete", "list"]
+}
+path "transit/sign/*" {
+  capabilities = ["create", "update"]
+}
+EOF
+
+# Create an app token (renews automatically for 32 days)
+bao token create -policy=sovra-transit -period=768h
+# Save the token — it goes in /etc/sovra/env as VAULT_TOKEN
+```
+
+> **After every server restart**, OpenBao must be manually unsealed:
+> ```bash
+> export BAO_ADDR=http://127.0.0.1:8200
+> bao operator unseal <unseal-key>
+> ```
+
+### 5. Create the env file
 
 Create `/etc/sovra/env` with all required secrets:
 
@@ -144,6 +181,7 @@ GUARDIAN_SESSION_SECRET=$(openssl rand -base64 64 | tr -d '\n')
 GOOGLE_CLIENT_ID=your-google-client-id
 GOOGLE_CLIENT_SECRET=your-google-client-secret
 GOOGLE_REDIRECT_URI=https://yourdomain.com/api/v1/holder/auth/callback
+VAULT_TOKEN=<token from OpenBao init>
 EOF
 sudo chmod 600 /etc/sovra/env
 sudo chown sovra:sovra /etc/sovra/env
@@ -171,7 +209,7 @@ nixos-rebuild switch --flake /etc/nixos#sovra-server
 
 This sets up PostgreSQL, Redis, Nginx (with Let's Encrypt TLS), the systemd service, and firewall rules.
 
-### 5. Connect Tailscale
+### 6. Connect Tailscale
 
 ```bash
 tailscale up
@@ -220,6 +258,7 @@ Required:
 | `GOOGLE_CLIENT_ID` | Google OAuth client ID (wallet auth) |
 | `GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
 | `GOOGLE_REDIRECT_URI` | OAuth callback URL |
+| `VAULT_TOKEN` | OpenBao app token (from `bao token create`) |
 
 Set automatically by the NixOS module (not in env file):
 
@@ -228,6 +267,7 @@ Set automatically by the NixOS module (not in env file):
 | `PHX_HOST` | Public domain name (from `services.sovra.domain`) |
 | `PHX_SERVER` | Always `true` |
 | `PORT` | Phoenix listen port (default 4000) |
+| `VAULT_ADDR` | OpenBao address (default `http://127.0.0.1:8200` when `localVault = true`) |
 
 Optional (on-chain features -- omit `ADMIN_PRIVATE_KEY` to skip all):
 

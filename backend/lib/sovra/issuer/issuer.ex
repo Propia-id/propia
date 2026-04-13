@@ -70,7 +70,6 @@ defmodule Sovra.Issuer do
         eoa_address = "0x" <> Base.encode16(address_bytes, case: :lower)
 
         eoa_key_id = "issuer_#{issuer_uuid}_eoa"
-        Key.store_key(eoa_key_id, private_key)
 
         {:ok, eoa_address, eoa_key_id}
 
@@ -84,6 +83,16 @@ defmodule Sovra.Issuer do
       nil -> {:error, :issuer_not_found}
       issuer -> {:ok, issuer}
     end
+  end
+
+  def list_issuers do
+    from(i in IssuerRecord,
+      left_join: a in Sovra.Issuer.IssuerAccount,
+      on: a.issuer_id == i.id,
+      order_by: [desc: i.inserted_at],
+      select: %{id: i.id, name: i.name, did: i.did, status: i.status, email: a.email}
+    )
+    |> Repo.all()
   end
 
   def get_first_issuer do

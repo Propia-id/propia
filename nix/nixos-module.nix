@@ -20,6 +20,7 @@
 #   GOOGLE_CLIENT_ID=<id>
 #   GOOGLE_CLIENT_SECRET=<secret>
 #   GOOGLE_REDIRECT_URI=https://yourdomain.com/api/v1/holder/auth/callback
+#   VAULT_TOKEN=<OpenBao app token>
 
 { config, lib, pkgs, ... }:
 
@@ -48,7 +49,8 @@ in
       description = ''
         Path to environment file containing all runtime secrets and config.
         Must contain DATABASE_URL, SECRET_KEY_BASE, GUARDIAN_SESSION_SECRET,
-        GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URI.
+        GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI,
+        and VAULT_TOKEN.
       '';
     };
 
@@ -74,6 +76,12 @@ in
       type = lib.types.bool;
       default = true;
       description = "Whether to run a local Redis instance.";
+    };
+
+    localVault = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Whether to run a local OpenBao instance for Transit key management.";
     };
 
     nginx = {
@@ -112,15 +120,20 @@ in
       description = "Sovra Phoenix server";
       after = [ "network.target" ]
         ++ lib.optional cfg.localPostgres "postgresql.service"
-        ++ lib.optional cfg.localRedis "redis-sovra.service";
+        ++ lib.optional cfg.localRedis "redis-sovra.service"
+        ++ lib.optional cfg.localVault "openbao.service";
       wants = lib.optional cfg.localPostgres "postgresql.service"
-        ++ lib.optional cfg.localRedis "redis-sovra.service";
+        ++ lib.optional cfg.localRedis "redis-sovra.service"
+        ++ lib.optional cfg.localVault "openbao.service";
       wantedBy = [ "multi-user.target" ];
 
       environment = {
         PHX_SERVER = "true";
         PHX_HOST = cfg.domain;
         PORT = toString cfg.port;
+        ISSUER_BASE_URL = "https://${cfg.domain}";
+      } // lib.optionalAttrs cfg.localVault {
+        VAULT_ADDR = "http://127.0.0.1:8200";
       };
 
       serviceConfig = {
@@ -164,6 +177,61 @@ in
       enable = true;
       port = 6379;
       bind = "127.0.0.1";
+    };
+
+    # ── OpenBao (Transit key store) ────────────────────────────────────────
+    systemd.tmpfiles.rules = lib.mkIf cfg.localVault [
+      "d /var/lib/openbao/data 0700 openbao openbao -"
+    ];
+
+    systemd.services.openbao = lib.mkIf cfg.localVault {
+      description = "OpenBao Secret Management";
+      after = [ "network.target" ];
+      wantedBy = [ "multi-user.target" ];
+
+      serviceConfig = {
+        Type = "exec";
+        User = "openbao";
+        Group = "openbao";
+        StateDirectory = "openbao";
+        ExecStart = "${pkgs.openbao}/bin/bao server -config=/etc/openbao/config.hcl";
+        Restart = "on-failure";
+        RestartSec = 5;
+
+        NoNewPrivileges = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        PrivateTmp = true;
+        PrivateDevices = true;
+        ReadWritePaths = [ "/var/lib/openbao" ];
+      };
+    };
+
+    users.users.openbao = lib.mkIf cfg.localVault {
+      isSystemUser = true;
+      group = "openbao";
+      home = "/var/lib/openbao";
+      createHome = true;
+    };
+    users.groups.openbao = lib.mkIf cfg.localVault {};
+
+    environment.systemPackages = lib.mkIf cfg.localVault [ pkgs.openbao ];
+
+    environment.etc."openbao/config.hcl" = lib.mkIf cfg.localVault {
+      text = ''
+        storage "raft" {
+          path = "/var/lib/openbao/data"
+          node_id = "sovra-1"
+        }
+
+        listener "tcp" {
+          address     = "127.0.0.1:8200"
+          tls_disable = 1
+        }
+
+        api_addr     = "http://127.0.0.1:8200"
+        cluster_addr = "http://127.0.0.1:8201"
+      '';
     };
 
     # ── Nginx reverse proxy ─────────────────────────────────────────────────

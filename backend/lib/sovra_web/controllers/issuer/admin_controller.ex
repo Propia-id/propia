@@ -28,6 +28,17 @@ defmodule SovraWeb.Issuer.AdminController do
     end
   end
 
+  def list_issuers(conn, _params) do
+    issuers = Issuer.list_issuers()
+
+    json(conn, %{
+      issuers:
+        Enum.map(issuers, fn i ->
+          %{id: i.id, name: i.name, did: i.did, status: i.status, email: i.email}
+        end)
+    })
+  end
+
   def get_issuer(conn, _params) do
     issuer_id = conn.assigns.current_issuer_account.issuer_id
 

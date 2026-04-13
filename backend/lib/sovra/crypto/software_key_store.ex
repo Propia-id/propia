@@ -22,11 +22,6 @@ defmodule Sovra.Crypto.SoftwareKeyStore do
   end
 
   @impl Sovra.Crypto.KeyStore
-  def store_key(key_id, private_key) do
-    GenServer.call(__MODULE__, {:store_key, key_id, private_key})
-  end
-
-  @impl Sovra.Crypto.KeyStore
   def sign(key_id, hash) do
     case :ets.lookup(@table, key_id) do
       [{^key_id, private_key}] -> Sovra.Crypto.P256.sign(hash, private_key)
@@ -58,12 +53,6 @@ defmodule Sovra.Crypto.SoftwareKeyStore do
       error ->
         {:reply, error, state}
     end
-  end
-
-  @impl GenServer
-  def handle_call({:store_key, key_id, private_key}, _from, state) do
-    :ets.insert(@table, {key_id, private_key})
-    {:reply, :ok, state}
   end
 
   @impl GenServer

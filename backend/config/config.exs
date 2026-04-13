@@ -10,7 +10,7 @@ import Config
 config :sovra,
   ecto_repos: [Sovra.Repo],
   generators: [timestamp_type: :utc_datetime],
-  key_store: Sovra.Crypto.SoftwareKeyStore,
+  key_store: Sovra.Crypto.VaultKeyStore,
   auth_provider: Sovra.Auth.GoogleAuthProvider,
   session_secret: "dev-only-secret-must-be-at-least-32-bytes-long!",
   issuer: [base_url: System.get_env("ISSUER_BASE_URL", "http://localhost:4000")],
