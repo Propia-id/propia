@@ -1,5 +1,68 @@
 defmodule SovraWeb.Guardian.OnboardController do
   use SovraWeb, :controller
+  use OpenApiSpex.ControllerSpecs
+
+  tags(["Holder"])
+
+  operation(:onboard,
+    summary: "Onboard holder",
+    description:
+      "Register a new holder. Returns a recovery public key and session token for new holders (201), or the existing address and session for already-linked accounts (200).",
+    request_body:
+      {"Onboard params", "application/json",
+       %OpenApiSpex.Schema{
+         type: :object,
+         required: [:sovraAddress, :oauthToken],
+         properties: %{
+           sovraAddress: %OpenApiSpex.Schema{
+             type: :string,
+             description: "Holder's Sovra contract address"
+           },
+           oauthToken: %OpenApiSpex.Schema{type: :string, description: "Google ID token"}
+         }
+       }},
+    responses: %{
+      201 =>
+        {"New holder onboarded", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             recoveryPublicKey: %OpenApiSpex.Schema{
+               type: :string,
+               description: "Hex-encoded recovery public key"
+             },
+             sessionToken: %OpenApiSpex.Schema{type: :string}
+           }
+         }},
+      200 =>
+        {"Existing holder linked", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             sovraAddress: %OpenApiSpex.Schema{type: :string},
+             sessionToken: %OpenApiSpex.Schema{type: :string}
+           }
+         }},
+      400 =>
+        {"Missing fields", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }},
+      401 =>
+        {"Invalid OAuth token", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }},
+      409 =>
+        {"Already onboarded", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string, example: "already_onboarded"}}
+         }}
+    }
+  )
 
   def onboard(conn, %{"sovraAddress" => sovra_address, "oauthToken" => oauth_token}) do
     case Sovra.Guardian.onboard(sovra_address, oauth_token) do

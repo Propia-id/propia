@@ -29,6 +29,18 @@ defmodule SovraWeb.Router do
     plug SovraWeb.Plugs.RequireAdminPlug
   end
 
+  # OpenAPI spec & Swagger UI
+  scope "/api" do
+    pipe_through :api
+    get "/openapi", OpenApiSpex.Plug.RenderSpec, []
+  end
+
+  if Application.compile_env(:sovra, :dev_routes) do
+    scope "/dev" do
+      get "/swaggerui", OpenApiSpex.Plug.SwaggerUI, path: "/api/openapi"
+    end
+  end
+
   # Health check
   scope "/", SovraWeb do
     pipe_through :api

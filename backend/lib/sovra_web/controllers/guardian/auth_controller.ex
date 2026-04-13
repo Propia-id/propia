@@ -1,5 +1,100 @@
 defmodule SovraWeb.Guardian.AuthController do
   use SovraWeb, :controller
+  use OpenApiSpex.ControllerSpecs
+
+  tags(["Holder"])
+
+  operation(:auth,
+    summary: "Authenticate holder",
+    description:
+      "Two authentication flows: (1) Send `oauth_token` for native mobile flow — verifies the ID token and returns a session. (2) Send `sovraAddress` for browser flow — returns a Google OAuth authorization URL.",
+    request_body:
+      {"Auth params", "application/json",
+       %OpenApiSpex.Schema{
+         type: :object,
+         properties: %{
+           oauth_token: %OpenApiSpex.Schema{
+             type: :string,
+             description: "Google ID token (native flow)"
+           },
+           sovraAddress: %OpenApiSpex.Schema{
+             type: :string,
+             description: "Holder address (browser flow)"
+           }
+         }
+       }},
+    responses: %{
+      200 =>
+        {"Auth response", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             sessionToken: %OpenApiSpex.Schema{type: :string},
+             expiresAt: %OpenApiSpex.Schema{type: :string, format: :"date-time"},
+             authorizationUrl: %OpenApiSpex.Schema{type: :string}
+           }
+         }},
+      400 =>
+        {"Missing fields", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }},
+      401 =>
+        {"Invalid token", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }},
+      404 =>
+        {"Holder not found", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }}
+    }
+  )
+
+  operation(:callback,
+    summary: "OAuth callback",
+    description: "Handle the Google OAuth callback after browser-based authentication.",
+    request_body:
+      {"Callback params", "application/json",
+       %OpenApiSpex.Schema{
+         type: :object,
+         required: [:code, :state],
+         properties: %{
+           code: %OpenApiSpex.Schema{type: :string},
+           state: %OpenApiSpex.Schema{type: :string}
+         }
+       }},
+    responses: %{
+      200 =>
+        {"Session token", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{session: %OpenApiSpex.Schema{type: :string}}
+         }},
+      400 =>
+        {"Missing fields", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }},
+      403 =>
+        {"OAuth mismatch", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }},
+      404 =>
+        {"Holder not found", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }}
+    }
+  )
 
   # Native mobile flow: verify ID token directly, issue session
   def auth(conn, %{"oauth_token" => oauth_token}) do

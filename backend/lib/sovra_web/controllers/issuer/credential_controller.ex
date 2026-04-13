@@ -1,7 +1,157 @@
 defmodule SovraWeb.Issuer.CredentialController do
   use SovraWeb, :controller
+  use OpenApiSpex.ControllerSpecs
 
   alias Sovra.Issuer
+
+  tags(["Issuer OID4VCI"])
+
+  operation(:offer,
+    summary: "Create credential offer",
+    description: "Create a pre-authorized OID4VCI credential offer.",
+    request_body:
+      {"Credential offer params", "application/json",
+       %OpenApiSpex.Schema{
+         type: :object,
+         required: [:issuer_id, :schema_id, :holder_did, :claims],
+         properties: %{
+           issuer_id: %OpenApiSpex.Schema{type: :string, format: :uuid},
+           schema_id: %OpenApiSpex.Schema{type: :string},
+           holder_did: %OpenApiSpex.Schema{type: :string},
+           claims: %OpenApiSpex.Schema{type: :object}
+         }
+       }},
+    responses: %{
+      201 =>
+        {"Offer created", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             offer_id: %OpenApiSpex.Schema{type: :string, format: :uuid},
+             offer_uri: %OpenApiSpex.Schema{type: :string},
+             pre_authorized_code: %OpenApiSpex.Schema{type: :string},
+             expires_at: %OpenApiSpex.Schema{type: :string, format: :"date-time"}
+           }
+         }},
+      404 =>
+        {"Not found", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }},
+      422 =>
+        {"Validation error", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             error: %OpenApiSpex.Schema{type: :string},
+             missing: %OpenApiSpex.Schema{type: :array, items: %OpenApiSpex.Schema{type: :string}}
+           }
+         }},
+      500 =>
+        {"Internal error", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }}
+    }
+  )
+
+  operation(:authorize,
+    summary: "Authorization (not supported)",
+    description: "This endpoint is not supported in the current OID4VCI flow.",
+    responses: %{
+      404 =>
+        {"Not supported", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string, example: "not_supported"}}
+         }}
+    }
+  )
+
+  operation(:token,
+    summary: "Exchange pre-authorized code for access token",
+    description: "OID4VCI token endpoint. Rate limited to 10 requests per minute.",
+    request_body:
+      {"Token request", "application/json",
+       %OpenApiSpex.Schema{
+         type: :object,
+         required: [:grant_type, :"pre-authorized_code"],
+         properties: %{
+           grant_type: %OpenApiSpex.Schema{
+             type: :string,
+             example: "urn:ietf:params:oauth:grant-type:pre-authorized_code"
+           },
+           "pre-authorized_code": %OpenApiSpex.Schema{type: :string},
+           tx_code: %OpenApiSpex.Schema{type: :string}
+         }
+       }},
+    responses: %{
+      200 =>
+        {"Token response", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             access_token: %OpenApiSpex.Schema{type: :string},
+             c_nonce: %OpenApiSpex.Schema{type: :string},
+             c_nonce_expires_in: %OpenApiSpex.Schema{type: :integer},
+             token_type: %OpenApiSpex.Schema{type: :string, example: "bearer"},
+             expires_in: %OpenApiSpex.Schema{type: :integer}
+           }
+         }},
+      400 =>
+        {"Bad request", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }},
+      429 =>
+        {"Too many attempts", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string, example: "too_many_attempts"}}
+         }}
+    }
+  )
+
+  operation(:issue,
+    summary: "Issue credential",
+    description:
+      "Issue a verifiable credential in SD-JWT format. Requires a Bearer access token obtained from the token endpoint.",
+    security: [%{"BearerAuth" => []}],
+    request_body:
+      {"Credential request", "application/json",
+       %OpenApiSpex.Schema{
+         type: :object,
+         properties: %{
+           proof: %OpenApiSpex.Schema{type: :object, description: "JWT proof of possession"}
+         }
+       }},
+    responses: %{
+      200 =>
+        {"Credential issued", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             credential: %OpenApiSpex.Schema{type: :string, description: "SD-JWT credential"},
+             format: %OpenApiSpex.Schema{type: :string, example: "vc+sd-jwt"}
+           }
+         }},
+      400 =>
+        {"Bad request", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }},
+      401 =>
+        {"Unauthorized", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }}
+    }
+  )
 
   def offer(conn, params) do
     issuer_id = params["issuer_id"]

@@ -1,5 +1,99 @@
 defmodule SovraWeb.Guardian.RecoveryController do
   use SovraWeb, :controller
+  use OpenApiSpex.ControllerSpecs
+
+  tags(["Recovery"])
+  security([%{"BearerAuth" => []}])
+
+  operation(:initiate_recovery,
+    summary: "Initiate recovery",
+    description:
+      "Start the account recovery process by providing a new key pair. Requires a fresh session.",
+    request_body:
+      {"Recovery params", "application/json",
+       %OpenApiSpex.Schema{
+         type: :object,
+         required: [:newKeyX, :newKeyY, :keyToReplace],
+         properties: %{
+           newKeyX: %OpenApiSpex.Schema{
+             type: :string,
+             description: "Hex-encoded X coordinate of new public key"
+           },
+           newKeyY: %OpenApiSpex.Schema{
+             type: :string,
+             description: "Hex-encoded Y coordinate of new public key"
+           },
+           keyToReplace: %OpenApiSpex.Schema{
+             type: :integer,
+             enum: [0, 1],
+             description: "Index of the key to replace"
+           }
+         }
+       }},
+    responses: %{
+      200 =>
+        {"Recovery initiated", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             signature: %OpenApiSpex.Schema{type: :string, description: "Hex-encoded signature"},
+             messageHash: %OpenApiSpex.Schema{
+               type: :string,
+               description: "Hex-encoded message hash"
+             }
+           }
+         }},
+      400 =>
+        {"Invalid parameters", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }},
+      404 =>
+        {"Holder not found", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }},
+      422 =>
+        {"Recovery already pending", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }}
+    }
+  )
+
+  operation(:finalize,
+    summary: "Finalize recovery",
+    description: "Complete the recovery process. Requires a fresh session.",
+    responses: %{
+      200 =>
+        {"Recovery finalized", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             signature: %OpenApiSpex.Schema{type: :string, description: "Hex-encoded signature"},
+             messageHash: %OpenApiSpex.Schema{
+               type: :string,
+               description: "Hex-encoded message hash"
+             }
+           }
+         }},
+      404 =>
+        {"Holder not found", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }},
+      422 =>
+        {"Not in recovery", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }}
+    }
+  )
 
   def initiate_recovery(conn, %{
         "newKeyX" => new_key_x_hex,

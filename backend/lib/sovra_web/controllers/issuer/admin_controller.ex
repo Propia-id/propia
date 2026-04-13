@@ -1,8 +1,285 @@
 defmodule SovraWeb.Issuer.AdminController do
   use SovraWeb, :controller
+  use OpenApiSpex.ControllerSpecs
 
   alias Sovra.Issuer
   alias Sovra.Issuer.Accounts
+
+  tags(["Issuer Admin"])
+  security([%{"IssuerCookieAuth" => []}])
+
+  operation(:create_issuer_account,
+    summary: "Create issuer account (super-admin)",
+    description: "Create a new issuer account. Requires admin role.",
+    request_body:
+      {"Issuer account params", "application/json",
+       %OpenApiSpex.Schema{
+         type: :object,
+         required: [:email, :password, :issuer_name],
+         properties: %{
+           email: %OpenApiSpex.Schema{type: :string, format: :email},
+           password: %OpenApiSpex.Schema{type: :string},
+           issuer_name: %OpenApiSpex.Schema{type: :string}
+         }
+       }},
+    responses: %{
+      201 =>
+        {"Issuer created", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             issuer: %OpenApiSpex.Schema{
+               type: :object,
+               properties: %{
+                 id: %OpenApiSpex.Schema{type: :string, format: :uuid},
+                 name: %OpenApiSpex.Schema{type: :string},
+                 did: %OpenApiSpex.Schema{type: :string},
+                 status: %OpenApiSpex.Schema{type: :string}
+               }
+             },
+             email: %OpenApiSpex.Schema{type: :string}
+           }
+         }},
+      422 =>
+        {"Validation error", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             error: %OpenApiSpex.Schema{type: :string},
+             details: %OpenApiSpex.Schema{type: :object}
+           }
+         }}
+    }
+  )
+
+  operation(:get_issuer,
+    summary: "Get issuer profile",
+    description: "Get the authenticated issuer's profile.",
+    responses: %{
+      200 =>
+        {"Issuer profile", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             id: %OpenApiSpex.Schema{type: :string, format: :uuid},
+             name: %OpenApiSpex.Schema{type: :string},
+             did: %OpenApiSpex.Schema{type: :string},
+             eoa_address: %OpenApiSpex.Schema{type: :string},
+             status: %OpenApiSpex.Schema{type: :string}
+           }
+         }},
+      404 =>
+        {"Issuer not found", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }}
+    }
+  )
+
+  operation(:create_schema,
+    summary: "Create credential schema",
+    description: "Create a new credential schema for the authenticated issuer.",
+    request_body:
+      {"Schema params", "application/json",
+       %OpenApiSpex.Schema{
+         type: :object,
+         required: [:schema_id, :credential_type, :name, :claims],
+         properties: %{
+           schema_id: %OpenApiSpex.Schema{type: :string},
+           credential_type: %OpenApiSpex.Schema{type: :string},
+           name: %OpenApiSpex.Schema{type: :string},
+           claims: %OpenApiSpex.Schema{type: :array, items: %OpenApiSpex.Schema{type: :object}},
+           validity_period: %OpenApiSpex.Schema{type: :string, example: "1y"}
+         }
+       }},
+    responses: %{
+      201 =>
+        {"Schema created", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             id: %OpenApiSpex.Schema{type: :string, format: :uuid},
+             schema_id: %OpenApiSpex.Schema{type: :string},
+             credential_type: %OpenApiSpex.Schema{type: :string},
+             name: %OpenApiSpex.Schema{type: :string},
+             claims: %OpenApiSpex.Schema{type: :array, items: %OpenApiSpex.Schema{type: :object}},
+             validity_period: %OpenApiSpex.Schema{type: :string}
+           }
+         }},
+      422 =>
+        {"Validation error", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             error: %OpenApiSpex.Schema{type: :string},
+             details: %OpenApiSpex.Schema{type: :object}
+           }
+         }}
+    }
+  )
+
+  operation(:list_schemas,
+    summary: "List credential schemas",
+    description: "List all credential schemas for the authenticated issuer.",
+    responses: %{
+      200 =>
+        {"Schema list", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             schemas: %OpenApiSpex.Schema{
+               type: :array,
+               items: %OpenApiSpex.Schema{
+                 type: :object,
+                 properties: %{
+                   id: %OpenApiSpex.Schema{type: :string, format: :uuid},
+                   schema_id: %OpenApiSpex.Schema{type: :string},
+                   credential_type: %OpenApiSpex.Schema{type: :string},
+                   name: %OpenApiSpex.Schema{type: :string},
+                   claims: %OpenApiSpex.Schema{
+                     type: :array,
+                     items: %OpenApiSpex.Schema{type: :object}
+                   },
+                   validity_period: %OpenApiSpex.Schema{type: :string},
+                   version: %OpenApiSpex.Schema{type: :integer}
+                 }
+               }
+             }
+           }
+         }}
+    }
+  )
+
+  operation(:delete_schema,
+    summary: "Delete credential schema",
+    description: "Delete a credential schema by ID.",
+    parameters: [
+      id: [in: :path, type: :string, description: "Schema UUID", required: true]
+    ],
+    responses: %{
+      204 => {"Schema deleted", nil, nil},
+      404 =>
+        {"Schema not found", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }}
+    }
+  )
+
+  operation(:create_offer,
+    summary: "Create credential offer",
+    description: "Create a credential offer for a holder from the admin panel.",
+    request_body:
+      {"Offer params", "application/json",
+       %OpenApiSpex.Schema{
+         type: :object,
+         required: [:schema_id, :holder_did],
+         properties: %{
+           schema_id: %OpenApiSpex.Schema{type: :string},
+           holder_did: %OpenApiSpex.Schema{type: :string},
+           claims: %OpenApiSpex.Schema{type: :object}
+         }
+       }},
+    responses: %{
+      201 =>
+        {"Offer created", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             id: %OpenApiSpex.Schema{type: :string, format: :uuid},
+             status: %OpenApiSpex.Schema{type: :string},
+             holder_did: %OpenApiSpex.Schema{type: :string},
+             offer_uri: %OpenApiSpex.Schema{type: :string},
+             pre_authorized_code: %OpenApiSpex.Schema{type: :string},
+             expires_at: %OpenApiSpex.Schema{type: :string, format: :"date-time"}
+           }
+         }},
+      404 =>
+        {"Not found", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }},
+      422 =>
+        {"Validation error", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }}
+    }
+  )
+
+  operation(:list_offers,
+    summary: "List credential offers",
+    description: "List all credential offers for the authenticated issuer.",
+    responses: %{
+      200 =>
+        {"Offer list", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             offers: %OpenApiSpex.Schema{
+               type: :array,
+               items: %OpenApiSpex.Schema{
+                 type: :object,
+                 properties: %{
+                   id: %OpenApiSpex.Schema{type: :string, format: :uuid},
+                   holder_did: %OpenApiSpex.Schema{type: :string},
+                   status: %OpenApiSpex.Schema{type: :string},
+                   expires_at: %OpenApiSpex.Schema{type: :string, format: :"date-time"},
+                   inserted_at: %OpenApiSpex.Schema{type: :string, format: :"date-time"},
+                   schema: %OpenApiSpex.Schema{
+                     type: :object,
+                     properties: %{
+                       id: %OpenApiSpex.Schema{type: :string, format: :uuid},
+                       credential_type: %OpenApiSpex.Schema{type: :string},
+                       name: %OpenApiSpex.Schema{type: :string}
+                     }
+                   }
+                 }
+               }
+             }
+           }
+         }}
+    }
+  )
+
+  operation(:list_issued_credentials,
+    summary: "List issued credentials",
+    description: "List all credentials issued by the authenticated issuer.",
+    responses: %{
+      200 =>
+        {"Credential list", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             credentials: %OpenApiSpex.Schema{
+               type: :array,
+               items: %OpenApiSpex.Schema{
+                 type: :object,
+                 properties: %{
+                   id: %OpenApiSpex.Schema{type: :string, format: :uuid},
+                   holder_did: %OpenApiSpex.Schema{type: :string},
+                   status: %OpenApiSpex.Schema{type: :string},
+                   issued_at: %OpenApiSpex.Schema{type: :string, format: :"date-time"},
+                   expires_at: %OpenApiSpex.Schema{type: :string, format: :"date-time"},
+                   schema: %OpenApiSpex.Schema{
+                     type: :object,
+                     properties: %{
+                       id: %OpenApiSpex.Schema{type: :string, format: :uuid},
+                       credential_type: %OpenApiSpex.Schema{type: :string},
+                       name: %OpenApiSpex.Schema{type: :string}
+                     }
+                   }
+                 }
+               }
+             }
+           }
+         }}
+    }
+  )
 
   def create_issuer_account(conn, %{
         "email" => email,

@@ -31,5 +31,6 @@ defmodule SovraWeb.Endpoint do
   plug Plug.MethodOverride
   plug Plug.Head
   plug CORSPlug
+  plug OpenApiSpex.Plug.PutApiSpec, module: SovraWeb.ApiSpec
   plug SovraWeb.Router
 end

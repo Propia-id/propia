@@ -1,8 +1,67 @@
 defmodule SovraWeb.Issuer.AuthController do
   use SovraWeb, :controller
+  use OpenApiSpex.ControllerSpecs
 
   alias Sovra.Issuer.Accounts
   alias Sovra.Auth.IssuerSession
+
+  tags(["Issuer Auth"])
+
+  operation(:login,
+    summary: "Issuer login",
+    description:
+      "Authenticate an issuer account. Returns admin role or issuer profile. Sets an HTTP-only session cookie.",
+    request_body:
+      {"Login credentials", "application/json",
+       %OpenApiSpex.Schema{
+         type: :object,
+         required: [:email, :password],
+         properties: %{
+           email: %OpenApiSpex.Schema{type: :string, format: :email},
+           password: %OpenApiSpex.Schema{type: :string}
+         }
+       }},
+    responses: %{
+      200 =>
+        {"Login success", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             role: %OpenApiSpex.Schema{type: :string, example: "admin"},
+             issuer: %OpenApiSpex.Schema{
+               type: :object,
+               properties: %{
+                 id: %OpenApiSpex.Schema{type: :string, format: :uuid},
+                 name: %OpenApiSpex.Schema{type: :string},
+                 did: %OpenApiSpex.Schema{type: :string},
+                 status: %OpenApiSpex.Schema{type: :string}
+               }
+             }
+           }
+         }},
+      401 =>
+        {"Invalid credentials", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             error: %OpenApiSpex.Schema{type: :string, example: "invalid_credentials"}
+           }
+         }}
+    }
+  )
+
+  operation(:logout,
+    summary: "Issuer logout",
+    description: "Revoke the current issuer session and clear the session cookie.",
+    responses: %{
+      200 =>
+        {"Logout success", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{ok: %OpenApiSpex.Schema{type: :boolean, example: true}}
+         }}
+    }
+  )
 
   @cookie_name "issuer_session"
   @cookie_opts [
