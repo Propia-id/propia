@@ -129,17 +129,29 @@ frontend.issuer.build:
 
 # ── Frontend Wallet ──────────────────────────────────────────────────
 
-.PHONY: frontend.wallet.check
+.PHONY: frontend.wallet.check wallet.build.android wallet.build.ios
 
 frontend.wallet.check:
 	$(NIX) "cd frontend && pnpm --filter @sovra/wallet typecheck"
 
+wallet.build.android:
+	cd frontend/wallet && pnpm run build:android
+
+wallet.build.ios:
+	cd frontend/wallet && pnpm run build:ios
+
 # ── Frontend Verifier ────────────────────────────────────────────────
 
-.PHONY: frontend.verifier.check
+.PHONY: frontend.verifier.check verifier.build.android verifier.build.ios
 
 frontend.verifier.check:
 	$(NIX) "cd frontend && pnpm --filter @sovra/verifier typecheck"
+
+verifier.build.android:
+	cd frontend/verifier && pnpm run build:android
+
+verifier.build.ios:
+	cd frontend/verifier && pnpm run build:ios
 
 # ── Deploy ──────────────────────────────────────────────────────────
 
