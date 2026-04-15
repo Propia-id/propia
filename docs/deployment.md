@@ -107,6 +107,11 @@ Add to `/etc/nixos/configuration.nix`:
     issuerPath = "/opt/sovra/issuer";
     envFile = "/etc/sovra/env";
     nginx.acmeEmail = "admin@yourdomain.com";
+
+    # KMS auto-unseal (OpenBao unseals automatically on restart)
+    kmsKeyId = "alias/openbao-unseal";  # or a key ID like "1234abcd-..."
+    kmsRegion = "us-east-1";
+    vaultEnvFile = "/etc/openbao/env";
   };
 
   # Tailscale for CI access
@@ -131,20 +136,81 @@ Add to `/etc/nixos/configuration.nix`:
 
 See [`nix/server-example.nix`](../nix/server-example.nix) for a complete reference.
 
-### 4. Initialize OpenBao
+### 4. Set up AWS KMS for auto-unseal
+
+OpenBao uses an AWS KMS key to automatically unseal on startup, so no manual intervention is needed after restarts.
+
+**a. Create a KMS key:**
+
+```bash
+aws kms create-key --description "OpenBao auto-unseal"
+# Note the KeyId from the output, e.g. "1234abcd-12ab-34cd-56ef-1234567890ab"
+
+# Optionally create an alias for convenience
+aws kms create-alias --alias-name alias/openbao-unseal --target-key-id <key-id>
+```
+
+**b. Create an IAM user with KMS permissions:**
+
+```bash
+aws iam create-user --user-name openbao-unseal
+
+cat > /tmp/openbao-kms-policy.json <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["kms:Encrypt", "kms:Decrypt", "kms:DescribeKey"],
+      "Resource": "arn:aws:kms:<region>:<account-id>:key/<key-id>"
+    }
+  ]
+}
+EOF
+
+aws iam put-user-policy \
+  --user-name openbao-unseal \
+  --policy-name openbao-kms \
+  --policy-document file:///tmp/openbao-kms-policy.json
+
+aws iam create-access-key --user-name openbao-unseal
+# Note the AccessKeyId and SecretAccessKey
+```
+
+**c. Create the OpenBao env file on the server:**
+
+```bash
+sudo mkdir -p /etc/openbao
+sudo tee /etc/openbao/env > /dev/null <<EOF
+AWS_ACCESS_KEY_ID=<access-key-id>
+AWS_SECRET_ACCESS_KEY=<secret-access-key>
+AWS_REGION=us-east-1
+EOF
+sudo chmod 600 /etc/openbao/env
+sudo chown openbao:openbao /etc/openbao/env
+```
+
+> **Threat model note:** OpenBao listens on `127.0.0.1` with TLS disabled. This is
+> acceptable because the listener is not network-exposed — any process that could
+> sniff loopback traffic already has privileges to read the token from the env file
+> directly. If OpenBao is ever exposed beyond localhost, TLS must be enabled.
+
+### 5. Initialize OpenBao
 
 After the first `nixos-rebuild switch`, OpenBao is running but needs one-time initialization:
 
 ```bash
 export BAO_ADDR=http://127.0.0.1:8200
 
-# Initialize (save the unseal key and root token securely!)
-bao operator init -key-shares=1 -key-threshold=1
+# Initialize (save the root token and recovery key securely!)
+# With KMS auto-unseal, recovery keys are only for emergency operations
+# (e.g., generating a new root token), not for day-to-day unsealing.
+bao operator init -recovery-shares=1 -recovery-threshold=1
 
-# Unseal
-bao operator unseal <unseal-key>
+# No manual unseal needed — KMS handles it automatically
 
 # Enable Transit engine
+export BAO_TOKEN=<root-token>
 bao secrets enable transit
 
 # Create a scoped policy for Sovra
@@ -157,18 +223,12 @@ path "transit/sign/*" {
 }
 EOF
 
-# Create an app token (renews automatically for 32 days)
-bao token create -policy=sovra-transit -period=768h
+# Create an app token (the backend auto-renews it before expiry)
+bao token create -policy=sovra-transit -period=96h
 # Save the token — it goes in /etc/sovra/env as VAULT_TOKEN
 ```
 
-> **After every server restart**, OpenBao must be manually unsealed:
-> ```bash
-> export BAO_ADDR=http://127.0.0.1:8200
-> bao operator unseal <unseal-key>
-> ```
-
-### 5. Create the env file
+### 6. Create the env file
 
 Create `/etc/sovra/env` with all required secrets:
 
@@ -209,7 +269,7 @@ nixos-rebuild switch --flake /etc/nixos#sovra-server
 
 This sets up PostgreSQL, Redis, Nginx (with Let's Encrypt TLS), the systemd service, and firewall rules.
 
-### 6. Connect Tailscale
+### 7. Connect Tailscale
 
 ```bash
 tailscale up

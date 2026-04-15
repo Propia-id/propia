@@ -84,6 +84,26 @@ in
       description = "Whether to run a local OpenBao instance for Transit key management.";
     };
 
+    kmsKeyId = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "AWS KMS key ID for OpenBao auto-unseal. When set, OpenBao uses KMS instead of Shamir.";
+      example = "alias/openbao-unseal";
+    };
+
+    kmsRegion = lib.mkOption {
+      type = lib.types.str;
+      default = "us-east-1";
+      description = "AWS region for the KMS key used for auto-unseal.";
+    };
+
+    vaultEnvFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = "Path to environment file for the OpenBao service (e.g., AWS credentials for KMS auto-unseal).";
+      example = "/etc/openbao/env";
+    };
+
     nginx = {
       enable = lib.mkOption {
         type = lib.types.bool;
@@ -197,7 +217,9 @@ in
         ExecStart = "${pkgs.openbao}/bin/bao server -config=/etc/openbao/config.hcl";
         Restart = "on-failure";
         RestartSec = 5;
-
+      } // lib.optionalAttrs (cfg.vaultEnvFile != null) {
+        EnvironmentFile = cfg.vaultEnvFile;
+      } // {
         NoNewPrivileges = true;
         ProtectSystem = "strict";
         ProtectHome = true;
@@ -224,6 +246,10 @@ in
           node_id = "sovra-1"
         }
 
+        # TLS is disabled because the listener is bound to localhost only.
+        # Any process that could sniff loopback traffic already has
+        # privileges to read the token from the env file directly,
+        # so TLS would not add meaningful protection here.
         listener "tcp" {
           address     = "127.0.0.1:8200"
           tls_disable = 1
@@ -231,6 +257,13 @@ in
 
         api_addr     = "http://127.0.0.1:8200"
         cluster_addr = "http://127.0.0.1:8201"
+
+        ${lib.optionalString (cfg.kmsKeyId != null) ''
+        seal "awskms" {
+          region     = "${cfg.kmsRegion}"
+          kms_key_id = "${cfg.kmsKeyId}"
+        }
+        ''}
       '';
     };
 

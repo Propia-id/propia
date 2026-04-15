@@ -47,7 +47,7 @@ defmodule Sovra.Application do
 
       Sovra.Crypto.VaultKeyStore ->
         Logger.info("Using VaultKeyStore (OpenBao Transit)")
-        children
+        children ++ [Sovra.Crypto.VaultTokenRenewer]
 
       other ->
         Logger.info("Using key store: #{inspect(other)}")
