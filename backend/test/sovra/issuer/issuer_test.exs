@@ -43,14 +43,14 @@ defmodule Sovra.IssuerTest do
     end
   end
 
-  describe "create_credential_offer/4" do
+  describe "create_credential_offer/3" do
     test "stores hashed pre_authorized_code, returns plaintext" do
       issuer = create_test_issuer()
       schema = create_test_schema(issuer)
       claims = %{"name" => "Alice"}
 
       {:ok, result} =
-        Issuer.create_credential_offer(issuer.id, schema.schema_id, "did:sovra:holder", claims)
+        Issuer.create_credential_offer(issuer.id, schema.schema_id, claims)
 
       assert is_binary(result.pre_authorized_code)
       offer = Repo.get!(CredentialOffer, result.offer.id)
@@ -64,7 +64,7 @@ defmodule Sovra.IssuerTest do
       claims = %{"name" => "Alice"}
 
       {:ok, result} =
-        Issuer.create_credential_offer(issuer.id, schema.schema_id, "did:sovra:holder", claims)
+        Issuer.create_credential_offer(issuer.id, schema.schema_id, claims)
 
       assert String.contains?(result.offer_uri, result.pre_authorized_code)
     end
@@ -76,9 +76,7 @@ defmodule Sovra.IssuerTest do
       schema = create_test_schema(issuer)
 
       {:ok, result} =
-        Issuer.create_credential_offer(issuer.id, schema.schema_id, "did:sovra:holder", %{
-          "name" => "Alice"
-        })
+        Issuer.create_credential_offer(issuer.id, schema.schema_id, %{"name" => "Alice"})
 
       %{offer_result: result}
     end
@@ -111,9 +109,7 @@ defmodule Sovra.IssuerTest do
       schema = create_test_schema(issuer)
 
       {:ok, offer_result} =
-        Issuer.create_credential_offer(issuer.id, schema.schema_id, "did:sovra:holder", %{
-          "name" => "Alice"
-        })
+        Issuer.create_credential_offer(issuer.id, schema.schema_id, %{"name" => "Alice"})
 
       {:ok, token_data} = Issuer.exchange_token(offer_result.pre_authorized_code)
 
@@ -140,7 +136,7 @@ defmodule Sovra.IssuerTest do
         }
       }
 
-      payload = %{"nonce" => token_data.c_nonce}
+      payload = %{"iss" => "did:sovra:0xholder", "nonce" => token_data.c_nonce}
 
       header_b64 = Base.url_encode64(Jason.encode!(header), padding: false)
       payload_b64 = Base.url_encode64(Jason.encode!(payload), padding: false)
@@ -152,8 +148,11 @@ defmodule Sovra.IssuerTest do
       assert {:error, :invalid_proof} = Issuer.issue_credential(token_data.access_token, proof)
     end
 
-    test "accepts proof with valid P-256 signature", %{token_data: token_data} do
+    test "accepts proof with valid P-256 signature and binds holder DID", %{
+      token_data: token_data
+    } do
       {:ok, %{private_key: priv, public_key_x: x, public_key_y: y}} = P256.generate_key_pair()
+      holder_did = "did:sovra:0xholder123"
 
       header = %{
         "typ" => "openid4vci-proof+jwt",
@@ -166,7 +165,7 @@ defmodule Sovra.IssuerTest do
         }
       }
 
-      payload = %{"nonce" => token_data.c_nonce}
+      payload = %{"iss" => holder_did, "nonce" => token_data.c_nonce}
 
       header_b64 = Base.url_encode64(Jason.encode!(header), padding: false)
       payload_b64 = Base.url_encode64(Jason.encode!(payload), padding: false)
@@ -182,6 +181,13 @@ defmodule Sovra.IssuerTest do
       assert {:ok, sd_jwt} = Issuer.issue_credential(token_data.access_token, proof)
       assert is_binary(sd_jwt)
       assert String.contains?(sd_jwt, "~")
+
+      # Verify the SD-JWT has the correct holder DID as sub
+      [jwt_part | _] = String.split(sd_jwt, "~")
+      [_, payload_b64 | _] = String.split(jwt_part, ".")
+      {:ok, payload_json} = Base.url_decode64(payload_b64, padding: false)
+      {:ok, jwt_payload} = Jason.decode(payload_json)
+      assert jwt_payload["sub"] == holder_did
     end
 
     test "rejects proof with wrong nonce", %{token_data: token_data} do
@@ -198,7 +204,38 @@ defmodule Sovra.IssuerTest do
         }
       }
 
-      payload = %{"nonce" => "wrong-nonce"}
+      payload = %{"iss" => "did:sovra:0xholder", "nonce" => "wrong-nonce"}
+
+      header_b64 = Base.url_encode64(Jason.encode!(header), padding: false)
+      payload_b64 = Base.url_encode64(Jason.encode!(payload), padding: false)
+      signing_input = "#{header_b64}.#{payload_b64}"
+      hash = :crypto.hash(:sha256, signing_input)
+
+      {:ok, %{r: r, s: s}} = P256.sign(hash, priv)
+      raw_sig = P256.pad_or_trim(r, 32) <> P256.pad_or_trim(s, 32)
+      sig_b64 = Base.url_encode64(raw_sig, padding: false)
+      jwt = "#{signing_input}.#{sig_b64}"
+
+      proof = %{"jwt" => jwt}
+      assert {:error, :invalid_proof} = Issuer.issue_credential(token_data.access_token, proof)
+    end
+
+    test "rejects proof missing iss claim", %{token_data: token_data} do
+      {:ok, %{private_key: priv, public_key_x: x, public_key_y: y}} = P256.generate_key_pair()
+
+      header = %{
+        "typ" => "openid4vci-proof+jwt",
+        "alg" => "ES256",
+        "jwk" => %{
+          "kty" => "EC",
+          "crv" => "P-256",
+          "x" => Base.url_encode64(x, padding: false),
+          "y" => Base.url_encode64(y, padding: false)
+        }
+      }
+
+      # No "iss" field
+      payload = %{"nonce" => token_data.c_nonce}
 
       header_b64 = Base.url_encode64(Jason.encode!(header), padding: false)
       payload_b64 = Base.url_encode64(Jason.encode!(payload), padding: false)
@@ -216,14 +253,12 @@ defmodule Sovra.IssuerTest do
   end
 
   describe "credential delivery clears sensitive data" do
-    test "sd_jwt and token hashes are cleared after issuance" do
+    test "claims and token hashes are cleared after issuance" do
       issuer = create_test_issuer()
       schema = create_test_schema(issuer)
 
       {:ok, offer_result} =
-        Issuer.create_credential_offer(issuer.id, schema.schema_id, "did:sovra:holder", %{
-          "name" => "Alice"
-        })
+        Issuer.create_credential_offer(issuer.id, schema.schema_id, %{"name" => "Alice"})
 
       {:ok, token_data} = Issuer.exchange_token(offer_result.pre_authorized_code)
 
@@ -241,7 +276,7 @@ defmodule Sovra.IssuerTest do
         }
       }
 
-      payload = %{"nonce" => token_data.c_nonce}
+      payload = %{"iss" => "did:sovra:0xholder", "nonce" => token_data.c_nonce}
       header_b64 = Base.url_encode64(Jason.encode!(header), padding: false)
       payload_b64 = Base.url_encode64(Jason.encode!(payload), padding: false)
       signing_input = "#{header_b64}.#{payload_b64}"
@@ -256,7 +291,6 @@ defmodule Sovra.IssuerTest do
       # Verify sensitive data is cleared
       offer = Repo.get!(CredentialOffer, offer_result.offer.id)
       assert offer.status == "issued"
-      assert is_nil(offer.sd_jwt)
       assert is_nil(offer.claims)
       assert is_nil(offer.pre_authorized_code_hash)
       assert is_nil(offer.access_token_hash)

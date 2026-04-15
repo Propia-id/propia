@@ -169,11 +169,10 @@ defmodule Sovra.Issuer do
 
   # ── Credential Offer ───────────────────────────────────
 
-  def create_credential_offer(issuer_id, schema_id, holder_did, claims) do
-    with {:ok, issuer} <- get_issuer(issuer_id),
+  def create_credential_offer(issuer_id, schema_id, claims) do
+    with {:ok, _issuer} <- get_issuer(issuer_id),
          {:ok, schema} <- get_schema(issuer_id, schema_id),
-         :ok <- validate_claims(schema, claims),
-         {:ok, sd_jwt} <- SDJWT.build(issuer, schema, claims, holder_did) do
+         :ok <- validate_claims(schema, claims) do
       {plaintext_code, code_hash} = TokenHash.generate_and_hash(32)
 
       expires_at =
@@ -183,10 +182,8 @@ defmodule Sovra.Issuer do
         CredentialOffer.create_changeset(%{
           issuer_id: issuer_id,
           schema_id: schema.id,
-          holder_did: holder_did,
           pre_authorized_code_hash: code_hash,
           claims: claims,
-          sd_jwt: sd_jwt,
           expires_at: expires_at
         })
 
@@ -291,15 +288,16 @@ defmodule Sovra.Issuer do
         {:error, :invalid_token}
 
       %{status: "token_exchanged"} = offer ->
-        cond do
-          DateTime.compare(DateTime.utc_now(), offer.expires_at) == :gt ->
-            {:error, :offer_expired}
+        if DateTime.compare(DateTime.utc_now(), offer.expires_at) == :gt do
+          {:error, :offer_expired}
+        else
+          case verify_proof(proof, offer.c_nonce) do
+            {:ok, %{holder_did: holder_did}} ->
+              deliver_credential(offer, holder_did)
 
-          not verify_proof(proof, offer.c_nonce) ->
-            {:error, :invalid_proof}
-
-          true ->
-            deliver_credential(offer)
+            {:error, _} = error ->
+              error
+          end
         end
 
       _other ->
@@ -307,23 +305,25 @@ defmodule Sovra.Issuer do
     end
   end
 
-  defp deliver_credential(offer) do
+  defp deliver_credential(offer, holder_did) do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
 
-    with [jwt_part | _] <- String.split(offer.sd_jwt, "~"),
-         [_, payload_b64 | _] <- String.split(jwt_part, "."),
-         {:ok, payload_json} <- Base.url_decode64(payload_b64, padding: false),
-         {:ok, payload} <- Jason.decode(payload_json),
-         exp when is_integer(exp) <- Map.get(payload, "exp"),
-         {:ok, expires_at} <- DateTime.from_unix(exp) do
+    with {:ok, issuer} <- get_issuer(offer.issuer_id),
+         {:ok, schema} <- get_schema_by_id(offer.schema_id),
+         {:ok, sd_jwt} <- SDJWT.build(issuer, schema, offer.claims, holder_did) do
+      # Extract exp from the freshly-built SD-JWT
+      [jwt_part | _] = String.split(sd_jwt, "~")
+      [_, payload_b64 | _] = String.split(jwt_part, ".")
+      {:ok, payload_json} = Base.url_decode64(payload_b64, padding: false)
+      {:ok, payload} = Jason.decode(payload_json)
+      {:ok, expires_at} = DateTime.from_unix(payload["exp"])
       expires_at = DateTime.truncate(expires_at, :second)
-      sd_jwt = offer.sd_jwt
 
       issued_cred_changeset =
         IssuedCredential.create_changeset(%{
           issuer_id: offer.issuer_id,
           schema_id: offer.schema_id,
-          holder_did: offer.holder_did,
+          holder_did: holder_did,
           issued_at: now,
           expires_at: expires_at
         })
@@ -340,14 +340,12 @@ defmodule Sovra.Issuer do
             Repo.rollback(reason)
         end
       end)
-    else
-      _ -> {:error, :invalid_credential_data}
     end
   end
 
   # ── Proof Verification ─────────────────────────────────
 
-  defp verify_proof(nil, _nonce), do: false
+  defp verify_proof(nil, _nonce), do: {:error, :invalid_proof}
 
   defp verify_proof(proof, nonce) do
     with jwt when is_binary(jwt) <- Map.get(proof, "jwt") || Map.get(proof, :jwt),
@@ -359,14 +357,20 @@ defmodule Sovra.Issuer do
          true <- header["typ"] == "openid4vci-proof+jwt",
          true <- header["alg"] == "ES256",
          true <- payload["nonce"] == nonce,
+         holder_did when is_binary(holder_did) <- payload["iss"],
          {:ok, {pub_x, pub_y}} <- extract_jwk_coordinates(header["jwk"]),
          {:ok, sig_bytes} <- Base.url_decode64(sig_b64, padding: false),
          <<r_bytes::binary-32, s_bytes::binary-32>> <- sig_bytes do
       signing_input = header_b64 <> "." <> payload_b64
       hash = :crypto.hash(:sha256, signing_input)
-      P256.verify(hash, %{r: r_bytes, s: s_bytes}, {pub_x, pub_y})
+
+      if P256.verify(hash, %{r: r_bytes, s: s_bytes}, {pub_x, pub_y}) do
+        {:ok, %{holder_did: holder_did}}
+      else
+        {:error, :invalid_proof}
+      end
     else
-      _ -> false
+      _ -> {:error, :invalid_proof}
     end
   end
 

@@ -156,10 +156,9 @@ defmodule SovraWeb.Issuer.CredentialController do
   def offer(conn, params) do
     issuer_id = params["issuer_id"]
     schema_id = params["schema_id"]
-    holder_did = params["holder_did"]
     claims = params["claims"]
 
-    case Issuer.create_credential_offer(issuer_id, schema_id, holder_did, claims) do
+    case Issuer.create_credential_offer(issuer_id, schema_id, claims) do
       {:ok, %{offer: offer, offer_uri: offer_uri, pre_authorized_code: code}} ->
         conn
         |> put_status(201)

@@ -406,7 +406,6 @@ defmodule SovraWeb.Issuer.AdminController do
     case Issuer.create_credential_offer(
            issuer_id,
            params["schema_id"],
-           params["holder_did"],
            params["claims"] || %{}
          ) do
       {:ok, %{offer: offer, offer_uri: offer_uri, pre_authorized_code: code}} ->
@@ -415,7 +414,6 @@ defmodule SovraWeb.Issuer.AdminController do
         |> json(%{
           id: offer.id,
           status: offer.status,
-          holder_did: offer.holder_did,
           offer_uri: offer_uri,
           pre_authorized_code: code,
           expires_at: DateTime.to_iso8601(offer.expires_at)
@@ -453,7 +451,6 @@ defmodule SovraWeb.Issuer.AdminController do
         Enum.map(offers, fn o ->
           %{
             id: o.id,
-            holder_did: o.holder_did,
             status: o.status,
             expires_at: DateTime.to_iso8601(o.expires_at),
             inserted_at: DateTime.to_iso8601(o.inserted_at),

@@ -6,14 +6,12 @@ defmodule Sovra.Issuer.CredentialOffer do
   @foreign_key_type :binary_id
 
   schema "credential_offers" do
-    field :holder_did, :string
     field :pre_authorized_code_hash, :string
     field :tx_code, :string
     field :access_token_hash, :string
     field :c_nonce, :string
     field :claims, :map
     field :status, :string, default: "pending"
-    field :sd_jwt, :string
     field :expires_at, :utc_datetime
 
     belongs_to :issuer, Sovra.Issuer.IssuerRecord
@@ -22,7 +20,7 @@ defmodule Sovra.Issuer.CredentialOffer do
     timestamps(type: :utc_datetime)
   end
 
-  @required ~w(issuer_id schema_id holder_did pre_authorized_code_hash claims sd_jwt expires_at)a
+  @required ~w(issuer_id schema_id pre_authorized_code_hash claims expires_at)a
 
   def create_changeset(record \\ %__MODULE__{}, attrs) do
     record
@@ -45,7 +43,6 @@ defmodule Sovra.Issuer.CredentialOffer do
     |> change(
       status: "issued",
       claims: nil,
-      sd_jwt: nil,
       pre_authorized_code_hash: nil,
       access_token_hash: nil
     )
