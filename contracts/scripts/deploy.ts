@@ -1,4 +1,26 @@
-import { ethers, upgrades } from "hardhat";
+import { ethers, upgrades, run, network } from "hardhat";
+import * as fs from "fs";
+import * as path from "path";
+
+async function verify(address: string, constructorArguments: unknown[] = []) {
+  const explorerUrl = process.env.EXPLORER_URL;
+  if (!explorerUrl) return;
+
+  console.log(`Verifying ${address} on ${explorerUrl} ...`);
+  try {
+    await run("verify:verify", {
+      address,
+      constructorArguments,
+    });
+    console.log(`  ✓ Verified ${address}`);
+  } catch (err: any) {
+    if (err.message?.includes("Already Verified")) {
+      console.log(`  ✓ Already verified ${address}`);
+    } else {
+      console.warn(`  ✗ Verification failed for ${address}:`, err.message);
+    }
+  }
+}
 
 async function main() {
   if (!process.env.DEPLOYER_PRIVATE_KEY) {
@@ -44,6 +66,38 @@ async function main() {
   await issuerRegistry.waitForDeployment();
   const issuerRegistryAddr = await issuerRegistry.getAddress();
   console.log("SovraIssuerRegistryV1 proxy deployed to:", issuerRegistryAddr);
+
+  // ─── Verification ──────────────────────────────────
+  await verify(implAddr);
+  await verify(beaconAddr, [implAddr, deployer.address, councilAddr]);
+  await verify(dispatcherAddr, [beaconAddr]);
+  await verify(didRegistryAddr);
+  await verify(issuerRegistryAddr);
+
+  // ─── Output file ───────────────────────────────────
+  const chainId = (await ethers.provider.getNetwork()).chainId;
+  const output = {
+    network: network.name,
+    chainId: Number(chainId),
+    deployer: deployer.address,
+    securityCouncil: councilAddr,
+    timestamp: new Date().toISOString(),
+    contracts: {
+      SovraWalletV1: { address: implAddr, type: "implementation" },
+      SovraBeacon: { address: beaconAddr, type: "beacon" },
+      SovraDispatcher: { address: dispatcherAddr, type: "contract" },
+      SovraDIDRegistryV1: { address: didRegistryAddr, type: "uups-proxy" },
+      SovraIssuerRegistryV1: { address: issuerRegistryAddr, type: "uups-proxy" },
+    },
+  };
+
+  const deploymentsDir = path.join(__dirname, "..", "deployments");
+  if (!fs.existsSync(deploymentsDir)) {
+    fs.mkdirSync(deploymentsDir, { recursive: true });
+  }
+  const outputPath = path.join(deploymentsDir, `${network.name}-${chainId}.json`);
+  fs.writeFileSync(outputPath, JSON.stringify(output, null, 2) + "\n");
+  console.log(`\nDeployment output written to: ${outputPath}`);
 
   // ─── Summary ──────────────────────────────────────
   console.log("\n=== Deployment Summary ===");
