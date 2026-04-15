@@ -41,11 +41,15 @@ defmodule Sovra.Crypto.DatabaseKeyStore do
   @impl Sovra.Crypto.KeyStore
   def delete_key(key_id) do
     case Repo.get_by(StoredKey, key_id: key_id) do
-      nil -> :ok
-      stored -> Repo.delete(stored)
-    end
+      nil ->
+        :ok
 
-    :ok
+      stored ->
+        case Repo.delete(stored) do
+          {:ok, _} -> :ok
+          {:error, changeset} -> {:error, {:db_error, changeset}}
+        end
+    end
   end
 
   defp generate_key_id do

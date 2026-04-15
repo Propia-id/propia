@@ -51,7 +51,7 @@ config :sovra, SovraWeb.Endpoint,
 # Enable dev routes for dashboard and mailbox
 config :sovra,
   dev_routes: true,
-  key_store: Sovra.Crypto.VaultKeyStore
+  key_store: Sovra.Crypto.DatabaseKeyStore
 
 # Google OAuth (dev) — set via environment variables
 config :sovra,

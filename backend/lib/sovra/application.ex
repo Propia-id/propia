@@ -42,6 +42,10 @@ defmodule Sovra.Application do
         children ++ [Sovra.Crypto.SoftwareKeyStore]
 
       Sovra.Crypto.DatabaseKeyStore ->
+        if Application.get_env(:sovra, :env) == :prod do
+          raise "DatabaseKeyStore is not allowed in production. Use VaultKeyStore instead."
+        end
+
         Logger.info("Using DatabaseKeyStore (PostgreSQL)")
         children
 

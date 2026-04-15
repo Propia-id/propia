@@ -103,10 +103,16 @@ defmodule Sovra.Crypto.VaultKeyStore do
   end
 
   defp parse_vault_signature("vault:v1:" <> b64_signature) do
-    b64_signature
-    |> Base.decode64!()
-    |> P256.parse_der_signature()
+    with {:ok, der} <- Base.decode64(b64_signature),
+         {:ok, _} = ok <- P256.parse_der_signature(der) do
+      ok
+    else
+      :error -> {:error, :invalid_signature}
+      {:error, _} = error -> error
+    end
   end
+
+  defp parse_vault_signature(_), do: {:error, :invalid_signature}
 
   defp parse_pem_public_key(pem) do
     [{:SubjectPublicKeyInfo, der, :not_encrypted}] = :public_key.pem_decode(pem)
