@@ -1,0 +1,5 @@
+name: sovra-id-platform
+version: "1.0"
+description: Sovra ID platform functional specification (product-agnostic)
+language: en
+type: by-functionality
