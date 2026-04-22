@@ -67,7 +67,8 @@ config :sovra, :ethereum,
   rpc_url: System.get_env("L2_RPC_URL", "http://127.0.0.1:1729"),
   admin_private_key: System.get_env("ADMIN_PRIVATE_KEY"),
   did_registry_address: System.get_env("DID_REGISTRY_ADDRESS"),
-  issuer_registry_address: System.get_env("ISSUER_REGISTRY_ADDRESS")
+  issuer_registry_address: System.get_env("ISSUER_REGISTRY_ADDRESS"),
+  revocation_registry_address: System.get_env("REVOCATION_REGISTRY_ADDRESS")
 
 # Do not include metadata nor timestamps in development logs
 config :logger, :default_formatter, format: "[$level] $message\n"

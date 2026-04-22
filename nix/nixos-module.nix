@@ -50,7 +50,8 @@ in
         Path to environment file containing all runtime secrets and config.
         Must contain DATABASE_URL, SECRET_KEY_BASE, GUARDIAN_SESSION_SECRET,
         GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI,
-        and VAULT_TOKEN.
+        and VAULT_TOKEN. Optionally REVOCATION_REGISTRY_ADDRESS for
+        on-chain credential revocation.
       '';
     };
 

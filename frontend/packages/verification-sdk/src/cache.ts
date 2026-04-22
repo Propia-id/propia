@@ -13,10 +13,16 @@ interface TrustCacheEntry {
   fetchedAt: number;
 }
 
+export interface RevocationCacheEntry {
+  revoked: boolean;
+  fetchedAt: number;
+}
+
 export class VerificationCache {
   private issuerKeys = new Map<string, CachedValue<IssuerKeyData>>();
   private holderKeys = new Map<string, CachedValue<HolderKeyData>>();
   private issuerTrust = new Map<string, TrustCacheEntry>();
+  private revocationStatus = new Map<string, RevocationCacheEntry>();
 
   getIssuerKeys(address: string): IssuerKeyData | null {
     const entry = this.issuerKeys.get(address.toLowerCase());
@@ -61,6 +67,23 @@ export class VerificationCache {
     this.issuerTrust.set(key, { trusted, fetchedAt: Date.now() });
   }
 
+  getRevocationStatus(issuer: string, index: number, purpose: number): boolean | null {
+    const key = `${issuer.toLowerCase()}:${purpose}:${index}`;
+    const entry = this.revocationStatus.get(key);
+    if (!entry) return null;
+    if (Date.now() - entry.fetchedAt > TRUST_TTL_MS) {
+      this.revocationStatus.delete(key);
+      return null;
+    }
+    return entry.revoked;
+  }
+
+  setRevocationStatus(issuer: string, index: number, purpose: number, revoked: boolean): void {
+    this.evictIfNeeded(this.revocationStatus);
+    const key = `${issuer.toLowerCase()}:${purpose}:${index}`;
+    this.revocationStatus.set(key, { revoked, fetchedAt: Date.now() });
+  }
+
   private evictIfNeeded<K, V>(map: Map<K, V>): void {
     if (map.size >= MAX_CACHE_SIZE) {
       const firstKey = map.keys().next().value;
@@ -72,5 +95,6 @@ export class VerificationCache {
     this.issuerKeys.clear();
     this.holderKeys.clear();
     this.issuerTrust.clear();
+    this.revocationStatus.clear();
   }
 }

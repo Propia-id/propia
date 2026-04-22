@@ -464,6 +464,99 @@ defmodule SovraWeb.Issuer.AdminController do
     })
   end
 
+  operation(:revoke_credential,
+    summary: "Revoke a credential",
+    description: "Permanently revoke a credential. Sets the revocation bit on-chain.",
+    parameters: [
+      id: [in: :path, type: :string, description: "Credential UUID", required: true]
+    ],
+    responses: %{
+      200 =>
+        {"Credential revoked", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             id: %OpenApiSpex.Schema{type: :string, format: :uuid},
+             status: %OpenApiSpex.Schema{type: :string}
+           }
+         }},
+      404 =>
+        {"Credential not found", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }},
+      422 =>
+        {"Invalid transition", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }}
+    }
+  )
+
+  operation(:suspend_credential,
+    summary: "Suspend a credential",
+    description: "Temporarily suspend a credential. Can be reversed with unsuspend.",
+    parameters: [
+      id: [in: :path, type: :string, description: "Credential UUID", required: true]
+    ],
+    responses: %{
+      200 =>
+        {"Credential suspended", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             id: %OpenApiSpex.Schema{type: :string, format: :uuid},
+             status: %OpenApiSpex.Schema{type: :string}
+           }
+         }},
+      404 =>
+        {"Credential not found", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }},
+      422 =>
+        {"Invalid transition", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }}
+    }
+  )
+
+  operation(:unsuspend_credential,
+    summary: "Unsuspend a credential",
+    description: "Reverse a suspension, restoring the credential to active status.",
+    parameters: [
+      id: [in: :path, type: :string, description: "Credential UUID", required: true]
+    ],
+    responses: %{
+      200 =>
+        {"Credential unsuspended", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             id: %OpenApiSpex.Schema{type: :string, format: :uuid},
+             status: %OpenApiSpex.Schema{type: :string}
+           }
+         }},
+      404 =>
+        {"Credential not found", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }},
+      422 =>
+        {"Invalid transition", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }}
+    }
+  )
+
   def list_issued_credentials(conn, _params) do
     issuer_id = conn.assigns.current_issuer_account.issuer_id
     credentials = Issuer.list_issued_credentials(issuer_id)
@@ -485,6 +578,34 @@ defmodule SovraWeb.Issuer.AdminController do
           }
         end)
     })
+  end
+
+  def revoke_credential(conn, %{"id" => id}) do
+    handle_status_change(conn, &Issuer.revoke_credential/1, id)
+  end
+
+  def suspend_credential(conn, %{"id" => id}) do
+    handle_status_change(conn, &Issuer.suspend_credential/1, id)
+  end
+
+  def unsuspend_credential(conn, %{"id" => id}) do
+    handle_status_change(conn, &Issuer.unsuspend_credential/1, id)
+  end
+
+  defp handle_status_change(conn, action, credential_id) do
+    case action.(credential_id) do
+      {:ok, cred} ->
+        json(conn, %{id: cred.id, status: cred.status})
+
+      {:error, :credential_not_found} ->
+        conn |> put_status(404) |> json(%{error: "credential_not_found"})
+
+      {:error, :invalid_status_transition} ->
+        conn |> put_status(422) |> json(%{error: "invalid_status_transition"})
+
+      {:error, reason} ->
+        conn |> put_status(422) |> json(%{error: to_string(reason)})
+    end
   end
 
   defp normalize_claims(%{"claims" => claims}) when is_list(claims), do: claims

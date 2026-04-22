@@ -14,7 +14,7 @@ defmodule Sovra.Issuer do
   }
 
   alias Sovra.Crypto.{Key, P256}
-  alias Sovra.Ethereum.{DIDRegistry, IssuerRegistry}
+  alias Sovra.Ethereum.{DIDRegistry, IssuerRegistry, RevocationRegistry}
   alias Sovra.Repo
 
   import Ecto.Query
@@ -172,7 +172,8 @@ defmodule Sovra.Issuer do
   def create_credential_offer(issuer_id, schema_id, claims) do
     with {:ok, _issuer} <- get_issuer(issuer_id),
          {:ok, schema} <- get_schema(issuer_id, schema_id),
-         :ok <- validate_claims(schema, claims) do
+         :ok <- validate_claims(schema, claims),
+         {:ok, status_list_index} <- assign_status_list_index(issuer_id) do
       {plaintext_code, code_hash} = TokenHash.generate_and_hash(32)
 
       expires_at =
@@ -184,6 +185,7 @@ defmodule Sovra.Issuer do
           schema_id: schema.id,
           pre_authorized_code_hash: code_hash,
           claims: claims,
+          status_list_index: status_list_index,
           expires_at: expires_at
         })
 
@@ -310,7 +312,10 @@ defmodule Sovra.Issuer do
 
     with {:ok, issuer} <- get_issuer(offer.issuer_id),
          {:ok, schema} <- get_schema_by_id(offer.schema_id),
-         {:ok, sd_jwt} <- SDJWT.build(issuer, schema, offer.claims, holder_did) do
+         {:ok, sd_jwt} <-
+           SDJWT.build(issuer, schema, offer.claims, holder_did,
+             status_list_index: offer.status_list_index
+           ) do
       # Extract exp from the freshly-built SD-JWT
       [jwt_part | _] = String.split(sd_jwt, "~")
       [_, payload_b64 | _] = String.split(jwt_part, ".")
@@ -324,6 +329,8 @@ defmodule Sovra.Issuer do
           issuer_id: offer.issuer_id,
           schema_id: offer.schema_id,
           holder_did: holder_did,
+          status_list_index: offer.status_list_index,
+          status_purpose: "revocation",
           issued_at: now,
           expires_at: expires_at
         })
@@ -404,7 +411,113 @@ defmodule Sovra.Issuer do
     :crypto.strong_rand_bytes(bytes) |> Base.encode16(case: :lower)
   end
 
+  # ── Credential Status Management ─────────────────────
+
+  def revoke_credential(credential_id) do
+    with {:ok, cred} <- get_issued_credential(credential_id),
+         :ok <- validate_status_transition(cred, "revoked"),
+         {:ok, _tx} <-
+           RevocationRegistry.revoke(get_issuer_eoa(cred.issuer_id), cred.status_list_index) do
+      cred
+      |> IssuedCredential.status_changeset("revoked")
+      |> Repo.update()
+    end
+  end
+
+  def suspend_credential(credential_id) do
+    with {:ok, cred} <- get_issued_credential(credential_id),
+         :ok <- validate_status_transition(cred, "suspended"),
+         {:ok, _tx} <-
+           RevocationRegistry.suspend(get_issuer_eoa(cred.issuer_id), cred.status_list_index) do
+      cred
+      |> IssuedCredential.status_changeset("suspended")
+      |> Repo.update()
+    end
+  end
+
+  def unsuspend_credential(credential_id) do
+    with {:ok, cred} <- get_issued_credential(credential_id),
+         :ok <- validate_status_transition(cred, "issued"),
+         {:ok, _tx} <-
+           RevocationRegistry.unsuspend(get_issuer_eoa(cred.issuer_id), cred.status_list_index) do
+      cred
+      |> IssuedCredential.status_changeset("issued")
+      |> Repo.update()
+    end
+  end
+
+  defp get_issued_credential(id) do
+    case Repo.get(IssuedCredential, id) do
+      nil -> {:error, :credential_not_found}
+      cred -> {:ok, cred}
+    end
+  end
+
+  defp validate_status_transition(%{status: "issued"}, "revoked"), do: :ok
+  defp validate_status_transition(%{status: "issued"}, "suspended"), do: :ok
+  defp validate_status_transition(%{status: "suspended"}, "revoked"), do: :ok
+  defp validate_status_transition(%{status: "suspended"}, "issued"), do: :ok
+  defp validate_status_transition(_cred, _target), do: {:error, :invalid_status_transition}
+
+  defp get_issuer_eoa(issuer_id) do
+    Repo.get!(IssuerRecord, issuer_id).eoa_address
+  end
+
+  # ── Status List Index Assignment ─────────────────────
+
+  @max_status_list_index 131_071
+
+  defp assign_status_list_index(issuer_id, purpose \\ "revocation") do
+    used_indices =
+      from(c in IssuedCredential,
+        where: c.issuer_id == ^issuer_id and c.status_purpose == ^purpose,
+        select: c.status_list_index
+      )
+      |> Repo.all()
+      |> Enum.reject(&is_nil/1)
+      |> MapSet.new()
+
+    # Also reserve indices from pending offers
+    offer_indices =
+      from(o in CredentialOffer,
+        where: o.issuer_id == ^issuer_id and not is_nil(o.status_list_index),
+        select: o.status_list_index
+      )
+      |> Repo.all()
+      |> MapSet.new()
+
+    all_used = MapSet.union(used_indices, offer_indices)
+    available_count = @max_status_list_index + 1 - MapSet.size(all_used)
+
+    if available_count <= 0 do
+      {:error, :bitmap_exhausted}
+    else
+      {:ok, find_random_unused_index(all_used)}
+    end
+  end
+
+  defp find_random_unused_index(used) do
+    candidate = :rand.uniform(@max_status_list_index + 1) - 1
+
+    if MapSet.member?(used, candidate) do
+      find_random_unused_index(used)
+    else
+      candidate
+    end
+  end
+
   # ── On-Chain Registration Helpers ─────────────────────
+
+  defp initialize_bitmaps_on_chain(eoa_address) do
+    if ethereum_configured?() do
+      with {:ok, _} <- RevocationRegistry.initialize_bitmap(eoa_address, 0),
+           {:ok, _} <- RevocationRegistry.initialize_bitmap(eoa_address, 1) do
+        :ok
+      end
+    else
+      {:error, :ethereum_not_configured}
+    end
+  end
 
   defp register_did_on_chain(eoa_address, pub_key_x, pub_key_y) do
     if ethereum_configured?() do
@@ -431,9 +544,9 @@ defmodule Sovra.Issuer do
           end
 
         {:ok, false} ->
-          case IssuerRegistry.register_issuer(eoa_address, [type_hash]) do
-            {:ok, _tx_hash} -> :ok
-            {:error, reason} -> {:error, reason}
+          with {:ok, _tx_hash} <- IssuerRegistry.register_issuer(eoa_address, [type_hash]),
+               :ok <- initialize_bitmaps_on_chain(eoa_address) do
+            :ok
           end
 
         {:error, reason} ->

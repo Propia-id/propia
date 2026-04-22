@@ -8,6 +8,8 @@ defmodule Sovra.Issuer.IssuedCredential do
   schema "issued_credentials" do
     field :holder_did, :string
     field :status, :string, default: "issued"
+    field :status_list_index, :integer
+    field :status_purpose, :string, default: "revocation"
     field :issued_at, :utc_datetime
     field :expires_at, :utc_datetime
 
@@ -18,10 +20,11 @@ defmodule Sovra.Issuer.IssuedCredential do
   end
 
   @required ~w(issuer_id schema_id holder_did issued_at expires_at)a
+  @optional ~w(status_list_index status_purpose)a
 
   def create_changeset(record \\ %__MODULE__{}, attrs) do
     record
-    |> cast(attrs, @required)
+    |> cast(attrs, @required ++ @optional)
     |> validate_required(@required)
   end
 

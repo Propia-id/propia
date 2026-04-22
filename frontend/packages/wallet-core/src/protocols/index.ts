@@ -248,7 +248,7 @@ export class PresentationProtocol {
     requestedClaims: string[],
   ): ApprovalData {
     const allClaims = Object.keys(credential.claims).filter(
-      (k) => !k.startsWith("_") && k !== "iss" && k !== "sub" && k !== "iat" && k !== "exp" && k !== "vct" && k !== "cnf",
+      (k) => !k.startsWith("_") && k !== "iss" && k !== "sub" && k !== "iat" && k !== "exp" && k !== "vct" && k !== "cnf" && k !== "credentialStatus",
     );
 
     return {

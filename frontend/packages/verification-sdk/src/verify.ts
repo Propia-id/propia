@@ -7,6 +7,7 @@ import { verifyES256 } from "./signature";
 import { verifyDisclosures } from "./disclosure";
 import { resolveIssuerDID, checkIssuerTrust } from "./resolve-issuer";
 import { resolveHolderKeys, extractHolderAddress } from "./resolve-holder";
+import { checkRevocation } from "./revocation";
 import { VerificationCache } from "./cache";
 
 /** Module-level default cache shared across calls. */
@@ -116,8 +117,84 @@ export async function verify(
       );
     }
 
-    // Step 8: Check revocation (TBD - not implemented yet)
-    // if (options.checkRevocation !== false) { ... }
+    // Step 8: Check revocation and suspension
+    let revocationChecked = false;
+    if (
+      options.checkRevocation !== false &&
+      !options.offlineMode &&
+      options.revocationRegistryAddress
+    ) {
+      // Parse credentialStatus — can be a single entry or an array
+      const rawStatus = issuerPayload.credentialStatus;
+      const statusEntries: { type: string; statusPurpose: string; statusListIndex: string }[] = [];
+
+      if (Array.isArray(rawStatus)) {
+        for (const entry of rawStatus) {
+          if (entry && typeof entry === "object" && entry.type === "BitstringStatusListEntry" && entry.statusListIndex) {
+            statusEntries.push(entry as { type: string; statusPurpose: string; statusListIndex: string });
+          }
+        }
+      } else if (rawStatus && typeof rawStatus === "object" && (rawStatus as Record<string, unknown>).type === "BitstringStatusListEntry") {
+        const entry = rawStatus as { type: string; statusPurpose: string; statusListIndex: string };
+        if (entry.statusListIndex) statusEntries.push(entry);
+      }
+
+      // Check each declared status entry
+      for (const entry of statusEntries) {
+        const index = parseInt(entry.statusListIndex, 10);
+        const purpose = entry.statusPurpose === "suspension" ? 1 : 0;
+
+        let statusSet = cache.getRevocationStatus(issuerAddress, index, purpose);
+        if (statusSet === null) {
+          statusSet = await checkRevocation(
+            options.l2RpcUrl,
+            options.revocationRegistryAddress,
+            issuerAddress,
+            index,
+            purpose,
+          );
+          cache.setRevocationStatus(issuerAddress, index, purpose, statusSet);
+        }
+
+        revocationChecked = true;
+
+        if (statusSet) {
+          throw new VerificationError(
+            `Credential has been ${purpose === 1 ? "suspended" : "revoked"}`,
+            ErrorCode.CREDENTIAL_REVOKED,
+          );
+        }
+      }
+
+      // Option 2: also check both bitmaps even if the credential only declares one
+      if (statusEntries.length > 0) {
+        const index = parseInt(statusEntries[0].statusListIndex, 10);
+        const declaredPurposes = new Set(statusEntries.map((e) => e.statusPurpose));
+
+        for (const [purpose, purposeInt] of [["revocation", 0], ["suspension", 1]] as const) {
+          if (declaredPurposes.has(purpose)) continue; // already checked above
+
+          let statusSet = cache.getRevocationStatus(issuerAddress, index, purposeInt);
+          if (statusSet === null) {
+            statusSet = await checkRevocation(
+              options.l2RpcUrl,
+              options.revocationRegistryAddress,
+              issuerAddress,
+              index,
+              purposeInt,
+            );
+            cache.setRevocationStatus(issuerAddress, index, purposeInt, statusSet);
+          }
+
+          if (statusSet) {
+            throw new VerificationError(
+              `Credential has been ${purpose === "suspension" ? "suspended" : "revoked"}`,
+              ErrorCode.CREDENTIAL_REVOKED,
+            );
+          }
+        }
+      }
+    }
 
     // Steps 9-10: On-chain holder verification (skipped in offline mode)
     let holderAddress: string | undefined;
@@ -191,6 +268,7 @@ export async function verify(
       issuedAt: iat,
       expiresAt: exp,
       ...(options.offlineMode && { offlineMode: true, trustNotVerified: true }),
+      revocationChecked,
     };
   } catch (e) {
     if (e instanceof VerificationError) {

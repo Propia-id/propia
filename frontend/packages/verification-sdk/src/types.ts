@@ -32,6 +32,7 @@ export interface VerifyOptions {
   l2RpcUrl: string;
   didRegistryAddress: string;
   issuerRegistryAddress: string;
+  revocationRegistryAddress?: string;
   maxClockSkew?: number;
   checkRevocation?: boolean;
   offlineMode?: boolean;
@@ -49,6 +50,7 @@ export interface VerificationResult {
   expiresAt?: number;
   offlineMode?: boolean;
   trustNotVerified?: boolean;
+  revocationChecked?: boolean;
 }
 
 // ─── Internal Types ──────────────────────────────────

@@ -12,6 +12,7 @@ defmodule Sovra.Issuer.CredentialOffer do
     field :c_nonce, :string
     field :claims, :map
     field :status, :string, default: "pending"
+    field :status_list_index, :integer
     field :expires_at, :utc_datetime
 
     belongs_to :issuer, Sovra.Issuer.IssuerRecord
@@ -24,7 +25,7 @@ defmodule Sovra.Issuer.CredentialOffer do
 
   def create_changeset(record \\ %__MODULE__{}, attrs) do
     record
-    |> cast(attrs, @required ++ [:tx_code])
+    |> cast(attrs, @required ++ [:tx_code, :status_list_index])
     |> validate_required(@required)
     |> unique_constraint(:pre_authorized_code_hash)
     |> unique_constraint(:access_token_hash)

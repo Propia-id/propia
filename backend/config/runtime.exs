@@ -42,7 +42,8 @@ if System.get_env("ADMIN_PRIVATE_KEY") do
     chain_id: String.to_integer(System.get_env("CHAIN_ID", "65536999")),
     admin_private_key: System.fetch_env!("ADMIN_PRIVATE_KEY"),
     did_registry_address: System.fetch_env!("DID_REGISTRY_ADDRESS"),
-    issuer_registry_address: System.fetch_env!("ISSUER_REGISTRY_ADDRESS")
+    issuer_registry_address: System.fetch_env!("ISSUER_REGISTRY_ADDRESS"),
+    revocation_registry_address: System.get_env("REVOCATION_REGISTRY_ADDRESS")
 end
 
 if config_env() == :prod do

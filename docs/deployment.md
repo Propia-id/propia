@@ -261,6 +261,7 @@ ADMIN_PRIVATE_KEY=0x...
 L2_RPC_URL=https://your-l2-rpc-endpoint
 DID_REGISTRY_ADDRESS=0x...
 ISSUER_REGISTRY_ADDRESS=0x...
+REVOCATION_REGISTRY_ADDRESS=0x...
 ```
 
 # Apply the configuration
@@ -337,6 +338,7 @@ Optional (on-chain features -- omit `ADMIN_PRIVATE_KEY` to skip all):
 | `L2_RPC_URL` | SovraChain RPC endpoint (default: `http://127.0.0.1:1729`) |
 | `DID_REGISTRY_ADDRESS` | Deployed DID registry contract address |
 | `ISSUER_REGISTRY_ADDRESS` | Deployed issuer registry contract address |
+| `REVOCATION_REGISTRY_ADDRESS` | Deployed revocation registry contract address |
 
 Optional (tuning):
 

@@ -16,7 +16,7 @@ defmodule Sovra.Issuer.SDJWT do
   The `schema` must have a `claims` field that is a list of maps with keys:
   "key", "type", "required", "disclosable".
   """
-  def build(issuer, schema, claims, holder_did) do
+  def build(issuer, schema, claims, holder_did, opts \\ []) do
     now = System.system_time(:second)
     validity_seconds = parse_validity_period(schema.validity_period)
     exp = now + validity_seconds
@@ -48,6 +48,7 @@ defmodule Sovra.Issuer.SDJWT do
         "_sd_alg" => "sha-256"
       }
       |> Map.merge(Map.new(non_disclosable_claims))
+      |> maybe_add_credential_status(issuer, opts)
 
     # Sign the JWT
     header = %{"alg" => "ES256", "typ" => "vc+sd-jwt"}
@@ -60,6 +61,31 @@ defmodule Sovra.Issuer.SDJWT do
 
       {:error, _} = error ->
         error
+    end
+  end
+
+  defp maybe_add_credential_status(payload, _issuer, opts) do
+    case Keyword.get(opts, :status_list_index) do
+      nil ->
+        payload
+
+      index ->
+        issuer_did = payload["iss"]
+
+        Map.put(payload, "credentialStatus", [
+          %{
+            "type" => "BitstringStatusListEntry",
+            "statusPurpose" => "revocation",
+            "statusListIndex" => to_string(index),
+            "statusListCredential" => "#{issuer_did}/status/revocation"
+          },
+          %{
+            "type" => "BitstringStatusListEntry",
+            "statusPurpose" => "suspension",
+            "statusListIndex" => to_string(index),
+            "statusListCredential" => "#{issuer_did}/status/suspension"
+          }
+        ])
     end
   end
 

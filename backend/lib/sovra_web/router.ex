@@ -91,6 +91,9 @@ defmodule SovraWeb.Router do
     post "/offers", AdminController, :create_offer
     get "/offers", AdminController, :list_offers
     get "/credentials", AdminController, :list_issued_credentials
+    post "/credentials/:id/revoke", AdminController, :revoke_credential
+    post "/credentials/:id/suspend", AdminController, :suspend_credential
+    post "/credentials/:id/unsuspend", AdminController, :unsuspend_credential
   end
 
   # Super-admin API (admin role required)
@@ -107,6 +110,13 @@ defmodule SovraWeb.Router do
 
     post "/presentation", PresentationController, :verify
     get "/did/:did", PresentationController, :resolve_did
+  end
+
+  # Status list API (public, cacheable)
+  scope "/api/v1/status", SovraWeb.Verify do
+    pipe_through :api
+
+    get "/:issuer_did/:purpose", StatusListController, :show
   end
 
   # Holder onboarding & auth (public)

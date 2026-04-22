@@ -67,12 +67,24 @@ async function main() {
   const issuerRegistryAddr = await issuerRegistry.getAddress();
   console.log("SovraIssuerRegistryV1 proxy deployed to:", issuerRegistryAddr);
 
+  // ─── Revocation Registry (UUPS proxy, validated) ──
+  const SovraRevocationRegistryV1 = await ethers.getContractFactory("SovraRevocationRegistryV1", deployer);
+  const revocationRegistry = await upgrades.deployProxy(
+    SovraRevocationRegistryV1,
+    [deployer.address, issuerRegistryAddr],
+    { kind: "uups" }
+  );
+  await revocationRegistry.waitForDeployment();
+  const revocationRegistryAddr = await revocationRegistry.getAddress();
+  console.log("SovraRevocationRegistryV1 proxy deployed to:", revocationRegistryAddr);
+
   // ─── Verification ──────────────────────────────────
   await verify(implAddr);
   await verify(beaconAddr, [implAddr, deployer.address, councilAddr]);
   await verify(dispatcherAddr, [beaconAddr]);
   await verify(didRegistryAddr);
   await verify(issuerRegistryAddr);
+  await verify(revocationRegistryAddr);
 
   // ─── Output file ───────────────────────────────────
   const chainId = (await ethers.provider.getNetwork()).chainId;
@@ -88,6 +100,7 @@ async function main() {
       SovraDispatcher: { address: dispatcherAddr, type: "contract" },
       SovraDIDRegistryV1: { address: didRegistryAddr, type: "uups-proxy" },
       SovraIssuerRegistryV1: { address: issuerRegistryAddr, type: "uups-proxy" },
+      SovraRevocationRegistryV1: { address: revocationRegistryAddr, type: "uups-proxy" },
     },
   };
 
@@ -101,11 +114,12 @@ async function main() {
 
   // ─── Summary ──────────────────────────────────────
   console.log("\n=== Deployment Summary ===");
-  console.log("SovraWalletV1:          ", implAddr);
-  console.log("SovraBeacon:            ", beaconAddr);
-  console.log("SovraDispatcher:        ", dispatcherAddr);
-  console.log("SovraDIDRegistryV1:     ", didRegistryAddr);
-  console.log("SovraIssuerRegistryV1:  ", issuerRegistryAddr);
+  console.log("SovraWalletV1:              ", implAddr);
+  console.log("SovraBeacon:                ", beaconAddr);
+  console.log("SovraDispatcher:            ", dispatcherAddr);
+  console.log("SovraDIDRegistryV1:         ", didRegistryAddr);
+  console.log("SovraIssuerRegistryV1:      ", issuerRegistryAddr);
+  console.log("SovraRevocationRegistryV1:  ", revocationRegistryAddr);
 }
 
 main().catch((error) => {
