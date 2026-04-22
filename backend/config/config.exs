@@ -17,7 +17,7 @@ config :sovra,
   issuer: [base_url: System.get_env("ISSUER_BASE_URL", "http://localhost:4000")],
   ethereum: [
     rpc_url: "http://127.0.0.1:1729",
-    chain_id: 31337,
+    chain_id: 65_536_999,
     admin_private_key: nil,
     did_registry_address: nil,
     issuer_registry_address: nil

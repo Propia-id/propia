@@ -95,13 +95,6 @@ defmodule Sovra.GuardianTest do
   end
 
   describe "finalize_recovery/1" do
-    test "rejects non-recovery_pending holders" do
-      holder = create_test_holder(test_address("finalize_active"))
-
-      assert {:error, :not_in_recovery} =
-               Guardian.finalize_recovery(holder.sovra_address)
-    end
-
     test "rejects unknown holders" do
       assert {:error, :holder_not_found} = Guardian.finalize_recovery("0xunknown")
     end

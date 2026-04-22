@@ -20,7 +20,7 @@ defmodule Sovra.Ethereum.WalletReader do
     # nonce() selector = keccak256("nonce()")[0:4] = 0xaffed0e0
     selector = ExKeccak.hash_256("nonce()") |> binary_part(0, 4)
 
-    case Client.call(%{data: "0x" <> Base.encode16(selector, case: :lower)}, to: wallet_address) do
+    case Client.call(%{data: selector}, to: wallet_address) do
       {:ok, "0x" <> hex} ->
         {nonce, _} = Integer.parse(hex, 16)
         {:ok, nonce}
@@ -37,13 +37,7 @@ defmodule Sovra.Ethereum.WalletReader do
 
     ExKeccak.hash_256(
       ABI.TypeEncoder.encode(
-        [
-          {@domain_typehash, {:bytes, 32}},
-          {@name_hash, {:bytes, 32}},
-          {@version_hash, {:bytes, 32}},
-          {chain_id, {:uint, 256}},
-          {address_bytes, :address}
-        ],
+        [@domain_typehash, @name_hash, @version_hash, chain_id, address_bytes],
         %ABI.FunctionSelector{
           types: [{:bytes, 32}, {:bytes, 32}, {:bytes, 32}, {:uint, 256}, :address]
         }
@@ -65,12 +59,7 @@ defmodule Sovra.Ethereum.WalletReader do
       op_hash =
         ExKeccak.hash_256(
           ABI.TypeEncoder.encode(
-            [
-              {op_selector, {:bytes, 4}},
-              {new_key_x, {:bytes, 32}},
-              {new_key_y, {:bytes, 32}},
-              {key_to_replace, {:uint, 8}}
-            ],
+            [op_selector, new_key_x, new_key_y, key_to_replace],
             %ABI.FunctionSelector{types: [{:bytes, 4}, {:bytes, 32}, {:bytes, 32}, {:uint, 8}]}
           )
         )
@@ -80,7 +69,7 @@ defmodule Sovra.Ethereum.WalletReader do
       struct_hash =
         ExKeccak.hash_256(
           ABI.TypeEncoder.encode(
-            [{op_hash, {:bytes, 32}}, {nonce, {:uint, 256}}],
+            [op_hash, nonce],
             %ABI.FunctionSelector{types: [{:bytes, 32}, {:uint, 256}]}
           )
         )
@@ -100,7 +89,7 @@ defmodule Sovra.Ethereum.WalletReader do
       op_hash =
         ExKeccak.hash_256(
           ABI.TypeEncoder.encode(
-            [{ExKeccak.hash_256("finalizeRecovery") |> binary_part(0, 4), {:bytes, 4}}],
+            [ExKeccak.hash_256("finalizeRecovery") |> binary_part(0, 4)],
             %ABI.FunctionSelector{types: [{:bytes, 4}]}
           )
         )
@@ -110,7 +99,7 @@ defmodule Sovra.Ethereum.WalletReader do
       struct_hash =
         ExKeccak.hash_256(
           ABI.TypeEncoder.encode(
-            [{op_hash, {:bytes, 32}}, {nonce, {:uint, 256}}],
+            [op_hash, nonce],
             %ABI.FunctionSelector{types: [{:bytes, 32}, {:uint, 256}]}
           )
         )
@@ -126,7 +115,6 @@ defmodule Sovra.Ethereum.WalletReader do
   end
 
   defp get_chain_id(config) do
-    # Default to local dev chain ID
-    Keyword.get(config, :chain_id, 31337)
+    Keyword.get(config, :chain_id, 65_536_999)
   end
 end

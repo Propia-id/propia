@@ -157,61 +157,36 @@ defmodule Sovra.Guardian do
              key_to_replace
            ),
          {:ok, sig} <- Key.sign(holder.recovery_key_id, message_hash) do
-      changeset = HolderRecord.status_changeset(holder, "recovery_pending")
-
-      case Repo.update(changeset) do
-        {:ok, _updated} ->
-          {:ok,
-           %{
-             signature: format_signature(sig),
-             message_hash: "0x" <> Base.encode16(message_hash, case: :lower)
-           }}
-
-        {:error, changeset} ->
-          {:error, {:changeset, changeset}}
-      end
+      {:ok,
+       %{
+         signature: format_signature(sig),
+         message_hash: "0x" <> Base.encode16(message_hash, case: :lower)
+       }}
     end
   end
 
   def initiate_recovery(_sovra_address, _params), do: {:error, :invalid_params}
 
   def finalize_recovery(sovra_address) do
-    with {:ok, holder} <- get_recovery_pending_holder(sovra_address),
+    with {:ok, holder} <- get_active_holder(sovra_address),
          {:ok, message_hash} <-
            Sovra.Ethereum.WalletReader.build_finalize_recovery_hash(sovra_address),
          {:ok, sig} <- Key.sign(holder.recovery_key_id, message_hash) do
-      changeset = HolderRecord.status_changeset(holder, "active")
-
-      case Repo.update(changeset) do
-        {:ok, _updated} ->
-          {:ok,
-           %{
-             signature: format_signature(sig),
-             message_hash: "0x" <> Base.encode16(message_hash, case: :lower)
-           }}
-
-        {:error, changeset} ->
-          {:error, {:changeset, changeset}}
-      end
+      {:ok,
+       %{
+         signature: format_signature(sig),
+         message_hash: "0x" <> Base.encode16(message_hash, case: :lower)
+       }}
     end
   end
 
   # Private helpers
-
-  defp get_recovery_pending_holder(sovra_address) do
-    case Repo.get_by(HolderRecord, sovra_address: sovra_address) do
-      nil -> {:error, :holder_not_found}
-      %{status: "recovery_pending"} = holder -> {:ok, holder}
-      _ -> {:error, :not_in_recovery}
-    end
-  end
 
   defp get_active_holder(sovra_address) do
     case Repo.get_by(HolderRecord, sovra_address: sovra_address) do
       nil -> {:error, :holder_not_found}
       %{status: "active"} = holder -> {:ok, holder}
       %{status: "deactivated"} -> {:error, :holder_deactivated}
-      %{status: "recovery_pending"} -> {:error, :recovery_pending}
     end
   end
 

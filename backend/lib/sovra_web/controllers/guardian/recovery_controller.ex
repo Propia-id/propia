@@ -54,12 +54,6 @@ defmodule SovraWeb.Guardian.RecoveryController do
          %OpenApiSpex.Schema{
            type: :object,
            properties: %{error: %OpenApiSpex.Schema{type: :string}}
-         }},
-      422 =>
-        {"Recovery already pending", "application/json",
-         %OpenApiSpex.Schema{
-           type: :object,
-           properties: %{error: %OpenApiSpex.Schema{type: :string}}
          }}
     }
   )
@@ -82,12 +76,6 @@ defmodule SovraWeb.Guardian.RecoveryController do
          }},
       404 =>
         {"Holder not found", "application/json",
-         %OpenApiSpex.Schema{
-           type: :object,
-           properties: %{error: %OpenApiSpex.Schema{type: :string}}
-         }},
-      422 =>
-        {"Not in recovery", "application/json",
          %OpenApiSpex.Schema{
            type: :object,
            properties: %{error: %OpenApiSpex.Schema{type: :string}}
@@ -116,9 +104,6 @@ defmodule SovraWeb.Guardian.RecoveryController do
         {:error, :holder_not_found} ->
           conn |> put_status(404) |> json(%{error: "holder_not_found"})
 
-        {:error, :recovery_pending} ->
-          conn |> put_status(422) |> json(%{error: "recovery_already_pending"})
-
         {:error, _} ->
           conn |> put_status(500) |> json(%{error: "internal_error"})
       end
@@ -141,9 +126,6 @@ defmodule SovraWeb.Guardian.RecoveryController do
 
       {:error, :holder_not_found} ->
         conn |> put_status(404) |> json(%{error: "holder_not_found"})
-
-      {:error, :not_in_recovery} ->
-        conn |> put_status(422) |> json(%{error: "not_in_recovery"})
 
       {:error, _} ->
         conn |> put_status(500) |> json(%{error: "internal_error"})

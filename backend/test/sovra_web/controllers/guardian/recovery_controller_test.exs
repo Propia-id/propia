@@ -38,17 +38,6 @@ defmodule SovraWeb.Guardian.RecoveryControllerTest do
   end
 
   describe "POST /api/v1/recovery/finalize" do
-    test "returns 422 for holder not in recovery", %{conn: conn} do
-      holder = create_test_holder(test_address("finalize_not_pending"))
-
-      conn =
-        conn
-        |> auth_conn(holder.sovra_address)
-        |> post("/api/v1/recovery/finalize", %{})
-
-      assert %{"error" => "not_in_recovery"} = json_response(conn, 422)
-    end
-
     test "returns 401 without session", %{conn: conn} do
       conn = post(conn, "/api/v1/recovery/finalize")
 
