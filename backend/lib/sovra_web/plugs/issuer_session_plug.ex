@@ -21,11 +21,11 @@ defmodule SovraWeb.Plugs.IssuerSessionPlug do
 
     if token do
       case Sovra.Auth.IssuerSession.verify(token) do
-        {:ok, %{account_id: account_id, issuer_id: issuer_id, role: role}} ->
+        {:ok, %{account_id: account_id, workspace_id: workspace_id, role: role}} ->
           conn
           |> assign(:current_issuer_account, %{
             account_id: account_id,
-            issuer_id: issuer_id,
+            workspace_id: workspace_id,
             role: role
           })
           |> assign(:current_session_token, token)

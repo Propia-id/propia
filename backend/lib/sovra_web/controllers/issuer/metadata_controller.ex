@@ -4,6 +4,7 @@ defmodule SovraWeb.Issuer.MetadataController do
 
   alias Sovra.Issuer
   alias Sovra.Issuer.OID4VCI
+  alias Sovra.Workspaces
 
   tags(["Issuer Metadata"])
 
@@ -43,27 +44,27 @@ defmodule SovraWeb.Issuer.MetadataController do
   )
 
   def show(conn, _params) do
-    case Issuer.get_first_issuer() do
-      {:ok, issuer} ->
-        schemas = Issuer.list_schemas(issuer.id)
-        metadata = OID4VCI.build_metadata(issuer, schemas)
+    case Workspaces.get_first_workspace() do
+      {:ok, workspace} ->
+        schemas = Issuer.list_schemas(workspace.id)
+        metadata = OID4VCI.build_metadata(workspace, schemas)
         json(conn, metadata)
 
-      {:error, :no_issuers} ->
+      {:error, :no_workspaces} ->
         conn
         |> put_status(503)
         |> json(%{error: "no_issuers_configured"})
     end
   end
 
-  def show_by_id(conn, %{"issuer_id" => issuer_id}) do
-    case Issuer.get_issuer(issuer_id) do
-      {:ok, issuer} ->
-        schemas = Issuer.list_schemas(issuer.id)
-        metadata = OID4VCI.build_metadata(issuer, schemas)
+  def show_by_id(conn, %{"issuer_id" => workspace_id}) do
+    case Workspaces.get_workspace(workspace_id) do
+      {:ok, workspace} ->
+        schemas = Issuer.list_schemas(workspace.id)
+        metadata = OID4VCI.build_metadata(workspace, schemas)
         json(conn, metadata)
 
-      {:error, :issuer_not_found} ->
+      {:error, :workspace_not_found} ->
         conn |> put_status(404) |> json(%{error: "issuer_not_found"})
     end
   end

@@ -15,7 +15,7 @@ defmodule Sovra.Issuer.CredentialOffer do
     field :status_list_index, :integer
     field :expires_at, :utc_datetime
 
-    belongs_to :issuer, Sovra.Issuer.IssuerRecord
+    belongs_to :issuer, Sovra.Workspaces.Workspace
     belongs_to :schema, Sovra.Issuer.CredentialSchema
 
     timestamps(type: :utc_datetime)

@@ -13,7 +13,7 @@ defmodule Sovra.Issuer.IssuedCredential do
     field :issued_at, :utc_datetime
     field :expires_at, :utc_datetime
 
-    belongs_to :issuer, Sovra.Issuer.IssuerRecord
+    belongs_to :issuer, Sovra.Workspaces.Workspace
     belongs_to :schema, Sovra.Issuer.CredentialSchema
 
     timestamps(type: :utc_datetime)

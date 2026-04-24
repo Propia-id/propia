@@ -4,6 +4,8 @@ defmodule Sovra.IssuerTest do
   alias Sovra.Issuer
   alias Sovra.Issuer.{CredentialOffer, TokenHash}
   alias Sovra.Crypto.P256
+  alias Sovra.Organizations.Organization
+  alias Sovra.Workspaces
 
   setup do
     # Ensure SoftwareKeyStore is running
@@ -11,8 +13,13 @@ defmodule Sovra.IssuerTest do
   end
 
   defp create_test_issuer do
-    {:ok, issuer} = Issuer.create_issuer("Test Issuer")
-    issuer
+    {:ok, org} =
+      %{name: "Test Org"}
+      |> Organization.create_changeset()
+      |> Repo.insert()
+
+    {:ok, workspace} = Workspaces.create_workspace("Test Issuer", org.id)
+    workspace
   end
 
   defp create_test_schema(issuer) do
@@ -31,15 +38,21 @@ defmodule Sovra.IssuerTest do
     schema
   end
 
-  describe "create_issuer/1" do
-    test "creates issuer with proper EOA address derived from secp256k1 keypair" do
-      {:ok, issuer} = Issuer.create_issuer("New Issuer")
+  describe "Workspaces.create_workspace/2" do
+    test "creates workspace with proper EOA address derived from secp256k1 keypair" do
+      {:ok, org} =
+        %{name: "Org #{System.unique_integer([:positive])}"}
+        |> Organization.create_changeset()
+        |> Repo.insert()
+
+      {:ok, issuer} = Workspaces.create_workspace("New Issuer", org.id)
       assert issuer.name == "New Issuer"
       assert String.starts_with?(issuer.eoa_address, "0x")
       assert String.length(issuer.eoa_address) == 42
       assert String.starts_with?(issuer.did, "did:sovra:0x")
       assert issuer.status == "active"
       refute String.starts_with?(issuer.eoa_key_id, "stub_")
+      assert issuer.organization_id == org.id
     end
   end
 

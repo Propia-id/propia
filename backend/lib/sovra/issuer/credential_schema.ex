@@ -13,7 +13,7 @@ defmodule Sovra.Issuer.CredentialSchema do
     field :validity_period, :string
     field :version, :integer, default: 1
 
-    belongs_to :issuer, Sovra.Issuer.IssuerRecord
+    belongs_to :issuer, Sovra.Workspaces.Workspace
 
     timestamps(type: :utc_datetime)
   end

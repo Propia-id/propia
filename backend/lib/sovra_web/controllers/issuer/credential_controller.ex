@@ -154,11 +154,11 @@ defmodule SovraWeb.Issuer.CredentialController do
   )
 
   def offer(conn, params) do
-    issuer_id = params["issuer_id"]
+    workspace_id = params["issuer_id"]
     schema_id = params["schema_id"]
     claims = params["claims"]
 
-    case Issuer.create_credential_offer(issuer_id, schema_id, claims) do
+    case Issuer.create_credential_offer(workspace_id, schema_id, claims) do
       {:ok, %{offer: offer, offer_uri: offer_uri, pre_authorized_code: code}} ->
         conn
         |> put_status(201)
@@ -169,7 +169,7 @@ defmodule SovraWeb.Issuer.CredentialController do
           expires_at: DateTime.to_iso8601(offer.expires_at)
         })
 
-      {:error, :issuer_not_found} ->
+      {:error, :workspace_not_found} ->
         conn |> put_status(404) |> json(%{error: "issuer_not_found"})
 
       {:error, :schema_not_found} ->

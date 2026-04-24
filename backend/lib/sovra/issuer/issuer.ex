@@ -1,10 +1,12 @@
 defmodule Sovra.Issuer do
   @moduledoc """
-  Credential issuance domain — manages credential types, issuance flows, and issuer state.
+  Credential issuance domain — credential schemas, offers, and delivery.
+
+  Workspace lifecycle (creation, lookup, listing) lives in `Sovra.Workspaces`.
+  This module only deals with the act of issuing credentials from a workspace.
   """
 
   alias Sovra.Issuer.{
-    IssuerRecord,
     CredentialSchema,
     CredentialOffer,
     IssuedCredential,
@@ -13,9 +15,11 @@ defmodule Sovra.Issuer do
     ClaimUtils
   }
 
-  alias Sovra.Crypto.{Key, P256}
-  alias Sovra.Ethereum.{DIDRegistry, IssuerRegistry, RevocationRegistry}
+  alias Sovra.Crypto.P256
+  alias Sovra.Ethereum.{IssuerRegistry, RevocationRegistry}
   alias Sovra.Repo
+  alias Sovra.Workspaces
+  alias Sovra.Workspaces.Workspace
 
   import Ecto.Query
 
@@ -23,93 +27,14 @@ defmodule Sovra.Issuer do
 
   @c_nonce_expires_in 86400
 
-  # ── Issuer Management ──────────────────────────────────
-
-  def create_issuer(name) do
-    issuer_uuid = Ecto.UUID.generate()
-
-    with {:ok, %{key_id: key_id, public_key_x: x, public_key_y: y}} <-
-           Key.generate_key("issuer_#{issuer_uuid}_signing"),
-         {:ok, eoa_address, eoa_key_id} <- generate_eoa_keypair(issuer_uuid) do
-      changeset =
-        IssuerRecord.create_changeset(%{
-          name: name,
-          eoa_address: eoa_address,
-          eoa_key_id: eoa_key_id,
-          signing_key_id: key_id,
-          signing_public_key_x: x,
-          signing_public_key_y: y,
-          did: "did:sovra:#{eoa_address}"
-        })
-
-      Ecto.Multi.new()
-      |> Ecto.Multi.insert(:issuer, changeset)
-      |> Ecto.Multi.run(:register_did, fn _repo, %{issuer: issuer} ->
-        case register_did_on_chain(issuer.eoa_address, x, y) do
-          :ok -> {:ok, :registered}
-          {:error, :ethereum_not_configured} -> {:ok, :skipped}
-          {:error, reason} -> {:error, reason}
-        end
-      end)
-      |> Repo.transaction()
-      |> case do
-        {:ok, %{issuer: issuer}} -> {:ok, issuer}
-        {:error, :register_did, reason, _} -> {:error, {:chain_registration_failed, reason}}
-        {:error, :issuer, changeset, _} -> {:error, changeset}
-      end
-    end
-  end
-
-  defp generate_eoa_keypair(issuer_uuid) do
-    private_key = :crypto.strong_rand_bytes(32)
-
-    case ExSecp256k1.create_public_key(private_key) do
-      {:ok, public_key} ->
-        <<4, pub_bytes::binary-64>> = public_key
-        address_bytes = ExKeccak.hash_256(pub_bytes) |> binary_part(12, 20)
-        eoa_address = "0x" <> Base.encode16(address_bytes, case: :lower)
-
-        eoa_key_id = "issuer_#{issuer_uuid}_eoa"
-
-        {:ok, eoa_address, eoa_key_id}
-
-      {:error, _} = error ->
-        error
-    end
-  end
-
-  def get_issuer(id) do
-    case Repo.get(IssuerRecord, id) do
-      nil -> {:error, :issuer_not_found}
-      issuer -> {:ok, issuer}
-    end
-  end
-
-  def list_issuers do
-    from(i in IssuerRecord,
-      left_join: a in Sovra.Issuer.IssuerAccount,
-      on: a.issuer_id == i.id,
-      order_by: [desc: i.inserted_at],
-      select: %{id: i.id, name: i.name, did: i.did, status: i.status, email: a.email}
-    )
-    |> Repo.all()
-  end
-
-  def get_first_issuer do
-    case Repo.one(from(i in IssuerRecord, where: i.status == "active", limit: 1)) do
-      nil -> {:error, :no_issuers}
-      issuer -> {:ok, issuer}
-    end
-  end
-
   # ── Schema Management ──────────────────────────────────
 
-  def create_schema(issuer_id, attrs) do
-    attrs = Map.put(attrs, :issuer_id, issuer_id)
+  def create_schema(workspace_id, attrs) do
+    attrs = Map.put(attrs, :issuer_id, workspace_id)
 
-    with {:ok, issuer} <- get_issuer(issuer_id),
+    with {:ok, workspace} <- Workspaces.get_workspace(workspace_id),
          {:ok, schema} <- CredentialSchema.create_changeset(attrs) |> Repo.insert() do
-      case register_credential_type_on_chain(issuer.eoa_address, schema.credential_type) do
+      case register_credential_type_on_chain(workspace.eoa_address, schema.credential_type) do
         :ok ->
           :ok
 
@@ -121,8 +46,8 @@ defmodule Sovra.Issuer do
     end
   end
 
-  def get_schema(issuer_id, schema_id) do
-    case Repo.get_by(CredentialSchema, issuer_id: issuer_id, schema_id: schema_id) do
+  def get_schema(workspace_id, schema_id) do
+    case Repo.get_by(CredentialSchema, issuer_id: workspace_id, schema_id: schema_id) do
       nil -> {:error, :schema_not_found}
       schema -> {:ok, schema}
     end
@@ -135,13 +60,16 @@ defmodule Sovra.Issuer do
     end
   end
 
-  def list_schemas(issuer_id) do
-    from(s in CredentialSchema, where: s.issuer_id == ^issuer_id, order_by: [asc: :inserted_at])
+  def list_schemas(workspace_id) do
+    from(s in CredentialSchema,
+      where: s.issuer_id == ^workspace_id,
+      order_by: [asc: :inserted_at]
+    )
     |> Repo.all()
   end
 
-  def delete_schema(issuer_id, schema_id) do
-    case Repo.get_by(CredentialSchema, id: schema_id, issuer_id: issuer_id) do
+  def delete_schema(workspace_id, schema_id) do
+    case Repo.get_by(CredentialSchema, id: schema_id, issuer_id: workspace_id) do
       nil -> {:error, :schema_not_found}
       schema -> Repo.delete(schema)
     end
@@ -149,18 +77,18 @@ defmodule Sovra.Issuer do
 
   # ── Offer & Credential Queries ──────────────────────────
 
-  def list_offers(issuer_id) do
+  def list_offers(workspace_id) do
     from(o in CredentialOffer,
-      where: o.issuer_id == ^issuer_id,
+      where: o.issuer_id == ^workspace_id,
       order_by: [desc: :inserted_at],
       preload: [:schema]
     )
     |> Repo.all()
   end
 
-  def list_issued_credentials(issuer_id) do
+  def list_issued_credentials(workspace_id) do
     from(c in IssuedCredential,
-      where: c.issuer_id == ^issuer_id,
+      where: c.issuer_id == ^workspace_id,
       order_by: [desc: :issued_at],
       preload: [:schema]
     )
@@ -169,11 +97,11 @@ defmodule Sovra.Issuer do
 
   # ── Credential Offer ───────────────────────────────────
 
-  def create_credential_offer(issuer_id, schema_id, claims) do
-    with {:ok, _issuer} <- get_issuer(issuer_id),
-         {:ok, schema} <- get_schema(issuer_id, schema_id),
+  def create_credential_offer(workspace_id, schema_id, claims) do
+    with {:ok, _workspace} <- Workspaces.get_workspace(workspace_id),
+         {:ok, schema} <- get_schema(workspace_id, schema_id),
          :ok <- validate_claims(schema, claims),
-         {:ok, status_list_index} <- assign_status_list_index(issuer_id) do
+         {:ok, status_list_index} <- assign_status_list_index(workspace_id) do
       {plaintext_code, code_hash} = TokenHash.generate_and_hash(32)
 
       expires_at =
@@ -181,7 +109,7 @@ defmodule Sovra.Issuer do
 
       changeset =
         CredentialOffer.create_changeset(%{
-          issuer_id: issuer_id,
+          issuer_id: workspace_id,
           schema_id: schema.id,
           pre_authorized_code_hash: code_hash,
           claims: claims,
@@ -310,10 +238,10 @@ defmodule Sovra.Issuer do
   defp deliver_credential(offer, holder_did) do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
 
-    with {:ok, issuer} <- get_issuer(offer.issuer_id),
+    with {:ok, workspace} <- Workspaces.get_workspace(offer.issuer_id),
          {:ok, schema} <- get_schema_by_id(offer.schema_id),
          {:ok, sd_jwt} <-
-           SDJWT.build(issuer, schema, offer.claims, holder_did,
+           SDJWT.build(workspace, schema, offer.claims, holder_did,
              status_list_index: offer.status_list_index
            ) do
       # Extract exp from the freshly-built SD-JWT
@@ -417,7 +345,7 @@ defmodule Sovra.Issuer do
     with {:ok, cred} <- get_issued_credential(credential_id),
          :ok <- validate_status_transition(cred, "revoked"),
          {:ok, _tx} <-
-           RevocationRegistry.revoke(get_issuer_eoa(cred.issuer_id), cred.status_list_index) do
+           RevocationRegistry.revoke(get_workspace_eoa(cred.issuer_id), cred.status_list_index) do
       cred
       |> IssuedCredential.status_changeset("revoked")
       |> Repo.update()
@@ -428,7 +356,7 @@ defmodule Sovra.Issuer do
     with {:ok, cred} <- get_issued_credential(credential_id),
          :ok <- validate_status_transition(cred, "suspended"),
          {:ok, _tx} <-
-           RevocationRegistry.suspend(get_issuer_eoa(cred.issuer_id), cred.status_list_index) do
+           RevocationRegistry.suspend(get_workspace_eoa(cred.issuer_id), cred.status_list_index) do
       cred
       |> IssuedCredential.status_changeset("suspended")
       |> Repo.update()
@@ -439,7 +367,7 @@ defmodule Sovra.Issuer do
     with {:ok, cred} <- get_issued_credential(credential_id),
          :ok <- validate_status_transition(cred, "issued"),
          {:ok, _tx} <-
-           RevocationRegistry.unsuspend(get_issuer_eoa(cred.issuer_id), cred.status_list_index) do
+           RevocationRegistry.unsuspend(get_workspace_eoa(cred.issuer_id), cred.status_list_index) do
       cred
       |> IssuedCredential.status_changeset("issued")
       |> Repo.update()
@@ -459,8 +387,8 @@ defmodule Sovra.Issuer do
   defp validate_status_transition(%{status: "suspended"}, "issued"), do: :ok
   defp validate_status_transition(_cred, _target), do: {:error, :invalid_status_transition}
 
-  defp get_issuer_eoa(issuer_id) do
-    Repo.get!(IssuerRecord, issuer_id).eoa_address
+  defp get_workspace_eoa(workspace_id) do
+    Repo.get!(Workspace, workspace_id).eoa_address
   end
 
   # ── Status List Index Assignment ─────────────────────
@@ -513,19 +441,6 @@ defmodule Sovra.Issuer do
       with {:ok, _} <- RevocationRegistry.initialize_bitmap(eoa_address, 0),
            {:ok, _} <- RevocationRegistry.initialize_bitmap(eoa_address, 1) do
         :ok
-      end
-    else
-      {:error, :ethereum_not_configured}
-    end
-  end
-
-  defp register_did_on_chain(eoa_address, pub_key_x, pub_key_y) do
-    if ethereum_configured?() do
-      service_endpoint = ClaimUtils.base_url()
-
-      case DIDRegistry.register_issuer_did(eoa_address, pub_key_x, pub_key_y, service_endpoint) do
-        {:ok, _tx_hash} -> :ok
-        {:error, _} = error -> error
       end
     else
       {:error, :ethereum_not_configured}

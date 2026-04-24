@@ -11,20 +11,20 @@ defmodule Sovra.Issuer.IssuerAccount do
     field :password_hash, :string, redact: true
     field :role, :string, default: "issuer"
 
-    belongs_to :issuer, Sovra.Issuer.IssuerRecord
+    belongs_to :workspace, Sovra.Workspaces.Workspace
 
     timestamps(type: :utc_datetime)
   end
 
   def registration_changeset(account \\ %__MODULE__{}, attrs) do
     account
-    |> cast(attrs, [:email, :password, :issuer_id])
+    |> cast(attrs, [:email, :password, :workspace_id])
     |> update_change(:email, &String.downcase/1)
-    |> validate_required([:email, :password, :issuer_id])
+    |> validate_required([:email, :password, :workspace_id])
     |> validate_format(:email, ~r/^[^\s]+@[^\s]+\.[^\s]+$/, message: "must be a valid email")
     |> validate_length(:password, min: 12, message: "must be at least 12 characters")
     |> unique_constraint(:email)
-    |> unique_constraint(:issuer_id)
+    |> unique_constraint(:workspace_id)
     |> put_change(:role, "issuer")
     |> put_password_hash()
   end

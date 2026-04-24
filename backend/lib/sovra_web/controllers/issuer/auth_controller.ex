@@ -68,7 +68,7 @@ defmodule SovraWeb.Issuer.AuthController do
     http_only: true,
     secure: Application.compile_env(:sovra, :env) == :prod,
     same_site: "Strict",
-    path: "/api/v1/issuer",
+    path: "/api/v1",
     max_age: 3600
   ]
 
@@ -79,11 +79,16 @@ defmodule SovraWeb.Issuer.AuthController do
         |> put_resp_cookie(@cookie_name, token, @cookie_opts)
         |> json(%{role: "admin"})
 
-      {:ok, %{token: token, issuer: issuer}} ->
+      {:ok, %{token: token, workspace: workspace}} ->
         conn
         |> put_resp_cookie(@cookie_name, token, @cookie_opts)
         |> json(%{
-          issuer: %{id: issuer.id, name: issuer.name, did: issuer.did, status: issuer.status}
+          issuer: %{
+            id: workspace.id,
+            name: workspace.name,
+            did: workspace.did,
+            status: workspace.status
+          }
         })
 
       {:error, :invalid_credentials} ->
@@ -100,7 +105,7 @@ defmodule SovraWeb.Issuer.AuthController do
     end
 
     conn
-    |> delete_resp_cookie(@cookie_name, path: "/api/v1/issuer")
+    |> delete_resp_cookie(@cookie_name, path: "/api/v1")
     |> json(%{ok: true})
   end
 end

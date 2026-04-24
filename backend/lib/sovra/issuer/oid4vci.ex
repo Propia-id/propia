@@ -5,9 +5,11 @@ defmodule Sovra.Issuer.OID4VCI do
   """
 
   alias Sovra.Issuer.ClaimUtils
+  alias Sovra.Repo
 
-  def build_metadata(issuer, schemas) do
+  def build_metadata(workspace, schemas) do
     base_url = ClaimUtils.base_url()
+    workspace = Repo.preload(workspace, :organization)
 
     configs =
       Map.new(schemas, fn schema ->
@@ -17,7 +19,7 @@ defmodule Sovra.Issuer.OID4VCI do
            "credential_definition" => %{
              "type" => ["VerifiableCredential", schema.credential_type]
            },
-           "display" => [%{"name" => schema.name}]
+           "display" => [credential_display(schema, workspace)]
          }}
       end)
 
@@ -26,7 +28,30 @@ defmodule Sovra.Issuer.OID4VCI do
       "credential_endpoint" => "#{base_url}/api/v1/issuer/credential",
       "token_endpoint" => "#{base_url}/api/v1/issuer/token",
       "credential_configurations_supported" => configs,
-      "display" => [%{"name" => issuer.name}]
+      "display" => [display_entry(workspace)]
     }
   end
+
+  defp display_entry(%{organization: %{name: name} = org}) when is_binary(name) do
+    %{"name" => name}
+    |> maybe_put("logo", logo_entry(org.logo_url))
+    |> maybe_put("url", org.website)
+  end
+
+  defp display_entry(workspace), do: %{"name" => workspace.name}
+
+  defp credential_display(schema, %{organization: %{} = org}) do
+    %{"name" => schema.name}
+    |> maybe_put("logo", logo_entry(org.logo_url))
+    |> maybe_put("url", org.website)
+  end
+
+  defp credential_display(schema, _workspace), do: %{"name" => schema.name}
+
+  defp logo_entry(nil), do: nil
+  defp logo_entry(""), do: nil
+  defp logo_entry(uri) when is_binary(uri), do: %{"uri" => uri}
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 end

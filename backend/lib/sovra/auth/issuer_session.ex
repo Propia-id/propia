@@ -10,12 +10,12 @@ defmodule Sovra.Auth.IssuerSession do
 
   @session_ttl 3600
 
-  def create(account_id, issuer_id, role \\ "issuer") do
+  def create(account_id, workspace_id, role \\ "issuer") do
     now = System.system_time(:second)
 
     claims = %{
       "sub" => account_id,
-      "issuer_id" => issuer_id,
+      "workspace_id" => workspace_id,
       "role" => role,
       "scope" => "issuer_admin",
       "iss" => "sovra-issuer",
@@ -58,7 +58,7 @@ defmodule Sovra.Auth.IssuerSession do
               {:ok,
                %{
                  account_id: sub,
-                 issuer_id: fields["issuer_id"],
+                 workspace_id: fields["workspace_id"],
                  role: fields["role"] || "issuer"
                }}
           end

@@ -4,6 +4,7 @@ defmodule SovraWeb.Issuer.AdminController do
 
   alias Sovra.Issuer
   alias Sovra.Issuer.Accounts
+  alias Sovra.Workspaces
 
   tags(["Issuer Admin"])
   security([%{"IssuerCookieAuth" => []}])
@@ -287,11 +288,16 @@ defmodule SovraWeb.Issuer.AdminController do
         "issuer_name" => issuer_name
       }) do
     case Accounts.register_issuer(email, password, issuer_name) do
-      {:ok, %{token: _token, account: _account, issuer: issuer}} ->
+      {:ok, %{token: _token, account: _account, workspace: workspace}} ->
         conn
         |> put_status(201)
         |> json(%{
-          issuer: %{id: issuer.id, name: issuer.name, did: issuer.did, status: issuer.status},
+          issuer: %{
+            id: workspace.id,
+            name: workspace.name,
+            did: workspace.did,
+            status: workspace.status
+          },
           email: String.downcase(email)
         })
 
@@ -306,27 +312,27 @@ defmodule SovraWeb.Issuer.AdminController do
   end
 
   def list_issuers(conn, _params) do
-    issuers = Issuer.list_issuers()
+    workspaces = Workspaces.list_workspaces()
 
     json(conn, %{
       issuers:
-        Enum.map(issuers, fn i ->
-          %{id: i.id, name: i.name, did: i.did, status: i.status, email: i.email}
+        Enum.map(workspaces, fn w ->
+          %{id: w.id, name: w.name, did: w.did, status: w.status, email: w.email}
         end)
     })
   end
 
   def get_issuer(conn, _params) do
-    issuer_id = conn.assigns.current_issuer_account.issuer_id
+    workspace_id = conn.assigns.current_issuer_account.workspace_id
 
-    case Issuer.get_issuer(issuer_id) do
-      {:ok, issuer} ->
+    case Workspaces.get_workspace(workspace_id) do
+      {:ok, workspace} ->
         json(conn, %{
-          id: issuer.id,
-          name: issuer.name,
-          did: issuer.did,
-          eoa_address: issuer.eoa_address,
-          status: issuer.status
+          id: workspace.id,
+          name: workspace.name,
+          did: workspace.did,
+          eoa_address: workspace.eoa_address,
+          status: workspace.status
         })
 
       {:error, _} ->
@@ -335,7 +341,7 @@ defmodule SovraWeb.Issuer.AdminController do
   end
 
   def create_schema(conn, params) do
-    issuer_id = conn.assigns.current_issuer_account.issuer_id
+    workspace_id = conn.assigns.current_issuer_account.workspace_id
 
     attrs = %{
       schema_id: params["schema_id"],
@@ -345,7 +351,7 @@ defmodule SovraWeb.Issuer.AdminController do
       validity_period: to_string(params["validity_period"] || "1y")
     }
 
-    case Issuer.create_schema(issuer_id, attrs) do
+    case Issuer.create_schema(workspace_id, attrs) do
       {:ok, schema} ->
         conn
         |> put_status(201)
@@ -369,8 +375,8 @@ defmodule SovraWeb.Issuer.AdminController do
   end
 
   def list_schemas(conn, _params) do
-    issuer_id = conn.assigns.current_issuer_account.issuer_id
-    schemas = Issuer.list_schemas(issuer_id)
+    workspace_id = conn.assigns.current_issuer_account.workspace_id
+    schemas = Issuer.list_schemas(workspace_id)
 
     json(conn, %{
       schemas:
@@ -389,9 +395,9 @@ defmodule SovraWeb.Issuer.AdminController do
   end
 
   def delete_schema(conn, %{"id" => schema_id}) do
-    issuer_id = conn.assigns.current_issuer_account.issuer_id
+    workspace_id = conn.assigns.current_issuer_account.workspace_id
 
-    case Issuer.delete_schema(issuer_id, schema_id) do
+    case Issuer.delete_schema(workspace_id, schema_id) do
       {:ok, _} ->
         conn |> put_status(204) |> text("")
 
@@ -401,10 +407,10 @@ defmodule SovraWeb.Issuer.AdminController do
   end
 
   def create_offer(conn, params) do
-    issuer_id = conn.assigns.current_issuer_account.issuer_id
+    workspace_id = conn.assigns.current_issuer_account.workspace_id
 
     case Issuer.create_credential_offer(
-           issuer_id,
+           workspace_id,
            params["schema_id"],
            params["claims"] || %{}
          ) do
@@ -434,7 +440,7 @@ defmodule SovraWeb.Issuer.AdminController do
       {:error, :schema_not_found} ->
         conn |> put_status(404) |> json(%{error: "schema_not_found"})
 
-      {:error, :issuer_not_found} ->
+      {:error, :workspace_not_found} ->
         conn |> put_status(404) |> json(%{error: "issuer_not_found"})
 
       {:error, reason} ->
@@ -443,8 +449,8 @@ defmodule SovraWeb.Issuer.AdminController do
   end
 
   def list_offers(conn, _params) do
-    issuer_id = conn.assigns.current_issuer_account.issuer_id
-    offers = Issuer.list_offers(issuer_id)
+    workspace_id = conn.assigns.current_issuer_account.workspace_id
+    offers = Issuer.list_offers(workspace_id)
 
     json(conn, %{
       offers:
@@ -558,8 +564,8 @@ defmodule SovraWeb.Issuer.AdminController do
   )
 
   def list_issued_credentials(conn, _params) do
-    issuer_id = conn.assigns.current_issuer_account.issuer_id
-    credentials = Issuer.list_issued_credentials(issuer_id)
+    workspace_id = conn.assigns.current_issuer_account.workspace_id
+    credentials = Issuer.list_issued_credentials(workspace_id)
 
     json(conn, %{
       credentials:

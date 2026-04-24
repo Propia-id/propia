@@ -29,6 +29,14 @@ defmodule SovraWeb.Router do
     plug SovraWeb.Plugs.RequireAdminPlug
   end
 
+  pipeline :require_org_admin do
+    plug SovraWeb.Plugs.RequireOrgAdminPlug
+  end
+
+  pipeline :require_org_owner do
+    plug SovraWeb.Plugs.RequireOrgOwnerPlug
+  end
+
   # OpenAPI spec & Swagger UI
   scope "/api" do
     pipe_through :api
@@ -102,6 +110,30 @@ defmodule SovraWeb.Router do
 
     get "/issuers", AdminController, :list_issuers
     post "/issuers", AdminController, :create_issuer_account
+  end
+
+  # Organizations API (authenticated; any member can read their orgs)
+  scope "/api/v1/organizations", SovraWeb.Organizations do
+    pipe_through [:api, :issuer_session]
+
+    post "/", OrganizationController, :create
+    get "/", OrganizationController, :index
+    get "/:org_id", OrganizationController, :show
+  end
+
+  # Organization admin operations (owner or admin)
+  scope "/api/v1/organizations", SovraWeb.Organizations do
+    pipe_through [:api, :issuer_session, :require_org_admin]
+
+    patch "/:org_id", OrganizationController, :update
+    get "/:org_id/members", OrganizationController, :list_members
+  end
+
+  # Organization owner-only operations
+  scope "/api/v1/organizations", SovraWeb.Organizations do
+    pipe_through [:api, :issuer_session, :require_org_owner]
+
+    post "/:org_id/deactivate", OrganizationController, :deactivate
   end
 
   # Verification API
