@@ -69,7 +69,8 @@ defmodule Sovra.MixProject do
       {:cors_plug, "~> 3.0"},
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"},
-      {:open_api_spex, "~> 3.21"}
+      {:open_api_spex, "~> 3.21"},
+      {:oban, "~> 2.18"}
     ]
   end
 

@@ -70,7 +70,7 @@ defmodule SovraWeb.Plugs.RequireOrgAdminPlugTest do
     assert Jason.decode!(conn.resp_body) == %{"error" => "org_admin_required"}
   end
 
-  test "rejects non-member", %{conn: conn} do
+  test "rejects non-member with 404 (no existence leak)", %{conn: conn} do
     owner = user("owner")
     stranger = user("stranger")
 
@@ -80,7 +80,8 @@ defmodule SovraWeb.Plugs.RequireOrgAdminPlugTest do
     conn = conn_for(conn, stranger, org.id) |> RequireOrgAdminPlug.call([])
 
     assert conn.halted
-    assert conn.status == 403
+    assert conn.status == 404
+    assert Jason.decode!(conn.resp_body) == %{"error" => "organization_not_found"}
   end
 
   test "rejects platform admin with no org membership (no bypass)", %{conn: conn} do
@@ -93,6 +94,6 @@ defmodule SovraWeb.Plugs.RequireOrgAdminPlugTest do
     conn = conn_for(conn, admin, org.id) |> RequireOrgAdminPlug.call([])
 
     assert conn.halted
-    assert conn.status == 403
+    assert conn.status == 404
   end
 end

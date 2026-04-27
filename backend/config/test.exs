@@ -22,11 +22,15 @@ config :sovra, SovraWeb.Endpoint,
 # Co-signing server test config
 config :sovra,
   key_store: Sovra.Crypto.SoftwareKeyStore,
+  hmac_key_store: Sovra.Crypto.DatabaseHmacStore,
   auth_provider: Sovra.Auth.MockAuthProvider,
   session_secret: "test-secret-must-be-at-least-32-bytes-long-for-hmac!",
   google_client_id: "test-client-id",
   google_client_secret: "test-client-secret",
   google_redirect_uri: "http://localhost:4002/api/v1/holder/auth/callback"
+
+# Oban — manual mode so jobs don't run unless asserted on
+config :sovra, Oban, testing: :manual
 
 # Print only warnings and errors during test
 config :logger, level: :warning

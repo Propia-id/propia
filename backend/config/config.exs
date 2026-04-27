@@ -12,6 +12,7 @@ config :sovra,
   ecto_repos: [Sovra.Repo],
   generators: [timestamp_type: :utc_datetime],
   key_store: Sovra.Crypto.VaultKeyStore,
+  hmac_key_store: Sovra.Crypto.VaultHmacStore,
   auth_provider: Sovra.Auth.GoogleAuthProvider,
   session_secret: "dev-only-secret-must-be-at-least-32-bytes-long!",
   issuer: [base_url: System.get_env("ISSUER_BASE_URL", "http://localhost:4000")],
@@ -45,6 +46,12 @@ config :phoenix, :json_library, Jason
 # Hammer rate limiter
 config :hammer,
   backend: {Hammer.Backend.ETS, [expiry_ms: 300_000, cleanup_interval_ms: 60_000]}
+
+# Oban job runner (webhook delivery)
+config :sovra, Oban,
+  repo: Sovra.Repo,
+  queues: [webhooks: 10],
+  plugins: [{Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7}]
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.

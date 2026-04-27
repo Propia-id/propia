@@ -9,7 +9,6 @@ defmodule Sovra.Issuer.Accounts do
   alias Sovra.Organizations.Organization
   alias Sovra.Repo
   alias Sovra.Workspaces
-  alias Sovra.Workspaces.Workspace
 
   import Ecto.Query
 
@@ -17,14 +16,26 @@ defmodule Sovra.Issuer.Accounts do
     Repo.transaction(fn ->
       with {:ok, organization} <-
              %{name: workspace_name} |> Organization.create_changeset() |> Repo.insert(),
-           {:ok, workspace} <- Workspaces.create_workspace(workspace_name, organization.id),
            {:ok, account} <-
-             %{email: email, password: password, workspace_id: workspace.id}
+             %{email: email, password: password}
              |> IssuerAccount.registration_changeset()
              |> Repo.insert(),
-           {:ok, _mem} <- Organizations.add_member(organization.id, account.id, "owner") do
+           {:ok, _org_mem} <- Organizations.add_member(organization.id, account.id, "owner"),
+           {:ok, %{workspace: workspace, webhook_secret: webhook_secret}} <-
+             Workspaces.create_workspace(
+               organization.id,
+               %{name: workspace_name},
+               account.id
+             ) do
         {:ok, token} = IssuerSession.create(account.id, workspace.id, "issuer")
-        %{token: token, account: account, workspace: workspace, organization: organization}
+
+        %{
+          token: token,
+          account: account,
+          workspace: workspace,
+          organization: organization,
+          webhook_secret: webhook_secret
+        }
       else
         {:error, reason} -> Repo.rollback(reason)
       end
@@ -46,16 +57,19 @@ defmodule Sovra.Issuer.Accounts do
 
     cond do
       account && Bcrypt.verify_pass(password, account.password_hash) ->
-        {:ok, token} = IssuerSession.create(account.id, account.workspace_id, account.role)
+        workspaces = Workspaces.list_workspaces_for_user(account.id)
+        current_workspace_id = workspaces |> List.first() |> get_id()
 
-        case account.role do
-          "admin" ->
-            {:ok, %{token: token, account: account, role: "admin"}}
+        {:ok, token} = IssuerSession.create(account.id, current_workspace_id, account.role)
 
-          _ ->
-            workspace = Repo.get!(Workspace, account.workspace_id)
-            {:ok, %{token: token, account: account, workspace: workspace}}
-        end
+        {:ok,
+         %{
+           token: token,
+           account: account,
+           role: account.role,
+           workspaces: workspaces,
+           current_workspace_id: current_workspace_id
+         }}
 
       account ->
         {:error, :invalid_credentials}
@@ -65,4 +79,7 @@ defmodule Sovra.Issuer.Accounts do
         {:error, :invalid_credentials}
     end
   end
+
+  defp get_id(nil), do: nil
+  defp get_id(%{id: id}), do: id
 end

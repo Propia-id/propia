@@ -14,10 +14,17 @@ defmodule SovraWeb.Plugs.RequireOrgAdminPlug do
 
   def call(conn, _opts) do
     with %{account_id: account_id} <- conn.assigns[:current_issuer_account],
-         org_id when is_binary(org_id) <- conn.path_params["org_id"] || conn.params["org_id"],
-         {:ok, role} when role in ~w(owner admin) <-
-           Organizations.member_role(org_id, account_id) do
-      assign(conn, :current_org_role, role)
+         org_id when is_binary(org_id) <- conn.path_params["org_id"] || conn.params["org_id"] do
+      case Organizations.member_role(org_id, account_id) do
+        {:ok, role} when role in ~w(owner admin) ->
+          assign(conn, :current_org_role, role)
+
+        {:ok, _member_role} ->
+          conn |> put_status(403) |> json(%{error: "org_admin_required"}) |> halt()
+
+        {:error, :not_a_member} ->
+          conn |> put_status(404) |> json(%{error: "organization_not_found"}) |> halt()
+      end
     else
       _ ->
         conn |> put_status(403) |> json(%{error: "org_admin_required"}) |> halt()

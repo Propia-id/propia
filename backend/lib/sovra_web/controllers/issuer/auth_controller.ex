@@ -79,16 +79,19 @@ defmodule SovraWeb.Issuer.AuthController do
         |> put_resp_cookie(@cookie_name, token, @cookie_opts)
         |> json(%{role: "admin"})
 
-      {:ok, %{token: token, workspace: workspace}} ->
+      {:ok,
+       %{
+         token: token,
+         role: role,
+         workspaces: workspaces,
+         current_workspace_id: current_workspace_id
+       }} ->
         conn
         |> put_resp_cookie(@cookie_name, token, @cookie_opts)
         |> json(%{
-          issuer: %{
-            id: workspace.id,
-            name: workspace.name,
-            did: workspace.did,
-            status: workspace.status
-          }
+          role: role,
+          workspaces: workspaces,
+          current_workspace_id: current_workspace_id
         })
 
       {:error, :invalid_credentials} ->

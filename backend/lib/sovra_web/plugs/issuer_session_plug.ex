@@ -28,6 +28,8 @@ defmodule SovraWeb.Plugs.IssuerSessionPlug do
             workspace_id: workspace_id,
             role: role
           })
+          |> assign(:current_workspace_id, workspace_id)
+          |> assign(:current_auth_method, :session)
           |> assign(:current_session_token, token)
 
         {:error, :expired} ->

@@ -265,10 +265,22 @@ defmodule Sovra.Issuer do
 
       Repo.transaction(fn ->
         case Repo.insert(issued_cred_changeset) do
-          {:ok, _cred} ->
+          {:ok, cred} ->
             case Repo.update(CredentialOffer.issued_changeset(offer)) do
-              {:ok, _} -> sd_jwt
-              {:error, reason} -> Repo.rollback(reason)
+              {:ok, _} ->
+                {:ok, _} =
+                  Sovra.Webhooks.enqueue(offer.issuer_id, "credential.issued", %{
+                    "credential_id" => cred.id,
+                    "holder_did" => cred.holder_did,
+                    "schema_type" => schema.credential_type,
+                    "issued_at" => DateTime.to_iso8601(cred.issued_at),
+                    "expires_at" => DateTime.to_iso8601(cred.expires_at)
+                  })
+
+                sd_jwt
+
+              {:error, reason} ->
+                Repo.rollback(reason)
             end
 
           {:error, reason} ->
@@ -341,41 +353,69 @@ defmodule Sovra.Issuer do
 
   # ── Credential Status Management ─────────────────────
 
-  def revoke_credential(credential_id) do
-    with {:ok, cred} <- get_issued_credential(credential_id),
-         :ok <- validate_status_transition(cred, "revoked"),
-         {:ok, _tx} <-
-           RevocationRegistry.revoke(get_workspace_eoa(cred.issuer_id), cred.status_list_index) do
-      cred
-      |> IssuedCredential.status_changeset("revoked")
-      |> Repo.update()
+  def revoke_credential(workspace_id, credential_id) do
+    change_credential_status(
+      workspace_id,
+      credential_id,
+      "revoked",
+      "credential.revoked",
+      &RevocationRegistry.revoke/2
+    )
+  end
+
+  def suspend_credential(workspace_id, credential_id) do
+    change_credential_status(
+      workspace_id,
+      credential_id,
+      "suspended",
+      "credential.suspended",
+      &RevocationRegistry.suspend/2
+    )
+  end
+
+  def unsuspend_credential(workspace_id, credential_id) do
+    change_credential_status(
+      workspace_id,
+      credential_id,
+      "issued",
+      "credential.unsuspended",
+      &RevocationRegistry.unsuspend/2
+    )
+  end
+
+  defp change_credential_status(workspace_id, credential_id, new_status, event, chain_call) do
+    with {:ok, cred} <- get_issued_credential(workspace_id, credential_id),
+         :ok <- validate_status_transition(cred, new_status),
+         :ok <- maybe_sync_chain_status(chain_call, workspace_id, cred.status_list_index),
+         {:ok, updated} <-
+           cred |> IssuedCredential.status_changeset(new_status) |> Repo.update() do
+      {:ok, schema} = get_schema_by_id(updated.schema_id)
+
+      {:ok, _job} =
+        Sovra.Webhooks.enqueue(workspace_id, event, %{
+          "credential_id" => updated.id,
+          "holder_did" => updated.holder_did,
+          "schema_type" => schema.credential_type,
+          "status_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+        })
+
+      {:ok, updated}
     end
   end
 
-  def suspend_credential(credential_id) do
-    with {:ok, cred} <- get_issued_credential(credential_id),
-         :ok <- validate_status_transition(cred, "suspended"),
-         {:ok, _tx} <-
-           RevocationRegistry.suspend(get_workspace_eoa(cred.issuer_id), cred.status_list_index) do
-      cred
-      |> IssuedCredential.status_changeset("suspended")
-      |> Repo.update()
+  defp maybe_sync_chain_status(chain_call, workspace_id, index) do
+    if ethereum_configured?() do
+      case chain_call.(get_workspace_eoa(workspace_id), index) do
+        {:ok, _tx} -> :ok
+        {:error, _} = error -> error
+      end
+    else
+      :ok
     end
   end
 
-  def unsuspend_credential(credential_id) do
-    with {:ok, cred} <- get_issued_credential(credential_id),
-         :ok <- validate_status_transition(cred, "issued"),
-         {:ok, _tx} <-
-           RevocationRegistry.unsuspend(get_workspace_eoa(cred.issuer_id), cred.status_list_index) do
-      cred
-      |> IssuedCredential.status_changeset("issued")
-      |> Repo.update()
-    end
-  end
-
-  defp get_issued_credential(id) do
-    case Repo.get(IssuedCredential, id) do
+  defp get_issued_credential(workspace_id, id) do
+    case Repo.get_by(IssuedCredential, id: id, issuer_id: workspace_id) do
       nil -> {:error, :credential_not_found}
       cred -> {:ok, cred}
     end

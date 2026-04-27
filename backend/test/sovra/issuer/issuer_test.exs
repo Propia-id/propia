@@ -2,7 +2,7 @@ defmodule Sovra.IssuerTest do
   use Sovra.DataCase, async: false
 
   alias Sovra.Issuer
-  alias Sovra.Issuer.{CredentialOffer, TokenHash}
+  alias Sovra.Issuer.{CredentialOffer, IssuerAccount, TokenHash}
   alias Sovra.Crypto.P256
   alias Sovra.Organizations.Organization
   alias Sovra.Workspaces
@@ -12,13 +12,28 @@ defmodule Sovra.IssuerTest do
     :ok
   end
 
+  defp create_test_user do
+    {:ok, account} =
+      IssuerAccount.admin_changeset(%{
+        email: "owner-#{System.unique_integer([:positive])}@example.com",
+        password: "a-very-strong-password-123"
+      })
+      |> Repo.insert()
+
+    account
+  end
+
   defp create_test_issuer do
     {:ok, org} =
       %{name: "Test Org"}
       |> Organization.create_changeset()
       |> Repo.insert()
 
-    {:ok, workspace} = Workspaces.create_workspace("Test Issuer", org.id)
+    user = create_test_user()
+
+    {:ok, %{workspace: workspace}} =
+      Workspaces.create_workspace(org.id, %{name: "Test Issuer"}, user.id)
+
     workspace
   end
 
@@ -38,14 +53,18 @@ defmodule Sovra.IssuerTest do
     schema
   end
 
-  describe "Workspaces.create_workspace/2" do
+  describe "Workspaces.create_workspace/3" do
     test "creates workspace with proper EOA address derived from secp256k1 keypair" do
+      user = create_test_user()
+
       {:ok, org} =
         %{name: "Org #{System.unique_integer([:positive])}"}
         |> Organization.create_changeset()
         |> Repo.insert()
 
-      {:ok, issuer} = Workspaces.create_workspace("New Issuer", org.id)
+      {:ok, %{workspace: issuer, webhook_secret: webhook_secret}} =
+        Workspaces.create_workspace(org.id, %{name: "New Issuer"}, user.id)
+
       assert issuer.name == "New Issuer"
       assert String.starts_with?(issuer.eoa_address, "0x")
       assert String.length(issuer.eoa_address) == 42
@@ -53,6 +72,7 @@ defmodule Sovra.IssuerTest do
       assert issuer.status == "active"
       refute String.starts_with?(issuer.eoa_key_id, "stub_")
       assert issuer.organization_id == org.id
+      assert is_binary(webhook_secret) and String.starts_with?(webhook_secret, "whsec_")
     end
   end
 

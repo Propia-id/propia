@@ -16,6 +16,8 @@ defmodule Sovra.Application do
         {DNSCluster, query: Application.get_env(:sovra, :dns_cluster_query) || :ignore},
         {Phoenix.PubSub, name: Sovra.PubSub},
         {Finch, name: Sovra.Finch},
+        {Task.Supervisor, name: Sovra.TaskSupervisor},
+        {Oban, Application.fetch_env!(:sovra, Oban)},
         Sovra.Auth.TokenDenylist,
         SovraWeb.Endpoint
       ]

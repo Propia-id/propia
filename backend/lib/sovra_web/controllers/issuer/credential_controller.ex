@@ -6,57 +6,6 @@ defmodule SovraWeb.Issuer.CredentialController do
 
   tags(["Issuer OID4VCI"])
 
-  operation(:offer,
-    summary: "Create credential offer",
-    description: "Create a pre-authorized OID4VCI credential offer.",
-    request_body:
-      {"Credential offer params", "application/json",
-       %OpenApiSpex.Schema{
-         type: :object,
-         required: [:issuer_id, :schema_id, :holder_did, :claims],
-         properties: %{
-           issuer_id: %OpenApiSpex.Schema{type: :string, format: :uuid},
-           schema_id: %OpenApiSpex.Schema{type: :string},
-           holder_did: %OpenApiSpex.Schema{type: :string},
-           claims: %OpenApiSpex.Schema{type: :object}
-         }
-       }},
-    responses: %{
-      201 =>
-        {"Offer created", "application/json",
-         %OpenApiSpex.Schema{
-           type: :object,
-           properties: %{
-             offer_id: %OpenApiSpex.Schema{type: :string, format: :uuid},
-             offer_uri: %OpenApiSpex.Schema{type: :string},
-             pre_authorized_code: %OpenApiSpex.Schema{type: :string},
-             expires_at: %OpenApiSpex.Schema{type: :string, format: :"date-time"}
-           }
-         }},
-      404 =>
-        {"Not found", "application/json",
-         %OpenApiSpex.Schema{
-           type: :object,
-           properties: %{error: %OpenApiSpex.Schema{type: :string}}
-         }},
-      422 =>
-        {"Validation error", "application/json",
-         %OpenApiSpex.Schema{
-           type: :object,
-           properties: %{
-             error: %OpenApiSpex.Schema{type: :string},
-             missing: %OpenApiSpex.Schema{type: :array, items: %OpenApiSpex.Schema{type: :string}}
-           }
-         }},
-      500 =>
-        {"Internal error", "application/json",
-         %OpenApiSpex.Schema{
-           type: :object,
-           properties: %{error: %OpenApiSpex.Schema{type: :string}}
-         }}
-    }
-  )
-
   operation(:authorize,
     summary: "Authorization (not supported)",
     description: "This endpoint is not supported in the current OID4VCI flow.",
@@ -152,36 +101,6 @@ defmodule SovraWeb.Issuer.CredentialController do
          }}
     }
   )
-
-  def offer(conn, params) do
-    workspace_id = params["issuer_id"]
-    schema_id = params["schema_id"]
-    claims = params["claims"]
-
-    case Issuer.create_credential_offer(workspace_id, schema_id, claims) do
-      {:ok, %{offer: offer, offer_uri: offer_uri, pre_authorized_code: code}} ->
-        conn
-        |> put_status(201)
-        |> json(%{
-          offer_id: offer.id,
-          offer_uri: offer_uri,
-          pre_authorized_code: code,
-          expires_at: DateTime.to_iso8601(offer.expires_at)
-        })
-
-      {:error, :workspace_not_found} ->
-        conn |> put_status(404) |> json(%{error: "issuer_not_found"})
-
-      {:error, :schema_not_found} ->
-        conn |> put_status(404) |> json(%{error: "schema_not_found"})
-
-      {:error, {:missing_claims, missing}} ->
-        conn |> put_status(422) |> json(%{error: "missing_claims", missing: missing})
-
-      {:error, reason} ->
-        conn |> put_status(500) |> json(%{error: inspect(reason)})
-    end
-  end
 
   def authorize(conn, _params) do
     conn |> put_status(404) |> json(%{error: "not_supported"})

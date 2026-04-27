@@ -37,6 +37,18 @@ defmodule SovraWeb.Router do
     plug SovraWeb.Plugs.RequireOrgOwnerPlug
   end
 
+  pipeline :api_key do
+    plug SovraWeb.Plugs.ApiKeyPlug
+  end
+
+  pipeline :require_workspace_admin do
+    plug SovraWeb.Plugs.RequireWorkspaceAdminPlug
+  end
+
+  pipeline :offer_rate_limited do
+    plug SovraWeb.Plugs.RateLimitPlug, max_requests: 120, window_ms: 60_000
+  end
+
   # OpenAPI spec & Swagger UI
   scope "/api" do
     pipe_through :api
@@ -62,15 +74,21 @@ defmodule SovraWeb.Router do
     get "/.well-known/openid-credential-issuer/:issuer_id", MetadataController, :show_by_id
   end
 
-  # Issuer API (OID4VCI)
+  # Issuer API (OID4VCI holder flow — public by design)
   scope "/api/v1/issuer", SovraWeb.Issuer do
     pipe_through :api
 
-    post "/credential-offer", CredentialController, :offer
     post "/authorize", CredentialController, :authorize
     post "/credential", CredentialController, :issue
     get "/metadata", MetadataController, :show
     get "/metadata/:issuer_id", MetadataController, :show_by_id
+  end
+
+  # Credential offer (API-key-gated, server-to-server issuer-initiated flow)
+  scope "/api/v1/issuer", SovraWeb.Issuer do
+    pipe_through [:api, :api_key, :offer_rate_limited]
+
+    post "/credential-offer", OfferController, :create
   end
 
   # Token endpoint with rate limiting
@@ -96,9 +114,15 @@ defmodule SovraWeb.Router do
     post "/schemas", AdminController, :create_schema
     get "/schemas", AdminController, :list_schemas
     delete "/schemas/:id", AdminController, :delete_schema
-    post "/offers", AdminController, :create_offer
+    post "/offers", OfferController, :create
     get "/offers", AdminController, :list_offers
     get "/credentials", AdminController, :list_issued_credentials
+  end
+
+  # Admin-only credential status changes (workspace admin required)
+  scope "/api/v1/issuer/admin", SovraWeb.Issuer do
+    pipe_through [:api, :issuer_session, :require_workspace_admin]
+
     post "/credentials/:id/revoke", AdminController, :revoke_credential
     post "/credentials/:id/suspend", AdminController, :suspend_credential
     post "/credentials/:id/unsuspend", AdminController, :unsuspend_credential
@@ -134,6 +158,43 @@ defmodule SovraWeb.Router do
     pipe_through [:api, :issuer_session, :require_org_owner]
 
     post "/:org_id/deactivate", OrganizationController, :deactivate
+  end
+
+  # Org-scoped workspace collection ops (admin/owner only)
+  scope "/api/v1/organizations/:org_id/workspaces", SovraWeb.Workspaces do
+    pipe_through [:api, :issuer_session, :require_org_admin]
+
+    get "/", WorkspaceController, :list
+    post "/", WorkspaceController, :create
+  end
+
+  # Workspace API — any authenticated user (reads for members)
+  scope "/api/v1/workspaces", SovraWeb.Workspaces do
+    pipe_through [:api, :issuer_session]
+
+    get "/", WorkspaceController, :index
+    get "/:workspace_id", WorkspaceController, :show
+    post "/:workspace_id/switch", WorkspaceController, :switch
+  end
+
+  # Workspace admin operations (workspace admin required)
+  scope "/api/v1/workspaces", SovraWeb.Workspaces do
+    pipe_through [:api, :issuer_session, :require_workspace_admin]
+
+    patch "/:workspace_id", WorkspaceController, :update
+
+    post "/:workspace_id/regenerate_webhook_secret",
+         WorkspaceController,
+         :regenerate_webhook_secret
+
+    get "/:workspace_id/members", WorkspaceMemberController, :index
+    post "/:workspace_id/members", WorkspaceMemberController, :add
+    patch "/:workspace_id/members/:user_id", WorkspaceMemberController, :update_role
+    delete "/:workspace_id/members/:user_id", WorkspaceMemberController, :remove
+
+    get "/:workspace_id/api_keys", ApiKeyController, :index
+    post "/:workspace_id/api_keys", ApiKeyController, :create
+    post "/:workspace_id/api_keys/:id/revoke", ApiKeyController, :revoke
   end
 
   # Verification API

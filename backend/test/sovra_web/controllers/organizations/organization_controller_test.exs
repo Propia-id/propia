@@ -89,7 +89,7 @@ defmodule SovraWeb.Organizations.OrganizationControllerTest do
       assert resp["name"] == "Acme Inc."
     end
 
-    test "non-member returns 403", %{conn: conn, org: org} do
+    test "non-member returns 404 (no existence leak)", %{conn: conn, org: org} do
       stranger = create_user("stranger")
 
       conn =
@@ -97,7 +97,7 @@ defmodule SovraWeb.Organizations.OrganizationControllerTest do
         |> authed_conn(stranger)
         |> patch("/api/v1/organizations/#{org.id}", %{name: "Hostile"})
 
-      assert json_response(conn, 403) == %{"error" => "org_admin_required"}
+      assert json_response(conn, 404) == %{"error" => "organization_not_found"}
     end
 
     test "plain member returns 403", %{conn: conn, org: org} do
@@ -112,7 +112,7 @@ defmodule SovraWeb.Organizations.OrganizationControllerTest do
       assert json_response(conn, 403) == %{"error" => "org_admin_required"}
     end
 
-    test "platform admin with no membership returns 403 (no bypass)", %{
+    test "platform admin with no membership returns 404 (no bypass, no existence leak)", %{
       conn: conn,
       org: org
     } do
@@ -130,7 +130,7 @@ defmodule SovraWeb.Organizations.OrganizationControllerTest do
         |> authed_conn(admin)
         |> patch("/api/v1/organizations/#{org.id}", %{name: "Nope"})
 
-      assert json_response(conn, 403) == %{"error" => "org_admin_required"}
+      assert json_response(conn, 404) == %{"error" => "organization_not_found"}
     end
   end
 

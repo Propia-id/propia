@@ -169,49 +169,6 @@ defmodule SovraWeb.Issuer.AdminController do
     }
   )
 
-  operation(:create_offer,
-    summary: "Create credential offer",
-    description: "Create a credential offer for a holder from the admin panel.",
-    request_body:
-      {"Offer params", "application/json",
-       %OpenApiSpex.Schema{
-         type: :object,
-         required: [:schema_id, :holder_did],
-         properties: %{
-           schema_id: %OpenApiSpex.Schema{type: :string},
-           holder_did: %OpenApiSpex.Schema{type: :string},
-           claims: %OpenApiSpex.Schema{type: :object}
-         }
-       }},
-    responses: %{
-      201 =>
-        {"Offer created", "application/json",
-         %OpenApiSpex.Schema{
-           type: :object,
-           properties: %{
-             id: %OpenApiSpex.Schema{type: :string, format: :uuid},
-             status: %OpenApiSpex.Schema{type: :string},
-             holder_did: %OpenApiSpex.Schema{type: :string},
-             offer_uri: %OpenApiSpex.Schema{type: :string},
-             pre_authorized_code: %OpenApiSpex.Schema{type: :string},
-             expires_at: %OpenApiSpex.Schema{type: :string, format: :"date-time"}
-           }
-         }},
-      404 =>
-        {"Not found", "application/json",
-         %OpenApiSpex.Schema{
-           type: :object,
-           properties: %{error: %OpenApiSpex.Schema{type: :string}}
-         }},
-      422 =>
-        {"Validation error", "application/json",
-         %OpenApiSpex.Schema{
-           type: :object,
-           properties: %{error: %OpenApiSpex.Schema{type: :string}}
-         }}
-    }
-  )
-
   operation(:list_offers,
     summary: "List credential offers",
     description: "List all credential offers for the authenticated issuer.",
@@ -288,7 +245,7 @@ defmodule SovraWeb.Issuer.AdminController do
         "issuer_name" => issuer_name
       }) do
     case Accounts.register_issuer(email, password, issuer_name) do
-      {:ok, %{token: _token, account: _account, workspace: workspace}} ->
+      {:ok, %{workspace: workspace} = result} ->
         conn
         |> put_status(201)
         |> json(%{
@@ -298,6 +255,7 @@ defmodule SovraWeb.Issuer.AdminController do
             did: workspace.did,
             status: workspace.status
           },
+          webhook_secret: Map.get(result, :webhook_secret),
           email: String.downcase(email)
         })
 
@@ -406,48 +364,6 @@ defmodule SovraWeb.Issuer.AdminController do
     end
   end
 
-  def create_offer(conn, params) do
-    workspace_id = conn.assigns.current_issuer_account.workspace_id
-
-    case Issuer.create_credential_offer(
-           workspace_id,
-           params["schema_id"],
-           params["claims"] || %{}
-         ) do
-      {:ok, %{offer: offer, offer_uri: offer_uri, pre_authorized_code: code}} ->
-        conn
-        |> put_status(201)
-        |> json(%{
-          id: offer.id,
-          status: offer.status,
-          offer_uri: offer_uri,
-          pre_authorized_code: code,
-          expires_at: DateTime.to_iso8601(offer.expires_at)
-        })
-
-      {:error, {:missing_claims, missing}} ->
-        conn |> put_status(422) |> json(%{error: "missing_claims", details: missing})
-
-      {:error, :key_not_found} ->
-        conn
-        |> put_status(500)
-        |> json(%{
-          error: "signing_key_not_found",
-          message:
-            "Issuer signing key is unavailable. Re-register the issuer if the server was restarted."
-        })
-
-      {:error, :schema_not_found} ->
-        conn |> put_status(404) |> json(%{error: "schema_not_found"})
-
-      {:error, :workspace_not_found} ->
-        conn |> put_status(404) |> json(%{error: "issuer_not_found"})
-
-      {:error, reason} ->
-        conn |> put_status(422) |> json(%{error: to_string(reason)})
-    end
-  end
-
   def list_offers(conn, _params) do
     workspace_id = conn.assigns.current_issuer_account.workspace_id
     offers = Issuer.list_offers(workspace_id)
@@ -472,7 +388,8 @@ defmodule SovraWeb.Issuer.AdminController do
 
   operation(:revoke_credential,
     summary: "Revoke a credential",
-    description: "Permanently revoke a credential. Sets the revocation bit on-chain.",
+    description:
+      "Workspace admin. Permanently revoke a credential and set the revocation bit on-chain.",
     parameters: [
       id: [in: :path, type: :string, description: "Credential UUID", required: true]
     ],
@@ -485,6 +402,12 @@ defmodule SovraWeb.Issuer.AdminController do
              id: %OpenApiSpex.Schema{type: :string, format: :uuid},
              status: %OpenApiSpex.Schema{type: :string}
            }
+         }},
+      403 =>
+        {"Workspace admin required", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
          }},
       404 =>
         {"Credential not found", "application/json",
@@ -503,7 +426,8 @@ defmodule SovraWeb.Issuer.AdminController do
 
   operation(:suspend_credential,
     summary: "Suspend a credential",
-    description: "Temporarily suspend a credential. Can be reversed with unsuspend.",
+    description:
+      "Workspace admin. Temporarily suspend a credential on-chain. Reversible with unsuspend.",
     parameters: [
       id: [in: :path, type: :string, description: "Credential UUID", required: true]
     ],
@@ -516,6 +440,12 @@ defmodule SovraWeb.Issuer.AdminController do
              id: %OpenApiSpex.Schema{type: :string, format: :uuid},
              status: %OpenApiSpex.Schema{type: :string}
            }
+         }},
+      403 =>
+        {"Workspace admin required", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
          }},
       404 =>
         {"Credential not found", "application/json",
@@ -534,7 +464,8 @@ defmodule SovraWeb.Issuer.AdminController do
 
   operation(:unsuspend_credential,
     summary: "Unsuspend a credential",
-    description: "Reverse a suspension, restoring the credential to active status.",
+    description:
+      "Workspace admin. Reverse a suspension, restoring the credential to active status.",
     parameters: [
       id: [in: :path, type: :string, description: "Credential UUID", required: true]
     ],
@@ -547,6 +478,12 @@ defmodule SovraWeb.Issuer.AdminController do
              id: %OpenApiSpex.Schema{type: :string, format: :uuid},
              status: %OpenApiSpex.Schema{type: :string}
            }
+         }},
+      403 =>
+        {"Workspace admin required", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
          }},
       404 =>
         {"Credential not found", "application/json",
@@ -586,20 +523,22 @@ defmodule SovraWeb.Issuer.AdminController do
     })
   end
 
-  def revoke_credential(conn, %{"id" => id}) do
-    handle_status_change(conn, &Issuer.revoke_credential/1, id)
+  def revoke_credential(conn, %{"id" => credential_id}) do
+    handle_status_change(conn, credential_id, &Issuer.revoke_credential/2)
   end
 
-  def suspend_credential(conn, %{"id" => id}) do
-    handle_status_change(conn, &Issuer.suspend_credential/1, id)
+  def suspend_credential(conn, %{"id" => credential_id}) do
+    handle_status_change(conn, credential_id, &Issuer.suspend_credential/2)
   end
 
-  def unsuspend_credential(conn, %{"id" => id}) do
-    handle_status_change(conn, &Issuer.unsuspend_credential/1, id)
+  def unsuspend_credential(conn, %{"id" => credential_id}) do
+    handle_status_change(conn, credential_id, &Issuer.unsuspend_credential/2)
   end
 
-  defp handle_status_change(conn, action, credential_id) do
-    case action.(credential_id) do
+  defp handle_status_change(conn, credential_id, fun) do
+    workspace_id = conn.assigns.current_issuer_account.workspace_id
+
+    case fun.(workspace_id, credential_id) do
       {:ok, cred} ->
         json(conn, %{id: cred.id, status: cred.status})
 
