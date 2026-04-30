@@ -8,6 +8,7 @@ defmodule Sovra.Issuer do
 
   alias Sovra.Issuer.{
     CredentialSchema,
+    CredentialDesign,
     CredentialOffer,
     IssuedCredential,
     SDJWT,
@@ -73,6 +74,60 @@ defmodule Sovra.Issuer do
       nil -> {:error, :schema_not_found}
       schema -> Repo.delete(schema)
     end
+  end
+
+  # ── Credential Design Management ───────────────────────
+
+  def upsert_design(issuer_id, schema_id, attrs) do
+    with {:ok, schema} <- get_schema(issuer_id, schema_id) do
+      key =
+        if Enum.any?(attrs, fn {k, _} -> is_binary(k) end),
+          do: "credential_schema_id",
+          else: :credential_schema_id
+
+      attrs = Map.put(attrs, key, schema.id)
+
+      case Repo.get_by(CredentialDesign, credential_schema_id: schema.id) do
+        nil ->
+          attrs
+          |> CredentialDesign.create_changeset(schema_claims: schema.claims)
+          |> Repo.insert()
+
+        design ->
+          design
+          |> CredentialDesign.update_changeset(attrs, schema_claims: schema.claims)
+          |> Repo.update()
+      end
+    end
+  end
+
+  def get_design(issuer_id, schema_id) do
+    with {:ok, schema} <- get_schema(issuer_id, schema_id) do
+      case Repo.get_by(CredentialDesign, credential_schema_id: schema.id) do
+        nil -> {:error, :design_not_found}
+        design -> {:ok, %{design | credential_schema: schema}}
+      end
+    end
+  end
+
+  def delete_design(issuer_id, schema_id) do
+    with {:ok, schema} <- get_schema(issuer_id, schema_id) do
+      case Repo.get_by(CredentialDesign, credential_schema_id: schema.id) do
+        nil -> {:error, :design_not_found}
+        design -> Repo.delete(design)
+      end
+    end
+  end
+
+  def list_designs(issuer_id) do
+    from(d in CredentialDesign,
+      join: s in CredentialSchema,
+      on: s.id == d.credential_schema_id,
+      where: s.issuer_id == ^issuer_id,
+      order_by: [asc: d.inserted_at],
+      preload: [credential_schema: s]
+    )
+    |> Repo.all()
   end
 
   # ── Offer & Credential Queries ──────────────────────────

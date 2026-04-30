@@ -82,6 +82,9 @@ defmodule SovraWeb.Router do
     post "/credential", CredentialController, :issue
     get "/metadata", MetadataController, :show
     get "/metadata/:issuer_id", MetadataController, :show_by_id
+
+    get "/credential-manifests", ManifestController, :index
+    get "/credential-manifests/:schema_id", ManifestController, :show
   end
 
   # Credential offer (API-key-gated, server-to-server issuer-initiated flow)
@@ -114,6 +117,9 @@ defmodule SovraWeb.Router do
     post "/schemas", AdminController, :create_schema
     get "/schemas", AdminController, :list_schemas
     delete "/schemas/:id", AdminController, :delete_schema
+    get "/schemas/:schema_id/design", AdminController, :get_design
+    put "/schemas/:schema_id/design", AdminController, :upsert_design
+    delete "/schemas/:schema_id/design", AdminController, :delete_design
     post "/offers", OfferController, :create
     get "/offers", AdminController, :list_offers
     get "/credentials", AdminController, :list_issued_credentials

@@ -47,7 +47,8 @@ defmodule SovraWeb.Issuer.MetadataController do
     case Workspaces.get_first_workspace() do
       {:ok, workspace} ->
         schemas = Issuer.list_schemas(workspace.id)
-        metadata = OID4VCI.build_metadata(workspace, schemas)
+        designs = Issuer.list_designs(workspace.id)
+        metadata = OID4VCI.build_metadata(workspace, schemas, designs)
         json(conn, metadata)
 
       {:error, :no_workspaces} ->
@@ -61,7 +62,8 @@ defmodule SovraWeb.Issuer.MetadataController do
     case Workspaces.get_workspace(workspace_id) do
       {:ok, workspace} ->
         schemas = Issuer.list_schemas(workspace.id)
-        metadata = OID4VCI.build_metadata(workspace, schemas)
+        designs = Issuer.list_designs(workspace.id)
+        metadata = OID4VCI.build_metadata(workspace, schemas, designs)
         json(conn, metadata)
 
       {:error, :workspace_not_found} ->

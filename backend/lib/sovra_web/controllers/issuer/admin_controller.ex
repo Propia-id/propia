@@ -386,6 +386,132 @@ defmodule SovraWeb.Issuer.AdminController do
     end
   end
 
+  operation(:get_design,
+    summary: "Get credential design",
+    description: "Get the credential design associated with a schema.",
+    parameters: [
+      schema_id: [in: :path, type: :string, description: "Schema identifier", required: true]
+    ],
+    responses: %{
+      200 => {"Design", "application/json", %OpenApiSpex.Schema{type: :object}},
+      404 =>
+        {"Not found", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }}
+    }
+  )
+
+  operation(:upsert_design,
+    summary: "Create or update credential design",
+    description: "Create or update the credential design associated with a schema.",
+    parameters: [
+      schema_id: [in: :path, type: :string, description: "Schema identifier", required: true]
+    ],
+    request_body:
+      {"Design params", "application/json",
+       %OpenApiSpex.Schema{type: :object, description: "DIF-shaped output descriptor body"}},
+    responses: %{
+      200 => {"Design updated", "application/json", %OpenApiSpex.Schema{type: :object}},
+      201 => {"Design created", "application/json", %OpenApiSpex.Schema{type: :object}},
+      422 =>
+        {"Validation error", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             error: %OpenApiSpex.Schema{type: :string},
+             details: %OpenApiSpex.Schema{type: :object}
+           }
+         }}
+    }
+  )
+
+  operation(:delete_design,
+    summary: "Delete credential design",
+    description: "Delete the credential design for a schema.",
+    parameters: [
+      schema_id: [in: :path, type: :string, description: "Schema identifier", required: true]
+    ],
+    responses: %{
+      204 => {"Deleted", nil, nil},
+      404 =>
+        {"Not found", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }}
+    }
+  )
+
+  def get_design(conn, %{"schema_id" => schema_id}) do
+    workspace_id = conn.assigns.current_issuer_account.workspace_id
+
+    case Issuer.get_design(workspace_id, schema_id) do
+      {:ok, design} -> json(conn, serialize_design(design))
+      {:error, :schema_not_found} -> conn |> put_status(404) |> json(%{error: "schema_not_found"})
+      {:error, :design_not_found} -> conn |> put_status(404) |> json(%{error: "design_not_found"})
+    end
+  end
+
+  def upsert_design(conn, %{"schema_id" => schema_id} = params) do
+    workspace_id = conn.assigns.current_issuer_account.workspace_id
+    attrs = Map.drop(params, ["schema_id"])
+
+    case Issuer.upsert_design(workspace_id, schema_id, attrs) do
+      {:ok, design} ->
+        conn |> put_status(200) |> json(serialize_design(design))
+
+      {:error, :schema_not_found} ->
+        conn |> put_status(404) |> json(%{error: "schema_not_found"})
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        conn
+        |> put_status(422)
+        |> json(%{error: "validation_error", details: changeset_errors(changeset)})
+    end
+  end
+
+  def delete_design(conn, %{"schema_id" => schema_id}) do
+    workspace_id = conn.assigns.current_issuer_account.workspace_id
+
+    case Issuer.delete_design(workspace_id, schema_id) do
+      {:ok, _} -> conn |> put_status(204) |> text("")
+      {:error, :schema_not_found} -> conn |> put_status(404) |> json(%{error: "schema_not_found"})
+      {:error, :design_not_found} -> conn |> put_status(404) |> json(%{error: "design_not_found"})
+    end
+  end
+
+  defp serialize_design(design) do
+    %{
+      id: design.id,
+      credential_schema_id: design.credential_schema_id,
+      name: design.name,
+      description: design.description,
+      display: embed_to_map(design.display),
+      styles: embed_to_map(design.styles),
+      back: embed_to_map(design.back),
+      version: design.version
+    }
+  end
+
+  defp embed_to_map(nil), do: nil
+
+  defp embed_to_map(struct) when is_struct(struct) do
+    struct
+    |> Map.from_struct()
+    |> Map.drop([:__meta__])
+    |> Map.new(fn {k, v} -> {k, embed_value(v)} end)
+  end
+
+  defp embed_value(nil), do: nil
+  defp embed_value(list) when is_list(list), do: Enum.map(list, &embed_value/1)
+  defp embed_value(%DateTime{} = dt), do: dt
+  defp embed_value(%Date{} = d), do: d
+  defp embed_value(%NaiveDateTime{} = dt), do: dt
+  defp embed_value(struct) when is_struct(struct), do: embed_to_map(struct)
+  defp embed_value(other), do: other
+
   def list_offers(conn, _params) do
     workspace_id = conn.assigns.current_issuer_account.workspace_id
     offers = Issuer.list_offers(workspace_id)

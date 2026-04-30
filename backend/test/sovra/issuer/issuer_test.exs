@@ -397,4 +397,256 @@ defmodule Sovra.IssuerTest do
       assert is_nil(offer.access_token_hash)
     end
   end
+
+  describe "credential designs" do
+    defp sample_design_attrs do
+      %{
+        name: "Test Design",
+        description: "A test design",
+        display: %{
+          title: %{text: "My Credential"},
+          subtitle: %{path: ["$.name"], fallback: "Unnamed"},
+          properties: [
+            %{path: ["$.name"], label: "Name", fallback: "—"},
+            %{path: ["$.age"], label: "Age", fallback: "—"}
+          ]
+        },
+        styles: %{
+          thumbnail: %{uri: "https://example.com/logo.png", alt: "logo"},
+          background: %{color: "#1a365d"},
+          text: %{color: "#ffffff"}
+        }
+      }
+    end
+
+    test "upsert_design creates a new design" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+
+      {:ok, design} = Issuer.upsert_design(issuer.id, schema.schema_id, sample_design_attrs())
+
+      assert design.name == "Test Design"
+      assert design.version == 1
+      assert design.credential_schema_id == schema.id
+      assert design.display.title.text == "My Credential"
+      assert design.styles.background.color == "#1a365d"
+      assert length(design.display.properties) == 2
+    end
+
+    test "upsert_design accepts string-keyed attrs (from controller)" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+
+      attrs = %{
+        "name" => "DNI",
+        "description" => nil,
+        "back" => nil,
+        "display" => %{
+          "title" => %{"text" => "DNI"},
+          "subtitle" => %{"text" => "Documento Nacional de Identidad"},
+          "properties" => [%{"label" => "Nombre", "path" => ["$.name"]}]
+        },
+        "styles" => %{
+          "background" => %{"color" => "#1a365d"},
+          "text" => %{"color" => "#ffffff"}
+        }
+      }
+
+      assert {:ok, design} = Issuer.upsert_design(issuer.id, schema.schema_id, attrs)
+      assert design.name == "DNI"
+      assert design.display.title.text == "DNI"
+    end
+
+    test "upsert_design updates an existing design and bumps version" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+
+      {:ok, design1} = Issuer.upsert_design(issuer.id, schema.schema_id, sample_design_attrs())
+      assert design1.version == 1
+
+      updated_attrs =
+        sample_design_attrs()
+        |> put_in([:styles, :background, :color], "#000000")
+
+      {:ok, design2} = Issuer.upsert_design(issuer.id, schema.schema_id, updated_attrs)
+
+      assert design2.id == design1.id
+      assert design2.version == 2
+      assert design2.styles.background.color == "#000000"
+    end
+
+    test "upsert_design returns error for missing schema" do
+      issuer = create_test_issuer()
+
+      assert {:error, :schema_not_found} =
+               Issuer.upsert_design(issuer.id, "nonexistent", sample_design_attrs())
+    end
+
+    test "upsert_design rejects non-hex colors" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+
+      attrs = put_in(sample_design_attrs(), [:styles, :background, :color], "blue")
+
+      assert {:error, %Ecto.Changeset{}} =
+               Issuer.upsert_design(issuer.id, schema.schema_id, attrs)
+    end
+
+    test "upsert_design rejects properties referencing unknown claims" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+
+      attrs =
+        put_in(sample_design_attrs(), [:display, :properties], [
+          %{path: ["$.unknown_field"], label: "Unknown"}
+        ])
+
+      assert {:error, %Ecto.Changeset{} = cs} =
+               Issuer.upsert_design(issuer.id, schema.schema_id, attrs)
+
+      errors = Ecto.Changeset.traverse_errors(cs, fn {msg, _} -> msg end)
+      assert Map.has_key?(errors, :display)
+    end
+
+    test "upsert_design rejects DisplayMapping with neither text nor path" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+
+      attrs = put_in(sample_design_attrs(), [:display, :title], %{fallback: "x"})
+
+      assert {:error, %Ecto.Changeset{}} =
+               Issuer.upsert_design(issuer.id, schema.schema_id, attrs)
+    end
+
+    test "get_design returns the design" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+      {:ok, _design} = Issuer.upsert_design(issuer.id, schema.schema_id, sample_design_attrs())
+
+      {:ok, design} = Issuer.get_design(issuer.id, schema.schema_id)
+      assert design.name == "Test Design"
+      assert design.credential_schema.id == schema.id
+    end
+
+    test "get_design returns design_not_found when missing" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+
+      assert {:error, :design_not_found} = Issuer.get_design(issuer.id, schema.schema_id)
+    end
+
+    test "tenants cannot access each other's designs" do
+      issuer_a = create_test_issuer()
+      issuer_b = create_test_issuer()
+      schema_a = create_test_schema(issuer_a)
+
+      {:ok, _design} =
+        Issuer.upsert_design(issuer_a.id, schema_a.schema_id, sample_design_attrs())
+
+      assert {:error, :schema_not_found} =
+               Issuer.get_design(issuer_b.id, schema_a.schema_id)
+
+      assert {:error, :schema_not_found} =
+               Issuer.upsert_design(issuer_b.id, schema_a.schema_id, sample_design_attrs())
+
+      assert {:error, :schema_not_found} =
+               Issuer.delete_design(issuer_b.id, schema_a.schema_id)
+    end
+
+    test "delete_design removes the design" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+      {:ok, _} = Issuer.upsert_design(issuer.id, schema.schema_id, sample_design_attrs())
+
+      assert {:ok, _} = Issuer.delete_design(issuer.id, schema.schema_id)
+      assert {:error, :design_not_found} = Issuer.get_design(issuer.id, schema.schema_id)
+    end
+
+    test "list_designs returns only designs for the given issuer" do
+      issuer_a = create_test_issuer()
+      issuer_b = create_test_issuer()
+      schema_a = create_test_schema(issuer_a)
+      schema_b = create_test_schema(issuer_b)
+
+      {:ok, _} = Issuer.upsert_design(issuer_a.id, schema_a.schema_id, sample_design_attrs())
+      {:ok, _} = Issuer.upsert_design(issuer_b.id, schema_b.schema_id, sample_design_attrs())
+
+      designs = Issuer.list_designs(issuer_a.id)
+      assert length(designs) == 1
+      assert hd(designs).credential_schema_id == schema_a.id
+    end
+
+    test "schema deletion cascades to design" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+      {:ok, _} = Issuer.upsert_design(issuer.id, schema.schema_id, sample_design_attrs())
+
+      {:ok, _} = Issuer.delete_schema(issuer.id, schema.id)
+
+      assert Sovra.Repo.get_by(Sovra.Issuer.CredentialDesign, credential_schema_id: schema.id) ==
+               nil
+    end
+
+    test "back section is optional and stored when provided" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+
+      attrs =
+        Map.put(sample_design_attrs(), :back, %{
+          display: %{
+            properties: [%{path: ["$.age"], label: "Age"}]
+          },
+          styles: %{
+            background: %{color: "#222222"},
+            text: %{color: "#eeeeee"}
+          }
+        })
+
+      {:ok, design} = Issuer.upsert_design(issuer.id, schema.schema_id, attrs)
+
+      assert design.back.styles.background.color == "#222222"
+      assert length(design.back.display.properties) == 1
+    end
+  end
+
+  describe "OID4VCI.build_metadata projection" do
+    test "falls back to schema.name when no design exists" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+
+      metadata = Sovra.Issuer.OID4VCI.build_metadata(issuer, [schema], [])
+
+      config = metadata["credential_configurations_supported"][schema.credential_type]
+      assert config["display"] == [%{"name" => schema.name}]
+    end
+
+    test "projects design styling into OID4VCI display" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+
+      {:ok, design} =
+        Issuer.upsert_design(issuer.id, schema.schema_id, %{
+          name: "Design Name",
+          description: "A branded credential",
+          display: %{title: %{text: "The Title"}},
+          styles: %{
+            thumbnail: %{uri: "data:image/png;base64,abc", alt: "seal"},
+            background: %{color: "#1a365d"},
+            text: %{color: "#ffffff"}
+          }
+        })
+
+      metadata = Sovra.Issuer.OID4VCI.build_metadata(issuer, [schema], [design])
+
+      [display_obj] =
+        metadata["credential_configurations_supported"][schema.credential_type]["display"]
+
+      assert display_obj["name"] == "The Title"
+      assert display_obj["description"] == "A branded credential"
+      assert display_obj["background_color"] == "#1a365d"
+      assert display_obj["text_color"] == "#ffffff"
+      assert display_obj["logo"]["uri"] == "data:image/png;base64,abc"
+      assert display_obj["logo"]["alt_text"] == "seal"
+    end
+  end
 end
