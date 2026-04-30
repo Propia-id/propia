@@ -4,8 +4,8 @@ defmodule SovraWeb.Verify.StatusListController do
 
   alias Sovra.Credentials.BitstringStatusList
   alias Sovra.Ethereum.RevocationRegistry
-  alias Sovra.Issuer.IssuerRecord
   alias Sovra.Repo
+  alias Sovra.Workspaces.Workspace
 
   tags(["Status List"])
 
@@ -98,9 +98,9 @@ defmodule SovraWeb.Verify.StatusListController do
   end
 
   defp find_issuer(did) do
-    case Repo.get_by(IssuerRecord, did: did) do
+    case Repo.get_by(Workspace, did: did) do
       nil -> {:error, :issuer_not_found}
-      issuer -> {:ok, issuer}
+      workspace -> {:ok, workspace}
     end
   end
 end

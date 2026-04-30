@@ -1,7 +1,7 @@
 defmodule SovraWeb.Issuer.AdminCredentialStatusTest do
   @moduledoc """
-  Covers `POST /api/v1/issuer/admin/credentials/:id/revoke` and `/suspend`.
-  These are workspace-admin-only; plain members get 403.
+  Covers `PUT /api/v1/issuer/admin/credentials/:id/status/:status` on the
+  dashboard (JWT) pipeline. Workspace-admin required; plain members get 403.
   """
   use SovraWeb.ConnCase, async: false
   use Oban.Testing, repo: Sovra.Repo
@@ -78,7 +78,7 @@ defmodule SovraWeb.Issuer.AdminCredentialStatusTest do
     resp =
       conn
       |> authed(owner, ws.id)
-      |> post("/api/v1/issuer/admin/credentials/#{cred.id}/revoke")
+      |> put("/api/v1/issuer/admin/credentials/#{cred.id}/status/revoked")
       |> json_response(200)
 
     assert resp["id"] == cred.id
@@ -93,12 +93,23 @@ defmodule SovraWeb.Issuer.AdminCredentialStatusTest do
     resp =
       conn
       |> authed(owner, ws.id)
-      |> post("/api/v1/issuer/admin/credentials/#{cred.id}/suspend")
+      |> put("/api/v1/issuer/admin/credentials/#{cred.id}/status/suspended")
       |> json_response(200)
 
     assert resp["status"] == "suspended"
 
     assert_enqueued(worker: DeliveryJob, args: %{"event" => "credential.suspended"})
+  end
+
+  test "unknown target status returns 400", %{conn: conn} do
+    %{workspace: ws, owner: owner, credential: cred} = setup_workspace_with_credential()
+
+    conn =
+      conn
+      |> authed(owner, ws.id)
+      |> put("/api/v1/issuer/admin/credentials/#{cred.id}/status/garbage")
+
+    assert json_response(conn, 400) == %{"error" => "unknown_status"}
   end
 
   test "plain member gets 403", %{conn: conn} do
@@ -109,7 +120,7 @@ defmodule SovraWeb.Issuer.AdminCredentialStatusTest do
     conn =
       conn
       |> authed(member, ws.id)
-      |> post("/api/v1/issuer/admin/credentials/#{cred.id}/revoke")
+      |> put("/api/v1/issuer/admin/credentials/#{cred.id}/status/revoked")
 
     assert json_response(conn, 403) == %{"error" => "workspace_admin_required"}
   end
@@ -121,7 +132,7 @@ defmodule SovraWeb.Issuer.AdminCredentialStatusTest do
     conn =
       conn
       |> authed(owner_a, ws_a.id)
-      |> post("/api/v1/issuer/admin/credentials/#{cred_b.id}/revoke")
+      |> put("/api/v1/issuer/admin/credentials/#{cred_b.id}/status/revoked")
 
     assert json_response(conn, 404) == %{"error" => "credential_not_found"}
   end

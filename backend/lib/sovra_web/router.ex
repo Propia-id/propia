@@ -117,15 +117,34 @@ defmodule SovraWeb.Router do
     post "/offers", OfferController, :create
     get "/offers", AdminController, :list_offers
     get "/credentials", AdminController, :list_issued_credentials
+    get "/credentials/:id", AdminController, :show_issued_credential
+  end
+
+  # Verification listings on the dashboard (JWT session) — reuses the
+  # workspace-scoped controller actions also exposed under /api/v1/verifier/.
+  scope "/api/v1/issuer/admin", SovraWeb.Verifier do
+    pipe_through [:api, :issuer_session]
+
+    get "/verifications", VerificationController, :index
+    get "/verifications/:id", VerificationController, :show
   end
 
   # Admin-only credential status changes (workspace admin required)
   scope "/api/v1/issuer/admin", SovraWeb.Issuer do
     pipe_through [:api, :issuer_session, :require_workspace_admin]
 
-    post "/credentials/:id/revoke", AdminController, :revoke_credential
-    post "/credentials/:id/suspend", AdminController, :suspend_credential
-    post "/credentials/:id/unsuspend", AdminController, :unsuspend_credential
+    put "/credentials/:id/status/:status", AdminController, :update_credential_status
+  end
+
+  # Issuer credential API (workspace API key — server-to-server lifecycle ops).
+  # Same controller actions as the dashboard mount above; both pipelines assign
+  # `current_workspace_id`, so AdminController is auth-agnostic here.
+  scope "/api/v1/issuer", SovraWeb.Issuer do
+    pipe_through [:api, :api_key]
+
+    get "/credentials", AdminController, :list_issued_credentials
+    get "/credentials/:id", AdminController, :show_issued_credential
+    put "/credentials/:id/status/:status", AdminController, :update_credential_status
   end
 
   # Super-admin API (admin role required)
@@ -197,12 +216,29 @@ defmodule SovraWeb.Router do
     post "/:workspace_id/api_keys/:id/revoke", ApiKeyController, :revoke
   end
 
+  # Verifier API (workspace API key — server-to-server, used to start OID4VP sessions)
+  scope "/api/v1/verifier", SovraWeb.Verifier do
+    pipe_through [:api, :api_key]
+
+    post "/verifications", VerificationController, :create
+    get "/verifications", VerificationController, :index
+    get "/verifications/:id", VerificationController, :show
+  end
+
   # Verification API
   scope "/api/v1/verify", SovraWeb.Verify do
     pipe_through :api
 
     post "/presentation", PresentationController, :verify
     get "/did/:did", PresentationController, :resolve_did
+  end
+
+  # Wallet direct_post submission (public, rate-limited)
+  scope "/api/v1/verify", SovraWeb.Verify do
+    pipe_through [:api, :offer_rate_limited]
+
+    post "/direct_post/:session_id", DirectPostController, :submit
+    get "/request/:session_id", RequestController, :show
   end
 
   # Status list API (public, cacheable)

@@ -30,6 +30,56 @@ defmodule Sovra.Ethereum.WalletReader do
     end
   end
 
+  @doc """
+  Read the holder's current passkey (P-256 public key) from a wallet
+  contract. The passkey is the live signing key that gets updated by the
+  recovery flow, so the returned value reflects the *current* authorized
+  key — not whatever was set at issuance time.
+
+  Returns `{:error, :uninitialized_passkey}` when both coordinates are
+  zero (wallet not yet initialized) so callers can fail closed without
+  treating an unset wallet as a valid identity.
+  """
+  @spec read_passkey(String.t()) :: {:ok, {binary, binary}} | {:error, term()}
+  def read_passkey(wallet_address) do
+    with {:ok, x} <- read_bytes32(wallet_address, "passkeyX()"),
+         {:ok, y} <- read_bytes32(wallet_address, "passkeyY()") do
+      if x == <<0::256>> and y == <<0::256>> do
+        {:error, :uninitialized_passkey}
+      else
+        {:ok, {x, y}}
+      end
+    end
+  end
+
+  @doc """
+  Returns true if the wallet's DID has been deactivated (a permanent,
+  one-way action set via `deactivate()` on the contract).
+  """
+  @spec did_deactivated?(String.t()) :: {:ok, boolean()} | {:error, term()}
+  def did_deactivated?(wallet_address) do
+    case read_bytes32(wallet_address, "didDeactivated()") do
+      {:ok, <<0::256>>} -> {:ok, false}
+      {:ok, _} -> {:ok, true}
+      {:error, _} = err -> err
+    end
+  end
+
+  defp read_bytes32(wallet_address, signature) do
+    selector = ExKeccak.hash_256(signature) |> binary_part(0, 4)
+
+    case Client.call(%{data: selector}, to: wallet_address) do
+      {:ok, "0x" <> hex} ->
+        case Base.decode16(hex, case: :mixed) do
+          {:ok, <<bytes::binary-32>>} -> {:ok, bytes}
+          _ -> {:error, :malformed_response}
+        end
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
   @doc "Compute the EIP-712 domain separator for a wallet."
   @spec domain_separator(String.t(), non_neg_integer()) :: binary()
   def domain_separator(wallet_address, chain_id) do

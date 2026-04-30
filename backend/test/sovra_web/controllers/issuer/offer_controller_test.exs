@@ -63,7 +63,7 @@ defmodule SovraWeb.Issuer.OfferControllerTest do
         })
         |> json_response(201)
 
-      assert resp["offer_id"]
+      assert resp["credential_id"]
       assert resp["offer_uri"]
       assert resp["pre_authorized_code"]
       assert resp["expires_at"]
@@ -85,7 +85,7 @@ defmodule SovraWeb.Issuer.OfferControllerTest do
         })
         |> json_response(201)
 
-      assert resp["offer_id"]
+      assert resp["credential_id"]
       assert resp["offer_uri"]
     end
 

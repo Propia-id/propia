@@ -204,6 +204,20 @@ export class ApiClient {
     return data.credential;
   }
 
+  // ─── OID4VP ───────────────────────────────────────
+
+  /**
+   * Submit a holder-signed vp_token to the verifier's response_uri (the
+   * direct_post target carried in the OID4VP authorization request).
+   */
+  async directPost(
+    responseUri: string,
+    vpToken: string,
+    state: string,
+  ): Promise<void> {
+    await axios.post(responseUri, { vp_token: vpToken, state });
+  }
+
   // ─── L2 JSON-RPC ─────────────────────────────────
 
   private rpcId = 1;

@@ -18,10 +18,23 @@ defmodule SovraWeb.Issuer.OfferController do
   @response_body %OpenApiSpex.Schema{
     type: :object,
     properties: %{
-      offer_id: %OpenApiSpex.Schema{type: :string, format: :uuid},
+      credential_id: %OpenApiSpex.Schema{
+        type: :string,
+        format: :uuid,
+        description:
+          "Stable identifier for the credential through its full lifecycle. " <>
+            "Echoed in the `credential.issued` webhook and accepted by " <>
+            "`GET /credentials/:id` and `PUT /credentials/:id/status/:status`."
+      },
       offer_uri: %OpenApiSpex.Schema{type: :string},
       pre_authorized_code: %OpenApiSpex.Schema{type: :string},
-      expires_at: %OpenApiSpex.Schema{type: :string, format: :"date-time"}
+      expires_at: %OpenApiSpex.Schema{type: :string, format: :"date-time"},
+      credential: %OpenApiSpex.Schema{
+        type: :object,
+        description:
+          "Preliminary VC payload (no holder DID, no proof). The signed SD-JWT " <>
+            "arrives later in the `credential.issued` webhook."
+      }
     }
   }
 
@@ -53,14 +66,21 @@ defmodule SovraWeb.Issuer.OfferController do
            params["schema_id"],
            params["claims"] || %{}
          ) do
-      {:ok, %{offer: offer, offer_uri: offer_uri, pre_authorized_code: code}} ->
+      {:ok,
+       %{
+         offer: offer,
+         offer_uri: offer_uri,
+         pre_authorized_code: code,
+         credential: credential
+       }} ->
         conn
         |> put_status(201)
         |> json(%{
-          offer_id: offer.id,
+          credential_id: offer.id,
           offer_uri: offer_uri,
           pre_authorized_code: code,
-          expires_at: DateTime.to_iso8601(offer.expires_at)
+          expires_at: DateTime.to_iso8601(offer.expires_at),
+          credential: credential
         })
 
       {:error, :workspace_not_found} ->

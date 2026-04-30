@@ -98,7 +98,7 @@ defmodule Sovra.Issuer do
   # ── Credential Offer ───────────────────────────────────
 
   def create_credential_offer(workspace_id, schema_id, claims) do
-    with {:ok, _workspace} <- Workspaces.get_workspace(workspace_id),
+    with {:ok, workspace} <- Workspaces.get_workspace(workspace_id),
          {:ok, schema} <- get_schema(workspace_id, schema_id),
          :ok <- validate_claims(schema, claims),
          {:ok, status_list_index} <- assign_status_list_index(workspace_id) do
@@ -121,7 +121,17 @@ defmodule Sovra.Issuer do
         {:ok, offer} ->
           base_url = ClaimUtils.base_url()
           offer_uri = build_offer_uri(plaintext_code, offer, schema, base_url)
-          {:ok, %{offer: offer, offer_uri: offer_uri, pre_authorized_code: plaintext_code}}
+
+          credential_preview =
+            SDJWT.build_preview(workspace, schema, claims, status_list_index: status_list_index)
+
+          {:ok,
+           %{
+             offer: offer,
+             offer_uri: offer_uri,
+             pre_authorized_code: plaintext_code,
+             credential: credential_preview
+           }}
 
         {:error, _} = error ->
           error
@@ -252,8 +262,12 @@ defmodule Sovra.Issuer do
       {:ok, expires_at} = DateTime.from_unix(payload["exp"])
       expires_at = DateTime.truncate(expires_at, :second)
 
+      # Reuse offer.id as the IssuedCredential's primary key so external
+      # integrators have a single stable `credential_id` from offer creation
+      # through webhook delivery and lifecycle changes.
       issued_cred_changeset =
         IssuedCredential.create_changeset(%{
+          id: offer.id,
           issuer_id: offer.issuer_id,
           schema_id: offer.schema_id,
           holder_did: holder_did,
@@ -274,7 +288,9 @@ defmodule Sovra.Issuer do
                     "holder_did" => cred.holder_did,
                     "schema_type" => schema.credential_type,
                     "issued_at" => DateTime.to_iso8601(cred.issued_at),
-                    "expires_at" => DateTime.to_iso8601(cred.expires_at)
+                    "expires_at" => DateTime.to_iso8601(cred.expires_at),
+                    "credential" => sd_jwt,
+                    "format" => "vc+sd-jwt"
                   })
 
                 sd_jwt
@@ -384,7 +400,7 @@ defmodule Sovra.Issuer do
   end
 
   defp change_credential_status(workspace_id, credential_id, new_status, event, chain_call) do
-    with {:ok, cred} <- get_issued_credential(workspace_id, credential_id),
+    with {:ok, cred} <- resolve_issued_or_pending(workspace_id, credential_id),
          :ok <- validate_status_transition(cred, new_status),
          :ok <- maybe_sync_chain_status(chain_call, workspace_id, cred.status_list_index),
          {:ok, updated} <-
@@ -403,6 +419,17 @@ defmodule Sovra.Issuer do
     end
   end
 
+  # Used by lifecycle ops: only an *issued* credential can transition. If the
+  # id resolves to a pending offer instead, surface that as a distinct error so
+  # the controller can return 422 (different from a true 404).
+  defp resolve_issued_or_pending(workspace_id, id) do
+    case get_credential(workspace_id, id) do
+      {:ok, {:issued, cred}} -> {:ok, cred}
+      {:ok, {:pending, _offer}} -> {:error, :credential_not_yet_issued}
+      {:error, :credential_not_found} = err -> err
+    end
+  end
+
   defp maybe_sync_chain_status(chain_call, workspace_id, index) do
     if ethereum_configured?() do
       case chain_call.(get_workspace_eoa(workspace_id), index) do
@@ -414,10 +441,37 @@ defmodule Sovra.Issuer do
     end
   end
 
-  defp get_issued_credential(workspace_id, id) do
+  def get_issued_credential(workspace_id, id) do
     case Repo.get_by(IssuedCredential, id: id, issuer_id: workspace_id) do
-      nil -> {:error, :credential_not_found}
-      cred -> {:ok, cred}
+      nil ->
+        {:error, :credential_not_found}
+
+      cred ->
+        {:ok, Repo.preload(cred, :schema)}
+    end
+  end
+
+  @doc """
+  Resolve a credential by id, including offers that haven't been claimed yet.
+  After offer creation Sovra Gov already holds the future credential's id
+  (offer.id == issued_credentials.id once the holder claims), so the GET
+  endpoint must reflect the in-flight state instead of 404'ing.
+
+  Returns `{:ok, {:issued, %IssuedCredential{}}}` once the holder claimed,
+  `{:ok, {:pending, %CredentialOffer{}}}` while the offer is outstanding, or
+  `{:error, :credential_not_found}` if neither table has a row for this id
+  in this workspace.
+  """
+  def get_credential(workspace_id, id) do
+    case get_issued_credential(workspace_id, id) do
+      {:ok, cred} ->
+        {:ok, {:issued, cred}}
+
+      {:error, :credential_not_found} ->
+        case Repo.get_by(CredentialOffer, id: id, issuer_id: workspace_id) do
+          nil -> {:error, :credential_not_found}
+          offer -> {:ok, {:pending, Repo.preload(offer, :schema)}}
+        end
     end
   end
 

@@ -64,6 +64,33 @@ defmodule Sovra.Issuer.SDJWT do
     end
   end
 
+  @doc """
+  Build the preliminary VC payload returned at offer-creation time, before the
+  holder has scanned the QR. Same shape as the SD-JWT payload but without
+  holder-bound fields (`sub`, `cnf`), without selective-disclosure digests
+  (claims are emitted plaintext), and without a signature. Sovra Gov stores
+  this and renders it for the citizen immediately; the signed SD-JWT arrives
+  later via the `credential.issued` webhook.
+  """
+  def build_preview(issuer, schema, claims, opts \\ []) do
+    iat = System.system_time(:second)
+    exp = iat + parse_validity_period(schema.validity_period)
+
+    schema_keys =
+      schema.claims
+      |> ClaimUtils.parse_claim_defs()
+      |> Enum.map(& &1["key"])
+
+    %{
+      "iss" => issuer.did,
+      "iat" => iat,
+      "exp" => exp,
+      "vct" => schema.credential_type
+    }
+    |> Map.merge(Map.take(claims, schema_keys))
+    |> maybe_add_credential_status(issuer, opts)
+  end
+
   defp maybe_add_credential_status(payload, _issuer, opts) do
     case Keyword.get(opts, :status_list_index) do
       nil ->

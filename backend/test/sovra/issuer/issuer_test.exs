@@ -1,10 +1,12 @@
 defmodule Sovra.IssuerTest do
   use Sovra.DataCase, async: false
+  use Oban.Testing, repo: Sovra.Repo
 
   alias Sovra.Issuer
   alias Sovra.Issuer.{CredentialOffer, IssuerAccount, TokenHash}
   alias Sovra.Crypto.P256
   alias Sovra.Organizations.Organization
+  alias Sovra.Webhooks.DeliveryJob
   alias Sovra.Workspaces
 
   setup do
@@ -100,6 +102,28 @@ defmodule Sovra.IssuerTest do
         Issuer.create_credential_offer(issuer.id, schema.schema_id, claims)
 
       assert String.contains?(result.offer_uri, result.pre_authorized_code)
+    end
+
+    test "returns a preliminary VC without holder-bound fields or proof" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+      claims = %{"name" => "Alice", "age" => 30, "ignored" => "drop-me"}
+
+      {:ok, result} =
+        Issuer.create_credential_offer(issuer.id, schema.schema_id, claims)
+
+      preview = result.credential
+      assert preview["iss"] == issuer.did
+      assert preview["vct"] == schema.credential_type
+      assert preview["name"] == "Alice"
+      assert preview["age"] == 30
+      assert is_integer(preview["iat"])
+      assert preview["exp"] > preview["iat"]
+      assert is_list(preview["credentialStatus"])
+      refute Map.has_key?(preview, "ignored")
+      refute Map.has_key?(preview, "sub")
+      refute Map.has_key?(preview, "cnf")
+      refute Map.has_key?(preview, "_sd")
     end
   end
 
@@ -221,6 +245,50 @@ defmodule Sovra.IssuerTest do
       {:ok, payload_json} = Base.url_decode64(payload_b64, padding: false)
       {:ok, jwt_payload} = Jason.decode(payload_json)
       assert jwt_payload["sub"] == holder_did
+
+      assert_enqueued(
+        worker: DeliveryJob,
+        args: %{
+          "event" => "credential.issued",
+          "payload" => %{
+            "data" => %{
+              "credential" => sd_jwt,
+              "format" => "vc+sd-jwt",
+              "holder_did" => holder_did
+            }
+          }
+        }
+      )
+    end
+
+    test "issued credential reuses the offer id", %{token_data: token_data, offer_result: result} do
+      {:ok, %{private_key: priv, public_key_x: x, public_key_y: y}} = P256.generate_key_pair()
+
+      header = %{
+        "typ" => "openid4vci-proof+jwt",
+        "alg" => "ES256",
+        "jwk" => %{
+          "kty" => "EC",
+          "crv" => "P-256",
+          "x" => Base.url_encode64(x, padding: false),
+          "y" => Base.url_encode64(y, padding: false)
+        }
+      }
+
+      payload = %{"iss" => "did:sovra:0xholder", "nonce" => token_data.c_nonce}
+      header_b64 = Base.url_encode64(Jason.encode!(header), padding: false)
+      payload_b64 = Base.url_encode64(Jason.encode!(payload), padding: false)
+      signing_input = "#{header_b64}.#{payload_b64}"
+      hash = :crypto.hash(:sha256, signing_input)
+      {:ok, %{r: r, s: s}} = P256.sign(hash, priv)
+      raw_sig = P256.pad_or_trim(r, 32) <> P256.pad_or_trim(s, 32)
+      sig_b64 = Base.url_encode64(raw_sig, padding: false)
+      jwt = "#{signing_input}.#{sig_b64}"
+
+      {:ok, _sd_jwt} = Issuer.issue_credential(token_data.access_token, %{"jwt" => jwt})
+
+      issued = Sovra.Repo.get_by!(Sovra.Issuer.IssuedCredential, id: result.offer.id)
+      assert issued.id == result.offer.id
     end
 
     test "rejects proof with wrong nonce", %{token_data: token_data} do

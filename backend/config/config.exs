@@ -47,11 +47,17 @@ config :phoenix, :json_library, Jason
 config :hammer,
   backend: {Hammer.Backend.ETS, [expiry_ms: 300_000, cleanup_interval_ms: 60_000]}
 
-# Oban job runner (webhook delivery)
+# Oban job runner (webhook delivery + verification housekeeping)
 config :sovra, Oban,
   repo: Sovra.Repo,
-  queues: [webhooks: 10],
-  plugins: [{Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7}]
+  queues: [webhooks: 10, verification: 1],
+  plugins: [
+    {Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7},
+    {Oban.Plugins.Cron,
+     crontab: [
+       {"* * * * *", Sovra.Verification.ExpiredSessionsSweeper}
+     ]}
+  ]
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.

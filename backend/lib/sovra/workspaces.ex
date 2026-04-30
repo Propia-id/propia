@@ -89,6 +89,13 @@ defmodule Sovra.Workspaces do
     end
   end
 
+  def get_workspace_by_did(did) when is_binary(did) do
+    case Repo.get_by(Workspace, did: did) do
+      nil -> {:error, :workspace_not_found}
+      workspace -> {:ok, workspace}
+    end
+  end
+
   def list_workspaces do
     from(w in Workspace,
       order_by: [desc: w.inserted_at],

@@ -204,37 +204,59 @@ defmodule SovraWeb.Issuer.AdminController do
     }
   )
 
+  @credential_object %OpenApiSpex.Schema{
+    type: :object,
+    properties: %{
+      id: %OpenApiSpex.Schema{type: :string, format: :uuid},
+      holder_did: %OpenApiSpex.Schema{type: :string},
+      status: %OpenApiSpex.Schema{type: :string},
+      issued_at: %OpenApiSpex.Schema{type: :string, format: :"date-time"},
+      expires_at: %OpenApiSpex.Schema{type: :string, format: :"date-time"},
+      schema: %OpenApiSpex.Schema{
+        type: :object,
+        properties: %{
+          id: %OpenApiSpex.Schema{type: :string, format: :uuid},
+          credential_type: %OpenApiSpex.Schema{type: :string},
+          name: %OpenApiSpex.Schema{type: :string}
+        }
+      }
+    }
+  }
+
   operation(:list_issued_credentials,
     summary: "List issued credentials",
-    description: "List all credentials issued by the authenticated issuer.",
+    description: "List all credentials issued by the authenticated workspace.",
     responses: %{
       200 =>
         {"Credential list", "application/json",
          %OpenApiSpex.Schema{
            type: :object,
            properties: %{
-             credentials: %OpenApiSpex.Schema{
-               type: :array,
-               items: %OpenApiSpex.Schema{
-                 type: :object,
-                 properties: %{
-                   id: %OpenApiSpex.Schema{type: :string, format: :uuid},
-                   holder_did: %OpenApiSpex.Schema{type: :string},
-                   status: %OpenApiSpex.Schema{type: :string},
-                   issued_at: %OpenApiSpex.Schema{type: :string, format: :"date-time"},
-                   expires_at: %OpenApiSpex.Schema{type: :string, format: :"date-time"},
-                   schema: %OpenApiSpex.Schema{
-                     type: :object,
-                     properties: %{
-                       id: %OpenApiSpex.Schema{type: :string, format: :uuid},
-                       credential_type: %OpenApiSpex.Schema{type: :string},
-                       name: %OpenApiSpex.Schema{type: :string}
-                     }
-                   }
-                 }
-               }
-             }
+             credentials: %OpenApiSpex.Schema{type: :array, items: @credential_object}
            }
+         }}
+    }
+  )
+
+  operation(:show_issued_credential,
+    summary: "Show a credential by id",
+    description:
+      "Return metadata for a credential. The same id covers the full lifecycle: " <>
+        "while the holder hasn't claimed yet the response has `status: \"pending\"` " <>
+        "(or `\"expired\"` if the offer window passed) with a null `holder_did` " <>
+        "and `issued_at`; once claimed it returns the issued state. The signed " <>
+        "SD-JWT is delivered once via the `credential.issued` webhook and is not " <>
+        "stored server-side.",
+    parameters: [
+      id: [in: :path, type: :string, description: "Credential UUID", required: true]
+    ],
+    responses: %{
+      200 => {"Credential", "application/json", @credential_object},
+      404 =>
+        {"Credential not found", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
          }}
     }
   )
@@ -386,16 +408,25 @@ defmodule SovraWeb.Issuer.AdminController do
     })
   end
 
-  operation(:revoke_credential,
-    summary: "Revoke a credential",
+  operation(:update_credential_status,
+    summary: "Change a credential's status",
     description:
-      "Workspace admin. Permanently revoke a credential and set the revocation bit on-chain.",
+      "Idempotent status transition. Allowed values: `revoked` (permanent), " <>
+        "`suspended` (reversible), `issued` (un-suspend a suspended credential). " <>
+        "On the dashboard pipeline, requires workspace admin; on the API-key " <>
+        "pipeline, the workspace's API key is sufficient.",
     parameters: [
-      id: [in: :path, type: :string, description: "Credential UUID", required: true]
+      id: [in: :path, type: :string, description: "Credential UUID", required: true],
+      status: [
+        in: :path,
+        type: :string,
+        description: "Target status: `revoked`, `suspended`, or `issued`",
+        required: true
+      ]
     ],
     responses: %{
       200 =>
-        {"Credential revoked", "application/json",
+        {"Status updated", "application/json",
          %OpenApiSpex.Schema{
            type: :object,
            properties: %{
@@ -403,81 +434,11 @@ defmodule SovraWeb.Issuer.AdminController do
              status: %OpenApiSpex.Schema{type: :string}
            }
          }},
-      403 =>
-        {"Workspace admin required", "application/json",
+      400 =>
+        {"Unknown target status", "application/json",
          %OpenApiSpex.Schema{
            type: :object,
            properties: %{error: %OpenApiSpex.Schema{type: :string}}
-         }},
-      404 =>
-        {"Credential not found", "application/json",
-         %OpenApiSpex.Schema{
-           type: :object,
-           properties: %{error: %OpenApiSpex.Schema{type: :string}}
-         }},
-      422 =>
-        {"Invalid transition", "application/json",
-         %OpenApiSpex.Schema{
-           type: :object,
-           properties: %{error: %OpenApiSpex.Schema{type: :string}}
-         }}
-    }
-  )
-
-  operation(:suspend_credential,
-    summary: "Suspend a credential",
-    description:
-      "Workspace admin. Temporarily suspend a credential on-chain. Reversible with unsuspend.",
-    parameters: [
-      id: [in: :path, type: :string, description: "Credential UUID", required: true]
-    ],
-    responses: %{
-      200 =>
-        {"Credential suspended", "application/json",
-         %OpenApiSpex.Schema{
-           type: :object,
-           properties: %{
-             id: %OpenApiSpex.Schema{type: :string, format: :uuid},
-             status: %OpenApiSpex.Schema{type: :string}
-           }
-         }},
-      403 =>
-        {"Workspace admin required", "application/json",
-         %OpenApiSpex.Schema{
-           type: :object,
-           properties: %{error: %OpenApiSpex.Schema{type: :string}}
-         }},
-      404 =>
-        {"Credential not found", "application/json",
-         %OpenApiSpex.Schema{
-           type: :object,
-           properties: %{error: %OpenApiSpex.Schema{type: :string}}
-         }},
-      422 =>
-        {"Invalid transition", "application/json",
-         %OpenApiSpex.Schema{
-           type: :object,
-           properties: %{error: %OpenApiSpex.Schema{type: :string}}
-         }}
-    }
-  )
-
-  operation(:unsuspend_credential,
-    summary: "Unsuspend a credential",
-    description:
-      "Workspace admin. Reverse a suspension, restoring the credential to active status.",
-    parameters: [
-      id: [in: :path, type: :string, description: "Credential UUID", required: true]
-    ],
-    responses: %{
-      200 =>
-        {"Credential unsuspended", "application/json",
-         %OpenApiSpex.Schema{
-           type: :object,
-           properties: %{
-             id: %OpenApiSpex.Schema{type: :string, format: :uuid},
-             status: %OpenApiSpex.Schema{type: :string}
-           }
          }},
       403 =>
         {"Workspace admin required", "application/json",
@@ -501,56 +462,93 @@ defmodule SovraWeb.Issuer.AdminController do
   )
 
   def list_issued_credentials(conn, _params) do
-    workspace_id = conn.assigns.current_issuer_account.workspace_id
+    workspace_id = conn.assigns.current_workspace_id
     credentials = Issuer.list_issued_credentials(workspace_id)
 
-    json(conn, %{
-      credentials:
-        Enum.map(credentials, fn c ->
-          %{
-            id: c.id,
-            holder_did: c.holder_did,
-            status: c.status,
-            issued_at: DateTime.to_iso8601(c.issued_at),
-            expires_at: DateTime.to_iso8601(c.expires_at),
-            schema: %{
-              id: c.schema.id,
-              credential_type: c.schema.credential_type,
-              name: c.schema.name
-            }
-          }
-        end)
-    })
+    json(conn, %{credentials: Enum.map(credentials, &credential_view/1)})
   end
 
-  def revoke_credential(conn, %{"id" => credential_id}) do
-    handle_status_change(conn, credential_id, &Issuer.revoke_credential/2)
-  end
+  def show_issued_credential(conn, %{"id" => credential_id}) do
+    workspace_id = conn.assigns.current_workspace_id
 
-  def suspend_credential(conn, %{"id" => credential_id}) do
-    handle_status_change(conn, credential_id, &Issuer.suspend_credential/2)
-  end
+    case Issuer.get_credential(workspace_id, credential_id) do
+      {:ok, {:issued, cred}} ->
+        json(conn, credential_view(cred))
 
-  def unsuspend_credential(conn, %{"id" => credential_id}) do
-    handle_status_change(conn, credential_id, &Issuer.unsuspend_credential/2)
-  end
-
-  defp handle_status_change(conn, credential_id, fun) do
-    workspace_id = conn.assigns.current_issuer_account.workspace_id
-
-    case fun.(workspace_id, credential_id) do
-      {:ok, cred} ->
-        json(conn, %{id: cred.id, status: cred.status})
+      {:ok, {:pending, offer}} ->
+        json(conn, pending_credential_view(offer))
 
       {:error, :credential_not_found} ->
         conn |> put_status(404) |> json(%{error: "credential_not_found"})
-
-      {:error, :invalid_status_transition} ->
-        conn |> put_status(422) |> json(%{error: "invalid_status_transition"})
-
-      {:error, reason} ->
-        conn |> put_status(422) |> json(%{error: to_string(reason)})
     end
+  end
+
+  @status_transitions %{
+    "revoked" => &Sovra.Issuer.revoke_credential/2,
+    "suspended" => &Sovra.Issuer.suspend_credential/2,
+    "issued" => &Sovra.Issuer.unsuspend_credential/2
+  }
+
+  def update_credential_status(conn, %{"id" => credential_id, "status" => status}) do
+    case Map.fetch(@status_transitions, status) do
+      {:ok, fun} ->
+        workspace_id = conn.assigns.current_workspace_id
+
+        case fun.(workspace_id, credential_id) do
+          {:ok, cred} ->
+            json(conn, %{id: cred.id, status: cred.status})
+
+          {:error, :credential_not_found} ->
+            conn |> put_status(404) |> json(%{error: "credential_not_found"})
+
+          {:error, :credential_not_yet_issued} ->
+            conn |> put_status(422) |> json(%{error: "credential_not_yet_issued"})
+
+          {:error, :invalid_status_transition} ->
+            conn |> put_status(422) |> json(%{error: "invalid_status_transition"})
+
+          {:error, reason} ->
+            conn |> put_status(422) |> json(%{error: to_string(reason)})
+        end
+
+      :error ->
+        conn |> put_status(400) |> json(%{error: "unknown_status"})
+    end
+  end
+
+  defp credential_view(c) do
+    %{
+      id: c.id,
+      holder_did: c.holder_did,
+      status: c.status,
+      issued_at: DateTime.to_iso8601(c.issued_at),
+      expires_at: DateTime.to_iso8601(c.expires_at),
+      schema: %{
+        id: c.schema.id,
+        credential_type: c.schema.credential_type,
+        name: c.schema.name
+      }
+    }
+  end
+
+  defp pending_credential_view(offer) do
+    status =
+      if DateTime.compare(DateTime.utc_now(), offer.expires_at) == :gt,
+        do: "expired",
+        else: "pending"
+
+    %{
+      id: offer.id,
+      holder_did: nil,
+      status: status,
+      issued_at: nil,
+      expires_at: DateTime.to_iso8601(offer.expires_at),
+      schema: %{
+        id: offer.schema.id,
+        credential_type: offer.schema.credential_type,
+        name: offer.schema.name
+      }
+    }
   end
 
   defp normalize_claims(%{"claims" => claims}) when is_list(claims), do: claims

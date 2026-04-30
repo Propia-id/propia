@@ -36,6 +36,9 @@ export interface VPRequest {
   nonce: string;
   dcqlQuery: DCQLQuery;
   verifierName?: string;
+  state?: string;
+  responseUri?: string;
+  responseMode?: string;
 }
 
 export interface ApprovalData {
@@ -195,6 +198,7 @@ export class PresentationProtocol {
     private getIdentity: () => {
       did: string;
       passkeyCredentialId: string;
+      passkeyPublicKey: Uint8Array;
     },
   ) {}
 
@@ -203,20 +207,42 @@ export class PresentationProtocol {
     return qrData.startsWith("openid4vp://");
   }
 
-  /** Parse an inline OpenID4VP request from a QR URI. */
+  /**
+   * Parse an OpenID4VP request URI. Supports both the wrapped form
+   * (`?request=<JSON>`) and the flat-query form
+   * (`?client_id=...&dcql_query=<JSON>&...`) emitted by the Sovra verifier.
+   */
   parseRequest(uri: string): VPRequest {
     const url = new URL(uri);
-    const requestParam = url.searchParams.get("request");
-    if (!requestParam) {
-      throw new Error("Missing 'request' parameter in OpenID4VP URI");
+    const params = url.searchParams;
+    const requestParam = params.get("request");
+
+    const fields: Record<string, unknown> = requestParam
+      ? (JSON.parse(requestParam) as Record<string, unknown>)
+      : Object.fromEntries(params.entries());
+
+    const dcqlRaw = fields.dcql_query;
+    const dcqlQuery =
+      typeof dcqlRaw === "string"
+        ? (JSON.parse(dcqlRaw) as DCQLQuery)
+        : (dcqlRaw as DCQLQuery);
+
+    if (!fields.client_id || !fields.nonce || !dcqlQuery) {
+      throw new Error("Missing required OpenID4VP parameters");
     }
 
-    const payload = JSON.parse(requestParam) as Record<string, unknown>;
+    const clientMetadata = fields.client_metadata as
+      | Record<string, string>
+      | undefined;
+
     return {
-      clientId: payload.client_id as string,
-      nonce: payload.nonce as string,
-      dcqlQuery: payload.dcql_query as DCQLQuery,
-      verifierName: (payload.client_metadata as Record<string, string>)?.client_name,
+      clientId: fields.client_id as string,
+      nonce: fields.nonce as string,
+      dcqlQuery,
+      verifierName: clientMetadata?.client_name,
+      state: (fields.state as string) ?? undefined,
+      responseUri: (fields.response_uri as string) ?? undefined,
+      responseMode: (fields.response_mode as string) ?? undefined,
     };
   }
 
@@ -260,6 +286,20 @@ export class PresentationProtocol {
     };
   }
 
+  /**
+   * POST a vp_token to the verifier's response_uri using the OID4VP
+   * `direct_post` response mode. Throws if the request lacks the
+   * required `responseUri` / `state` fields.
+   */
+  async executeDirectPost(request: VPRequest, vpToken: string): Promise<void> {
+    if (!request.responseUri || !request.state) {
+      throw new Error(
+        "direct_post requires response_uri and state in the request",
+      );
+    }
+    await this.api.directPost(request.responseUri, vpToken, request.state);
+  }
+
   /** Execute the full OpenID4VP presentation flow and return the VP token. */
   async executePresentation(
     request: VPRequest,
@@ -299,13 +339,33 @@ export class PresentationProtocol {
 
   /** Build and dual-sign a Key Binding JWT. */
   private async buildKBJwt(
-    identity: { did: string; passkeyCredentialId: string },
+    identity: {
+      did: string;
+      passkeyCredentialId: string;
+      passkeyPublicKey: Uint8Array;
+    },
     nonce: string,
     audience: string,
     sdHash: Uint8Array,
   ): Promise<string> {
-    const header = { alg: "ES256", typ: "kb+jwt" };
+    // Embed the holder's public key in the header so the verifier can
+    // recover it without resolving a DID document.
+    const pubkey = identity.passkeyPublicKey;
+    const x = pubkey.length === 65 ? pubkey.slice(1, 33) : pubkey.slice(0, 32);
+    const y = pubkey.length === 65 ? pubkey.slice(33, 65) : pubkey.slice(32, 64);
+
+    const header = {
+      alg: "ES256",
+      typ: "kb+jwt",
+      jwk: {
+        kty: "EC",
+        crv: "P-256",
+        x: base64urlEncode(x),
+        y: base64urlEncode(y),
+      },
+    };
     const payload = {
+      iss: identity.did,
       iat: Math.floor(Date.now() / 1000),
       nonce,
       aud: audience,

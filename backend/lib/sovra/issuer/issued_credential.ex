@@ -20,7 +20,7 @@ defmodule Sovra.Issuer.IssuedCredential do
   end
 
   @required ~w(issuer_id schema_id holder_did issued_at expires_at)a
-  @optional ~w(status_list_index status_purpose)a
+  @optional ~w(id status_list_index status_purpose)a
 
   def create_changeset(record \\ %__MODULE__{}, attrs) do
     record

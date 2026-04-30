@@ -10,8 +10,7 @@ defmodule SovraWeb.Endpoint do
     at: "/",
     from: :sovra,
     gzip: not code_reloading?,
-    only: SovraWeb.static_paths(),
-    raise_on_missing_only: code_reloading?
+    only: SovraWeb.static_paths()
 
   # Code reloading can be explicitly enabled under the
   # :code_reloader configuration of your endpoint.
