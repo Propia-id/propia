@@ -73,8 +73,29 @@ defmodule SovraWeb.Issuer.CredentialController do
       {"Credential request", "application/json",
        %OpenApiSpex.Schema{
          type: :object,
+         required: [:credential_configuration_id, :proof],
          properties: %{
-           proof: %OpenApiSpex.Schema{type: :object, description: "JWT proof of possession"}
+           credential_configuration_id: %OpenApiSpex.Schema{
+             type: :string,
+             description:
+               "ID of the credential configuration being requested. Must match the `credential_type` of the offer's schema.",
+             example: "UniversityDegree"
+           },
+           proof: %OpenApiSpex.Schema{
+             type: :object,
+             description:
+               "OID4VCI proof of possession. Currently only the `jwt` proof type is supported.",
+             required: [:proof_type, :jwt],
+             properties: %{
+               proof_type: %OpenApiSpex.Schema{type: :string, example: "jwt"},
+               jwt: %OpenApiSpex.Schema{
+                 type: :string,
+                 description:
+                   "Compact JWS. Header: {alg: ES256, typ: openid4vci-proof+jwt, jwk: {kty,crv,x,y}}. Payload: {iss: <holder_did>, nonce: <c_nonce from /token>}. Signed with the holder key whose public coordinates are in the header `jwk`.",
+                 example: "eyJhbGciOi..."
+               }
+             }
+           }
          }
        }},
     responses: %{
@@ -148,11 +169,12 @@ defmodule SovraWeb.Issuer.CredentialController do
   def issue(conn, params) do
     access_token = extract_bearer_token(conn)
     proof = params["proof"]
+    credential_configuration_id = params["credential_configuration_id"]
 
     if is_nil(access_token) do
       conn |> put_status(401) |> json(%{error: "missing_token"})
     else
-      case Issuer.issue_credential(access_token, proof) do
+      case Issuer.issue_credential(access_token, credential_configuration_id, proof) do
         {:ok, sd_jwt} ->
           json(conn, %{credential: sd_jwt, format: "vc+sd-jwt"})
 
@@ -164,6 +186,9 @@ defmodule SovraWeb.Issuer.CredentialController do
 
         {:error, :invalid_proof} ->
           conn |> put_status(400) |> json(%{error: "invalid_proof"})
+
+        {:error, :invalid_credential_request} ->
+          conn |> put_status(400) |> json(%{error: "invalid_credential_request"})
 
         {:error, :credential_already_issued} ->
           conn |> put_status(400) |> json(%{error: "credential_already_issued"})

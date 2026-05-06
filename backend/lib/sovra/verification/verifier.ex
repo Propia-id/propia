@@ -77,8 +77,8 @@ defmodule Sovra.Verification.Verifier do
 
   defp verify_issuer_signature(parts, session) do
     case SDJWT.decode_jwt(parts.sd_jwt) do
-      {:ok, %{payload: %{"iss" => issuer_did} = payload}} ->
-        case Workspaces.get_workspace_by_did(issuer_did) do
+      {:ok, %{payload: %{"iss" => iss} = payload}} ->
+        case Workspaces.get_workspace_by_did(extract_issuer_did(iss)) do
           {:ok, workspace} ->
             key = %{x: workspace.signing_public_key_x, y: workspace.signing_public_key_y}
 
@@ -95,6 +95,17 @@ defmodule Sovra.Verification.Verifier do
         fail(session, "credential_signature_invalid", nil)
     end
   end
+
+  # Per OID4VCI 1.0, `iss` is the Credential Issuer Identifier — an HTTPS URL
+  # whose path component is the workspace DID. Anything else is non-conformant.
+  defp extract_issuer_did(iss) when is_binary(iss) do
+    case URI.parse(iss) do
+      %URI{path: "/" <> did} when did != "" -> did
+      _ -> ""
+    end
+  end
+
+  defp extract_issuer_did(_), do: ""
 
   defp extract_holder_did(sd_payload, session) do
     case sd_payload["sub"] do

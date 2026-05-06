@@ -68,10 +68,22 @@ defmodule SovraWeb.Router do
   end
 
   # Issuer metadata (well-known)
+  #
+  # The two well-known documents follow different URL-construction rules:
+  #   - Issuer metadata (OID4VCI 1.0 §11.2): the path component of the
+  #     Credential Issuer Identifier comes *before* /.well-known/...
+  #   - AS metadata (RFC 8414 §3): /.well-known/... is inserted *between*
+  #     the host and the path component.
   scope "/", SovraWeb.Issuer do
     pipe_through :api
-    get "/.well-known/openid-credential-issuer", MetadataController, :show
-    get "/.well-known/openid-credential-issuer/:issuer_id", MetadataController, :show_by_id
+
+    get "/:workspace_did/.well-known/openid-credential-issuer",
+        MetadataController,
+        :show_by_id
+
+    get "/.well-known/oauth-authorization-server/:workspace_did",
+        AuthServerMetadataController,
+        :show_by_id
   end
 
   # Issuer API (OID4VCI holder flow — public by design)
@@ -80,8 +92,7 @@ defmodule SovraWeb.Router do
 
     post "/authorize", CredentialController, :authorize
     post "/credential", CredentialController, :issue
-    get "/metadata", MetadataController, :show
-    get "/metadata/:issuer_id", MetadataController, :show_by_id
+    get "/metadata/:workspace_did", MetadataController, :show_by_id
 
     get "/credential-manifests", ManifestController, :index
     get "/credential-manifests/:schema_id", ManifestController, :show

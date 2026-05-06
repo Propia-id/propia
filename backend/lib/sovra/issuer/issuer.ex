@@ -174,8 +174,7 @@ defmodule Sovra.Issuer do
 
       case Repo.insert(changeset) do
         {:ok, offer} ->
-          base_url = ClaimUtils.base_url()
-          offer_uri = build_offer_uri(plaintext_code, offer, schema, base_url)
+          offer_uri = build_offer_uri(plaintext_code, offer, schema, workspace)
 
           credential_preview =
             SDJWT.build_preview(workspace, schema, claims, status_list_index: status_list_index)
@@ -194,10 +193,12 @@ defmodule Sovra.Issuer do
     end
   end
 
-  def build_offer_uri(pre_authorized_code, offer, schema, base_url) do
+  def build_offer_uri(pre_authorized_code, offer, schema, workspace) do
+    credential_issuer = "#{ClaimUtils.base_url()}/#{workspace.did}"
+
     offer_json =
       Jason.encode!(%{
-        "credential_issuer" => base_url,
+        "credential_issuer" => credential_issuer,
         "credential_configuration_ids" => [schema.credential_type],
         "grants" => %{
           "urn:ietf:params:oauth:grant-type:pre-authorized_code" =>
@@ -275,7 +276,7 @@ defmodule Sovra.Issuer do
 
   # ── Credential Delivery ────────────────────────────────
 
-  def issue_credential(access_token, proof) do
+  def issue_credential(access_token, credential_configuration_id, proof) do
     token_hash = TokenHash.hash(access_token)
 
     case Repo.get_by(CredentialOffer, access_token_hash: token_hash) do
@@ -286,12 +287,10 @@ defmodule Sovra.Issuer do
         if DateTime.compare(DateTime.utc_now(), offer.expires_at) == :gt do
           {:error, :offer_expired}
         else
-          case verify_proof(proof, offer.c_nonce) do
-            {:ok, %{holder_did: holder_did}} ->
-              deliver_credential(offer, holder_did)
-
-            {:error, _} = error ->
-              error
+          with {:ok, schema} <- get_schema_by_id(offer.schema_id),
+               :ok <- ensure_configuration_matches(schema, credential_configuration_id),
+               {:ok, %{holder_did: holder_did}} <- verify_proof(proof, offer.c_nonce) do
+            deliver_credential(offer, holder_did)
           end
         end
 
@@ -299,6 +298,9 @@ defmodule Sovra.Issuer do
         {:error, :credential_already_issued}
     end
   end
+
+  defp ensure_configuration_matches(%{credential_type: type}, type) when is_binary(type), do: :ok
+  defp ensure_configuration_matches(_, _), do: {:error, :invalid_credential_request}
 
   defp deliver_credential(offer, holder_did) do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
@@ -366,7 +368,8 @@ defmodule Sovra.Issuer do
   defp verify_proof(nil, _nonce), do: {:error, :invalid_proof}
 
   defp verify_proof(proof, nonce) do
-    with jwt when is_binary(jwt) <- Map.get(proof, "jwt") || Map.get(proof, :jwt),
+    with "jwt" <- Map.get(proof, "proof_type") || Map.get(proof, :proof_type),
+         jwt when is_binary(jwt) <- Map.get(proof, "jwt") || Map.get(proof, :jwt),
          [header_b64, payload_b64, sig_b64] <- String.split(jwt, "."),
          {:ok, header_json} <- Base.url_decode64(header_b64, padding: false),
          {:ok, payload_json} <- Base.url_decode64(payload_b64, padding: false),

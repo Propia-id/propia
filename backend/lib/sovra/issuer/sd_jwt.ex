@@ -38,7 +38,7 @@ defmodule Sovra.Issuer.SDJWT do
     # Build JWT payload
     payload =
       %{
-        "iss" => issuer.did,
+        "iss" => "#{ClaimUtils.base_url()}/#{issuer.did}",
         "sub" => holder_did,
         "iat" => now,
         "exp" => exp,
@@ -82,7 +82,7 @@ defmodule Sovra.Issuer.SDJWT do
       |> Enum.map(& &1["key"])
 
     %{
-      "iss" => issuer.did,
+      "iss" => "#{ClaimUtils.base_url()}/#{issuer.did}",
       "iat" => iat,
       "exp" => exp,
       "vct" => schema.credential_type
@@ -91,26 +91,26 @@ defmodule Sovra.Issuer.SDJWT do
     |> maybe_add_credential_status(issuer, opts)
   end
 
-  defp maybe_add_credential_status(payload, _issuer, opts) do
+  defp maybe_add_credential_status(payload, issuer, opts) do
     case Keyword.get(opts, :status_list_index) do
       nil ->
         payload
 
       index ->
-        issuer_did = payload["iss"]
+        base = "#{ClaimUtils.base_url()}/api/v1/status/#{issuer.did}"
 
         Map.put(payload, "credentialStatus", [
           %{
             "type" => "BitstringStatusListEntry",
             "statusPurpose" => "revocation",
             "statusListIndex" => to_string(index),
-            "statusListCredential" => "#{issuer_did}/status/revocation"
+            "statusListCredential" => "#{base}/revocation"
           },
           %{
             "type" => "BitstringStatusListEntry",
             "statusPurpose" => "suspension",
             "statusListIndex" => to_string(index),
-            "statusListCredential" => "#{issuer_did}/status/suspension"
+            "statusListCredential" => "#{base}/suspension"
           }
         ])
     end

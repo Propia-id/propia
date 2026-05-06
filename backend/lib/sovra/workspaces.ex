@@ -62,7 +62,7 @@ defmodule Sovra.Workspaces do
         })
       end)
       |> Ecto.Multi.run(:register_did, fn _repo, %{workspace: workspace} ->
-        case register_did_on_chain(workspace.eoa_address, x, y) do
+        case register_did_on_chain(workspace, x, y) do
           :ok -> {:ok, :registered}
           {:error, :ethereum_not_configured} -> {:ok, :skipped}
           {:error, reason} -> {:error, reason}
@@ -270,11 +270,16 @@ defmodule Sovra.Workspaces do
     end
   end
 
-  defp register_did_on_chain(eoa_address, pub_key_x, pub_key_y) do
+  defp register_did_on_chain(workspace, pub_key_x, pub_key_y) do
     if ethereum_configured?() do
-      service_endpoint = ClaimUtils.base_url()
+      service_endpoint = "#{ClaimUtils.base_url()}/#{workspace.did}"
 
-      case DIDRegistry.register_issuer_did(eoa_address, pub_key_x, pub_key_y, service_endpoint) do
+      case DIDRegistry.register_issuer_did(
+             workspace.eoa_address,
+             pub_key_x,
+             pub_key_y,
+             service_endpoint
+           ) do
         {:ok, _tx_hash} -> :ok
         {:error, _} = error -> error
       end

@@ -10,6 +10,7 @@ defmodule Sovra.Issuer.OID4VCI do
   def build_metadata(workspace, schemas, designs \\ []) do
     base_url = ClaimUtils.base_url()
     workspace = Repo.preload(workspace, :organization)
+    credential_issuer = "#{base_url}/#{workspace.did}"
     designs_by_schema_id = Map.new(designs, fn d -> {d.credential_schema_id, d} end)
 
     configs =
@@ -25,9 +26,9 @@ defmodule Sovra.Issuer.OID4VCI do
       end)
 
     %{
-      "credential_issuer" => base_url,
+      "credential_issuer" => credential_issuer,
+      "authorization_servers" => [credential_issuer],
       "credential_endpoint" => "#{base_url}/api/v1/issuer/credential",
-      "token_endpoint" => "#{base_url}/api/v1/issuer/token",
       "credential_configurations_supported" => configs,
       "display" => [display_entry(workspace)]
     }

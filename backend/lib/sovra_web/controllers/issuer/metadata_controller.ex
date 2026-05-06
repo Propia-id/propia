@@ -8,27 +8,12 @@ defmodule SovraWeb.Issuer.MetadataController do
 
   tags(["Issuer Metadata"])
 
-  operation(:show,
-    summary: "Get issuer metadata",
-    description: "Returns OID4VCI credential issuer metadata for the default issuer.",
-    responses: %{
-      200 =>
-        {"Issuer metadata", "application/json",
-         %OpenApiSpex.Schema{type: :object, description: "OID4VCI credential issuer metadata"}},
-      503 =>
-        {"No issuers configured", "application/json",
-         %OpenApiSpex.Schema{
-           type: :object,
-           properties: %{error: %OpenApiSpex.Schema{type: :string}}
-         }}
-    }
-  )
-
   operation(:show_by_id,
-    summary: "Get issuer metadata by ID",
-    description: "Returns OID4VCI credential issuer metadata for a specific issuer.",
+    summary: "Get issuer metadata by workspace DID",
+    description:
+      "Returns OID4VCI credential issuer metadata for the workspace identified by its DID.",
     parameters: [
-      issuer_id: [in: :path, type: :string, description: "Issuer UUID", required: true]
+      workspace_did: [in: :path, type: :string, description: "Workspace DID", required: true]
     ],
     responses: %{
       200 =>
@@ -43,23 +28,8 @@ defmodule SovraWeb.Issuer.MetadataController do
     }
   )
 
-  def show(conn, _params) do
-    case Workspaces.get_first_workspace() do
-      {:ok, workspace} ->
-        schemas = Issuer.list_schemas(workspace.id)
-        designs = Issuer.list_designs(workspace.id)
-        metadata = OID4VCI.build_metadata(workspace, schemas, designs)
-        json(conn, metadata)
-
-      {:error, :no_workspaces} ->
-        conn
-        |> put_status(503)
-        |> json(%{error: "no_issuers_configured"})
-    end
-  end
-
-  def show_by_id(conn, %{"issuer_id" => workspace_id}) do
-    case Workspaces.get_workspace(workspace_id) do
+  def show_by_id(conn, %{"workspace_did" => workspace_did}) do
+    case Workspaces.get_workspace_by_did(workspace_did) do
       {:ok, workspace} ->
         schemas = Issuer.list_schemas(workspace.id)
         designs = Issuer.list_designs(workspace.id)

@@ -1,13 +1,43 @@
 defmodule Sovra.Issuer.OID4VCITest do
   use Sovra.DataCase, async: true
 
+  alias Sovra.Issuer.ClaimUtils
   alias Sovra.Issuer.OID4VCI
   alias Sovra.Organizations
   alias Sovra.Workspaces.Workspace
 
   defp build_workspace(attrs) do
     # Build a non-persisted workspace with only the fields OID4VCI needs.
-    struct(Workspace, Map.merge(%{name: "Fallback", organization: nil}, attrs))
+    struct(
+      Workspace,
+      Map.merge(%{name: "Fallback", organization: nil, did: "did:sovra:0xfallback"}, attrs)
+    )
+  end
+
+  describe "build_metadata/2 issuer identity" do
+    test "credential_issuer is the workspace-scoped HTTPS identifier" do
+      workspace = build_workspace(%{did: "did:sovra:0xabc"})
+
+      metadata = OID4VCI.build_metadata(workspace, [])
+
+      assert metadata["credential_issuer"] == "#{ClaimUtils.base_url()}/did:sovra:0xabc"
+    end
+
+    test "authorization_servers points back at the credential_issuer" do
+      workspace = build_workspace(%{did: "did:sovra:0xabc"})
+
+      metadata = OID4VCI.build_metadata(workspace, [])
+
+      assert metadata["authorization_servers"] == [metadata["credential_issuer"]]
+    end
+
+    test "token_endpoint is not advertised on issuer metadata (lives on AS metadata)" do
+      workspace = build_workspace(%{did: "did:sovra:0xabc"})
+
+      metadata = OID4VCI.build_metadata(workspace, [])
+
+      refute Map.has_key?(metadata, "token_endpoint")
+    end
   end
 
   describe "build_metadata/2 display entry" do

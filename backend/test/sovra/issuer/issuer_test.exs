@@ -113,7 +113,7 @@ defmodule Sovra.IssuerTest do
         Issuer.create_credential_offer(issuer.id, schema.schema_id, claims)
 
       preview = result.credential
-      assert preview["iss"] == issuer.did
+      assert preview["iss"] == "#{Sovra.Issuer.ClaimUtils.base_url()}/#{issuer.did}"
       assert preview["vct"] == schema.credential_type
       assert preview["name"] == "Alice"
       assert preview["age"] == 30
@@ -160,7 +160,7 @@ defmodule Sovra.IssuerTest do
     end
   end
 
-  describe "issue_credential/2 with proof verification" do
+  describe "issue_credential/3 with proof verification" do
     setup do
       issuer = create_test_issuer()
       schema = create_test_schema(issuer)
@@ -176,6 +176,39 @@ defmodule Sovra.IssuerTest do
         issuer: issuer,
         schema: schema
       }
+    end
+
+    test "rejects proof with missing proof_type", %{token_data: token_data} do
+      assert {:error, :invalid_proof} =
+               Issuer.issue_credential(token_data.access_token, "TestCredential", %{
+                 "jwt" => "anything"
+               })
+    end
+
+    test "rejects proof with unsupported proof_type", %{token_data: token_data} do
+      assert {:error, :invalid_proof} =
+               Issuer.issue_credential(token_data.access_token, "TestCredential", %{
+                 "proof_type" => "cwt",
+                 "jwt" => "anything"
+               })
+    end
+
+    test "rejects request with missing credential_configuration_id", %{token_data: token_data} do
+      assert {:error, :invalid_credential_request} =
+               Issuer.issue_credential(token_data.access_token, nil, %{
+                 "proof_type" => "jwt",
+                 "jwt" => "anything"
+               })
+    end
+
+    test "rejects request when credential_configuration_id does not match the offer", %{
+      token_data: token_data
+    } do
+      assert {:error, :invalid_credential_request} =
+               Issuer.issue_credential(token_data.access_token, "WrongCredential", %{
+                 "proof_type" => "jwt",
+                 "jwt" => "anything"
+               })
     end
 
     test "rejects proof with invalid signature", %{token_data: token_data} do
@@ -201,8 +234,10 @@ defmodule Sovra.IssuerTest do
       fake_sig = Base.url_encode64(:crypto.strong_rand_bytes(64), padding: false)
       jwt = "#{header_b64}.#{payload_b64}.#{fake_sig}"
 
-      proof = %{"jwt" => jwt}
-      assert {:error, :invalid_proof} = Issuer.issue_credential(token_data.access_token, proof)
+      proof = %{"proof_type" => "jwt", "jwt" => jwt}
+
+      assert {:error, :invalid_proof} =
+               Issuer.issue_credential(token_data.access_token, "TestCredential", proof)
     end
 
     test "accepts proof with valid P-256 signature and binds holder DID", %{
@@ -234,8 +269,11 @@ defmodule Sovra.IssuerTest do
       sig_b64 = Base.url_encode64(raw_sig, padding: false)
       jwt = "#{signing_input}.#{sig_b64}"
 
-      proof = %{"jwt" => jwt}
-      assert {:ok, sd_jwt} = Issuer.issue_credential(token_data.access_token, proof)
+      proof = %{"proof_type" => "jwt", "jwt" => jwt}
+
+      assert {:ok, sd_jwt} =
+               Issuer.issue_credential(token_data.access_token, "TestCredential", proof)
+
       assert is_binary(sd_jwt)
       assert String.contains?(sd_jwt, "~")
 
@@ -285,7 +323,11 @@ defmodule Sovra.IssuerTest do
       sig_b64 = Base.url_encode64(raw_sig, padding: false)
       jwt = "#{signing_input}.#{sig_b64}"
 
-      {:ok, _sd_jwt} = Issuer.issue_credential(token_data.access_token, %{"jwt" => jwt})
+      {:ok, _sd_jwt} =
+        Issuer.issue_credential(token_data.access_token, "TestCredential", %{
+          "proof_type" => "jwt",
+          "jwt" => jwt
+        })
 
       issued = Sovra.Repo.get_by!(Sovra.Issuer.IssuedCredential, id: result.offer.id)
       assert issued.id == result.offer.id
@@ -317,8 +359,10 @@ defmodule Sovra.IssuerTest do
       sig_b64 = Base.url_encode64(raw_sig, padding: false)
       jwt = "#{signing_input}.#{sig_b64}"
 
-      proof = %{"jwt" => jwt}
-      assert {:error, :invalid_proof} = Issuer.issue_credential(token_data.access_token, proof)
+      proof = %{"proof_type" => "jwt", "jwt" => jwt}
+
+      assert {:error, :invalid_proof} =
+               Issuer.issue_credential(token_data.access_token, "TestCredential", proof)
     end
 
     test "rejects proof missing iss claim", %{token_data: token_data} do
@@ -348,8 +392,10 @@ defmodule Sovra.IssuerTest do
       sig_b64 = Base.url_encode64(raw_sig, padding: false)
       jwt = "#{signing_input}.#{sig_b64}"
 
-      proof = %{"jwt" => jwt}
-      assert {:error, :invalid_proof} = Issuer.issue_credential(token_data.access_token, proof)
+      proof = %{"proof_type" => "jwt", "jwt" => jwt}
+
+      assert {:error, :invalid_proof} =
+               Issuer.issue_credential(token_data.access_token, "TestCredential", proof)
     end
   end
 
@@ -387,7 +433,11 @@ defmodule Sovra.IssuerTest do
       sig_b64 = Base.url_encode64(raw_sig, padding: false)
       jwt = "#{signing_input}.#{sig_b64}"
 
-      {:ok, _sd_jwt} = Issuer.issue_credential(token_data.access_token, %{"jwt" => jwt})
+      {:ok, _sd_jwt} =
+        Issuer.issue_credential(token_data.access_token, "TestCredential", %{
+          "proof_type" => "jwt",
+          "jwt" => jwt
+        })
 
       # Verify sensitive data is cleared
       offer = Repo.get!(CredentialOffer, offer_result.offer.id)

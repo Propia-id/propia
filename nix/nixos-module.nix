@@ -292,6 +292,19 @@ in
           proxyWebsockets = true;
         };
 
+        # Well-known metadata → Phoenix backend.
+        # Matches at any path depth so it covers both shapes:
+        #   /.well-known/oauth-authorization-server/<workspace_did>   (RFC 8414)
+        #   /<workspace_did>/.well-known/openid-credential-issuer     (OID4VCI 1.0)
+        locations."~ /\\.well-known/" = {
+          proxyPass = "http://127.0.0.1:${toString cfg.port}";
+        };
+
+        # Health check → Phoenix backend
+        locations."/health" = {
+          proxyPass = "http://127.0.0.1:${toString cfg.port}";
+        };
+
         # Issuer frontend at / (SPA with fallback to index.html)
         locations."/" = if cfg.issuerPath != null then {
           root = cfg.issuerPath;
