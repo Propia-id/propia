@@ -221,6 +221,12 @@ path "transit/keys/*" {
 path "transit/sign/*" {
   capabilities = ["create", "update"]
 }
+path "transit/hmac/*" {
+  capabilities = ["create", "update"]
+}
+path "transit/export/*" {
+  capabilities = ["read"]
+}
 EOF
 
 # Create an app token (the backend auto-renews it before expiry)
