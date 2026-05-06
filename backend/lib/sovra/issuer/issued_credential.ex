@@ -22,10 +22,16 @@ defmodule Sovra.Issuer.IssuedCredential do
   @required ~w(issuer_id schema_id holder_did issued_at expires_at)a
   @optional ~w(id status_list_index status_purpose)a
 
+  # Postgres truncates default Ecto index names to 63 chars; the trailing
+  # `_index` suffix becomes `_i`. Keep this name in sync with the actual DB
+  # index, which originates from migration 20260415100000.
+  @status_index_constraint :issued_credentials_issuer_id_status_list_index_status_purpose_i
+
   def create_changeset(record \\ %__MODULE__{}, attrs) do
     record
     |> cast(attrs, @required ++ @optional)
     |> validate_required(@required)
+    |> unique_constraint(:status_list_index, name: @status_index_constraint)
   end
 
   def status_changeset(record, status) do

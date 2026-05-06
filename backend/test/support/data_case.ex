@@ -24,6 +24,7 @@ defmodule Sovra.DataCase do
       import Ecto.Changeset
       import Ecto.Query
       import Sovra.DataCase
+      import Sovra.Fixtures
     end
   end
 

@@ -1,21 +1,11 @@
 defmodule SovraWeb.Organizations.OrganizationControllerTest do
   use SovraWeb.ConnCase, async: true
 
-  alias Sovra.Accounts.User
   alias Sovra.Auth.UserSession
   alias Sovra.Organizations
   alias Sovra.Repo
 
-  defp create_user(suffix) do
-    {:ok, account} =
-      User.admin_changeset(%{
-        email: "#{suffix}-#{System.unique_integer([:positive])}@example.com",
-        password: "a-very-strong-password-123"
-      })
-      |> Repo.insert()
-
-    account
-  end
+  defp create_user(suffix), do: fixture_user("#{suffix}-#{System.unique_integer([:positive])}")
 
   defp authed_conn(conn, account) do
     {:ok, token} = UserSession.create(account.id, nil, account.is_admin)

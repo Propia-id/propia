@@ -76,7 +76,8 @@ defmodule Sovra.Issuer.OID4VCITest do
           signing_public_key_y: <<2::256>>,
           did:
             "did:sovra:0x#{Base.encode16(<<System.unique_integer([:positive])::256>>, case: :lower)}",
-          organization_id: org.id
+          organization_id: org.id,
+          status_index_secret_key_id: "stub-#{System.unique_integer([:positive])}"
         })
 
       {:ok, schema} =
@@ -127,7 +128,8 @@ defmodule Sovra.Issuer.OID4VCITest do
           signing_public_key_y: <<2::256>>,
           did:
             "did:sovra:0x#{Base.encode16(<<System.unique_integer([:positive])::256>>, case: :lower)}",
-          organization_id: org.id
+          organization_id: org.id,
+          status_index_secret_key_id: "stub-#{System.unique_integer([:positive])}"
         })
 
       {:ok, schema} =

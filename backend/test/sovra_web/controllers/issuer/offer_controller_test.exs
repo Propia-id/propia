@@ -2,33 +2,14 @@ defmodule SovraWeb.Issuer.OfferControllerTest do
   use SovraWeb.ConnCase, async: false
   use Oban.Testing, repo: Sovra.Repo
 
-  alias Sovra.Accounts.User
   alias Sovra.Auth.UserSession
   alias Sovra.Issuer
-  alias Sovra.Organizations.Organization
-  alias Sovra.Workspaces
   alias Sovra.Workspaces.ApiKeys
 
-  defp create_user do
-    {:ok, account} =
-      User.admin_changeset(%{
-        email: "user-#{System.unique_integer([:positive])}@example.com",
-        password: "a-very-strong-password-123"
-      })
-      |> Sovra.Repo.insert()
-
-    account
-  end
+  defp create_user, do: fixture_user()
 
   defp create_workspace do
-    user = create_user()
-
-    {:ok, org} =
-      %{name: "Org #{System.unique_integer([:positive])}"}
-      |> Organization.create_changeset()
-      |> Sovra.Repo.insert()
-
-    {:ok, %{workspace: ws}} = Workspaces.create_workspace(org.id, %{name: "Acme"}, user.id)
+    %{workspace: ws, owner: user} = fixture_workspace(name: "Acme")
     %{workspace: ws, user: user}
   end
 

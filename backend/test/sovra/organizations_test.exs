@@ -1,22 +1,10 @@
 defmodule Sovra.OrganizationsTest do
   use Sovra.DataCase, async: true
 
-  alias Sovra.Accounts.User
   alias Sovra.Organizations
   alias Sovra.Organizations.{Organization, OrganizationMember}
 
-  defp create_user(suffix \\ "#{System.unique_integer([:positive])}") do
-    # Use admin_changeset (the only path that doesn't require a workspace),
-    # since we're testing Organizations in isolation from Workspaces here.
-    {:ok, account} =
-      User.admin_changeset(%{
-        email: "user-#{suffix}@example.com",
-        password: "a-very-strong-password-123"
-      })
-      |> Repo.insert()
-
-    account
-  end
+  defp create_user(suffix \\ "#{System.unique_integer([:positive])}"), do: fixture_user(suffix)
 
   describe "create_organization/2" do
     test "creates org and owner membership atomically" do

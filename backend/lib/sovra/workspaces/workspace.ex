@@ -16,13 +16,14 @@ defmodule Sovra.Workspaces.Workspace do
     field :status, :string, default: "active"
     field :webhook_url, :string
     field :webhook_secret_key_id, :string
+    field :status_index_secret_key_id, :string
 
     belongs_to :organization, Sovra.Organizations.Organization
 
     timestamps(type: :utc_datetime)
   end
 
-  @required ~w(name eoa_address eoa_key_id signing_key_id signing_public_key_x signing_public_key_y did organization_id)a
+  @required ~w(name eoa_address eoa_key_id signing_key_id signing_public_key_x signing_public_key_y did organization_id status_index_secret_key_id)a
 
   @url_regex ~r|^https?://[^\s]+$|
 

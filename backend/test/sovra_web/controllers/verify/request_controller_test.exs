@@ -3,28 +3,10 @@ defmodule SovraWeb.Verify.RequestControllerTest do
 
   import Ecto.Query
 
-  alias Sovra.Accounts.User
-  alias Sovra.Organizations.Organization
   alias Sovra.Verification
   alias Sovra.Verification.Session
-  alias Sovra.Workspaces
 
-  defp create_workspace do
-    {:ok, account} =
-      User.admin_changeset(%{
-        email: "user-#{System.unique_integer([:positive])}@example.com",
-        password: "a-very-strong-password-123"
-      })
-      |> Sovra.Repo.insert()
-
-    {:ok, org} =
-      %{name: "Org #{System.unique_integer([:positive])}"}
-      |> Organization.create_changeset()
-      |> Sovra.Repo.insert()
-
-    {:ok, %{workspace: ws}} = Workspaces.create_workspace(org.id, %{name: "Verifier"}, account.id)
-    ws
-  end
+  defp create_workspace, do: fixture_workspace(name: "Verifier").workspace
 
   defp dcql_query do
     %{

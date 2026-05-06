@@ -28,6 +28,7 @@ defmodule SovraWeb.ConnCase do
       import Plug.Conn
       import Phoenix.ConnTest
       import SovraWeb.ConnCase
+      import Sovra.Fixtures
     end
   end
 

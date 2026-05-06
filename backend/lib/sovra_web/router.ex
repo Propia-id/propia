@@ -271,9 +271,10 @@ defmodule SovraWeb.Router do
     get "/request/:session_id", RequestController, :show
   end
 
-  # Status list API (public, cacheable)
+  # Status list API (public, cacheable, rate-limited because each cold request
+  # fans out to the on-chain registry and triggers a P-256 signature)
   scope "/api/v1/status", SovraWeb.Verify do
-    pipe_through :api
+    pipe_through [:api, :offer_rate_limited]
 
     get "/:issuer_did/:purpose", StatusListController, :show
   end

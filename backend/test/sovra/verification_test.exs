@@ -1,32 +1,14 @@
 defmodule Sovra.VerificationTest do
   use Sovra.DataCase, async: false
 
-  alias Sovra.Accounts.User
   alias Sovra.Organizations.Organization
   alias Sovra.Verification
-  alias Sovra.Workspaces
   alias Sovra.Workspaces.Workspace
 
-  defp create_user do
-    {:ok, account} =
-      User.admin_changeset(%{
-        email: "user-#{System.unique_integer([:positive])}@example.com",
-        password: "a-very-strong-password-123"
-      })
-      |> Repo.insert()
-
-    account
-  end
+  defp create_user, do: fixture_user()
 
   defp create_workspace do
-    user = create_user()
-
-    {:ok, org} =
-      %{name: "Org #{System.unique_integer([:positive])}"}
-      |> Organization.create_changeset()
-      |> Repo.insert()
-
-    {:ok, %{workspace: ws}} = Workspaces.create_workspace(org.id, %{name: "Verifier"}, user.id)
+    %{workspace: ws, org: org} = fixture_workspace(name: "Verifier")
     %{workspace: ws, organization: org}
   end
 

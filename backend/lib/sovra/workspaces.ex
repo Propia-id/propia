@@ -16,6 +16,7 @@ defmodule Sovra.Workspaces do
   alias Sovra.Ethereum.DIDRegistry
   alias Sovra.Accounts.User
   alias Sovra.Issuer.ClaimUtils
+  alias Sovra.Issuer.StatusList
   alias Sovra.Repo
   alias Sovra.Workspaces.Workspace
   alias Sovra.Workspaces.WorkspaceMember
@@ -37,7 +38,8 @@ defmodule Sovra.Workspaces do
            Key.generate_key("workspace_#{workspace_uuid}_signing"),
          {:ok, eoa_address, eoa_key_id} <- generate_eoa_keypair(workspace_uuid),
          {:ok, %{key_id: webhook_key_id, plaintext: webhook_secret}} <-
-           HmacKeyStore.generate_hmac_key() do
+           HmacKeyStore.generate_hmac_key(),
+         {:ok, %{key_id: status_index_key_id}} <- HmacKeyStore.generate_hmac_key() do
       changeset =
         Workspace.create_changeset(%{
           name: name,
@@ -49,7 +51,8 @@ defmodule Sovra.Workspaces do
           did: "did:sovra:#{eoa_address}",
           organization_id: organization_id,
           webhook_url: webhook_url,
-          webhook_secret_key_id: webhook_key_id
+          webhook_secret_key_id: webhook_key_id,
+          status_index_secret_key_id: status_index_key_id
         })
 
       Ecto.Multi.new()
@@ -60,6 +63,12 @@ defmodule Sovra.Workspaces do
           user_id: owner_user_id,
           role: "admin"
         })
+      end)
+      |> Ecto.Multi.insert(:status_list_revocation, fn %{workspace: ws} ->
+        StatusList.create_changeset(%{workspace_id: ws.id, status_purpose: "revocation"})
+      end)
+      |> Ecto.Multi.insert(:status_list_suspension, fn %{workspace: ws} ->
+        StatusList.create_changeset(%{workspace_id: ws.id, status_purpose: "suspension"})
       end)
       |> Ecto.Multi.run(:register_did, fn _repo, %{workspace: workspace} ->
         case register_did_on_chain(workspace, x, y) do

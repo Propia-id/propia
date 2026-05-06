@@ -1,31 +1,13 @@
 defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
   use SovraWeb.ConnCase, async: false
 
-  alias Sovra.Accounts.User
   alias Sovra.Auth.UserSession
   alias Sovra.Organizations
-  alias Sovra.Organizations.Organization
   alias Sovra.Workspaces
 
-  defp user(suffix) do
-    {:ok, account} =
-      User.admin_changeset(%{
-        email: "#{suffix}-#{System.unique_integer([:positive])}@example.com",
-        password: "a-very-strong-password-123"
-      })
-      |> Sovra.Repo.insert()
+  defp user(suffix), do: fixture_user("#{suffix}-#{System.unique_integer([:positive])}")
 
-    account
-  end
-
-  defp org(suffix \\ "#{System.unique_integer([:positive])}") do
-    {:ok, org} =
-      %{name: "Org #{suffix}"}
-      |> Organization.create_changeset()
-      |> Sovra.Repo.insert()
-
-    org
-  end
+  defp org(suffix \\ "#{System.unique_integer([:positive])}"), do: fixture_org(suffix)
 
   defp org_with_owner(owner) do
     {:ok, %{organization: org}} =

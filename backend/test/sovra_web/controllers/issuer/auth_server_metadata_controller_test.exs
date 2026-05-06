@@ -31,7 +31,8 @@ defmodule SovraWeb.Issuer.AuthServerMetadataControllerTest do
         signing_public_key_x: <<1::256>>,
         signing_public_key_y: <<2::256>>,
         did: did,
-        organization_id: org.id
+        organization_id: org.id,
+        status_index_secret_key_id: "stub-#{System.unique_integer([:positive])}"
       })
 
     workspace

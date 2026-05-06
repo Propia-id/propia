@@ -2,29 +2,11 @@ defmodule Sovra.WebhooksTest do
   use Sovra.DataCase, async: false
   use Oban.Testing, repo: Sovra.Repo
 
-  alias Sovra.Accounts.User
-  alias Sovra.Organizations.Organization
   alias Sovra.Webhooks
   alias Sovra.Webhooks.DeliveryJob
-  alias Sovra.Workspaces
 
   defp create_workspace(webhook_url) do
-    {:ok, user} =
-      User.admin_changeset(%{
-        email: "user-#{System.unique_integer([:positive])}@example.com",
-        password: "a-very-strong-password-123"
-      })
-      |> Repo.insert()
-
-    {:ok, org} =
-      %{name: "Org #{System.unique_integer([:positive])}"}
-      |> Organization.create_changeset()
-      |> Repo.insert()
-
-    {:ok, %{workspace: ws}} =
-      Workspaces.create_workspace(org.id, %{name: "Acme", webhook_url: webhook_url}, user.id)
-
-    ws
+    fixture_workspace(name: "Acme", webhook_url: webhook_url).workspace
   end
 
   describe "enqueue/3" do

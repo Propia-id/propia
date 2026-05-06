@@ -4,10 +4,7 @@ defmodule Sovra.Verification.VerifierTest do
 
   alias Sovra.Crypto.P256
   alias Sovra.Issuer
-  alias Sovra.Accounts.User
-  alias Sovra.Organizations.Organization
   alias Sovra.Verification
-  alias Sovra.Workspaces
 
   defmodule StubRegistryOk do
     def is_revoked(_addr, _idx), do: {:ok, false}
@@ -34,28 +31,9 @@ defmodule Sovra.Verification.VerifierTest do
 
   # ── Fixtures ──────────────────────────────────────────────
 
-  defp create_user do
-    {:ok, account} =
-      User.admin_changeset(%{
-        email: "user-#{System.unique_integer([:positive])}@example.com",
-        password: "a-very-strong-password-123"
-      })
-      |> Repo.insert()
+  defp create_user, do: fixture_user()
 
-    account
-  end
-
-  defp create_workspace(name) do
-    user = create_user()
-
-    {:ok, org} =
-      %{name: "Org #{System.unique_integer([:positive])}"}
-      |> Organization.create_changeset()
-      |> Repo.insert()
-
-    {:ok, %{workspace: ws}} = Workspaces.create_workspace(org.id, %{name: name}, user.id)
-    ws
-  end
+  defp create_workspace(name), do: fixture_workspace(name: name).workspace
 
   defp create_schema(workspace_id) do
     {:ok, schema} =

@@ -4,29 +4,11 @@ defmodule Sovra.Verification.ExpiredSessionsSweeperTest do
 
   import Ecto.Query
 
-  alias Sovra.Accounts.User
-  alias Sovra.Organizations.Organization
   alias Sovra.Verification
   alias Sovra.Verification.ExpiredSessionsSweeper
   alias Sovra.Verification.Session
-  alias Sovra.Workspaces
 
-  defp create_workspace do
-    {:ok, account} =
-      User.admin_changeset(%{
-        email: "user-#{System.unique_integer([:positive])}@example.com",
-        password: "a-very-strong-password-123"
-      })
-      |> Repo.insert()
-
-    {:ok, org} =
-      %{name: "Org #{System.unique_integer([:positive])}"}
-      |> Organization.create_changeset()
-      |> Repo.insert()
-
-    {:ok, %{workspace: ws}} = Workspaces.create_workspace(org.id, %{name: "V"}, account.id)
-    ws
-  end
+  defp create_workspace, do: fixture_workspace(name: "V").workspace
 
   defp dcql_query do
     %{

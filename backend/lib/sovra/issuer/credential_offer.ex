@@ -13,6 +13,7 @@ defmodule Sovra.Issuer.CredentialOffer do
     field :claims, :map
     field :status, :string, default: "pending"
     field :status_list_index, :integer
+    field :status_purpose, :string, default: "revocation"
     field :expires_at, :utc_datetime
 
     belongs_to :issuer, Sovra.Workspaces.Workspace
@@ -22,13 +23,20 @@ defmodule Sovra.Issuer.CredentialOffer do
   end
 
   @required ~w(issuer_id schema_id pre_authorized_code_hash claims expires_at)a
+  @optional ~w(id tx_code status_list_index status_purpose)a
+
+  @status_index_constraint :credential_offers_status_index_purpose_idx
+
+  @doc "Constraint name used by `unique_constraint(:status_list_index, ...)` — exposed so the allocator can pin its retry-on-collision detection to this exact constraint."
+  def status_index_constraint, do: @status_index_constraint
 
   def create_changeset(record \\ %__MODULE__{}, attrs) do
     record
-    |> cast(attrs, @required ++ [:tx_code, :status_list_index])
+    |> cast(attrs, @required ++ @optional)
     |> validate_required(@required)
     |> unique_constraint(:pre_authorized_code_hash)
     |> unique_constraint(:access_token_hash)
+    |> unique_constraint(:status_list_index, name: @status_index_constraint)
   end
 
   def token_exchanged_changeset(record, attrs) do

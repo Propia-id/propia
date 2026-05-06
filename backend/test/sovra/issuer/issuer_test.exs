@@ -2,9 +2,9 @@ defmodule Sovra.IssuerTest do
   use Sovra.DataCase, async: false
   use Oban.Testing, repo: Sovra.Repo
 
-  alias Sovra.Accounts.User
   alias Sovra.Issuer
-  alias Sovra.Issuer.{CredentialOffer, TokenHash}
+  alias Sovra.Issuer.CredentialOffer
+  alias Sovra.Issuer.TokenHash
   alias Sovra.Crypto.P256
   alias Sovra.Organizations.Organization
   alias Sovra.Webhooks.DeliveryJob
@@ -15,30 +15,8 @@ defmodule Sovra.IssuerTest do
     :ok
   end
 
-  defp create_test_user do
-    {:ok, account} =
-      User.admin_changeset(%{
-        email: "owner-#{System.unique_integer([:positive])}@example.com",
-        password: "a-very-strong-password-123"
-      })
-      |> Repo.insert()
-
-    account
-  end
-
-  defp create_test_issuer do
-    {:ok, org} =
-      %{name: "Test Org"}
-      |> Organization.create_changeset()
-      |> Repo.insert()
-
-    user = create_test_user()
-
-    {:ok, %{workspace: workspace}} =
-      Workspaces.create_workspace(org.id, %{name: "Test Issuer"}, user.id)
-
-    workspace
-  end
+  defp create_test_user, do: fixture_user()
+  defp create_test_issuer, do: fixture_workspace().workspace
 
   defp create_test_schema(issuer) do
     attrs = %{
@@ -125,6 +103,74 @@ defmodule Sovra.IssuerTest do
       refute Map.has_key?(preview, "sub")
       refute Map.has_key?(preview, "cnf")
       refute Map.has_key?(preview, "_sd")
+    end
+  end
+
+  describe "status list index allocation (HMAC)" do
+    alias Sovra.Crypto.HmacKeyStore
+
+    test "index lies in [0, 131_071] and is keyed off the dedicated workspace HMAC key" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+
+      {:ok, result} =
+        Issuer.create_credential_offer(issuer.id, schema.schema_id, %{"name" => "Alice"})
+
+      idx = result.offer.status_list_index
+      assert is_integer(idx)
+      assert idx >= 0 and idx <= 131_071
+
+      # The index must be deterministic from the offer id + the workspace's
+      # status-index HMAC key (NOT the webhook key). Recompute and compare.
+      assert {:ok, mac} =
+               HmacKeyStore.hmac(
+                 issuer.status_index_secret_key_id,
+                 "sovra:status-index:revocation:#{result.offer.id}:0"
+               )
+
+      <<expected::unsigned-big-integer-size(17), _rest::bitstring>> = mac
+      assert idx == expected
+    end
+
+    test "indices derived under the webhook key disagree with the actual allocation" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+
+      {:ok, result} =
+        Issuer.create_credential_offer(issuer.id, schema.schema_id, %{"name" => "Alice"})
+
+      assert {:ok, mac_status} =
+               HmacKeyStore.hmac(
+                 issuer.status_index_secret_key_id,
+                 "sovra:status-index:revocation:#{result.offer.id}:0"
+               )
+
+      assert {:ok, mac_webhook} =
+               HmacKeyStore.hmac(
+                 issuer.webhook_secret_key_id,
+                 "sovra:status-index:revocation:#{result.offer.id}:0"
+               )
+
+      # Domain separation: the two keys must not produce the same MAC.
+      refute mac_status == mac_webhook
+    end
+
+    test "1000 distinct offers yield mostly distinct indices (no pathological collisions)" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+
+      indices =
+        for _ <- 1..1_000 do
+          {:ok, result} =
+            Issuer.create_credential_offer(issuer.id, schema.schema_id, %{"name" => "Alice"})
+
+          result.offer.status_list_index
+        end
+
+      # All inserts succeeded ⇒ they are unique by virtue of the unique constraint.
+      assert length(Enum.uniq(indices)) == 1_000
+      # Sanity: spread across the bitmap, not clustered near zero.
+      assert Enum.max(indices) - Enum.min(indices) > 50_000
     end
   end
 

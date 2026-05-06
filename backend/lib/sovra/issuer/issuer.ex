@@ -12,10 +12,12 @@ defmodule Sovra.Issuer do
     CredentialOffer,
     IssuedCredential,
     SDJWT,
+    StatusList,
     TokenHash,
     ClaimUtils
   }
 
+  alias Sovra.Crypto.HmacKeyStore
   alias Sovra.Crypto.P256
   alias Sovra.Ethereum.{IssuerRegistry, RevocationRegistry}
   alias Sovra.Repo
@@ -319,29 +321,31 @@ defmodule Sovra.Issuer do
   def create_credential_offer(workspace_id, schema_id, claims) do
     with {:ok, workspace} <- Workspaces.get_workspace(workspace_id),
          {:ok, schema} <- get_schema(workspace_id, schema_id),
-         :ok <- validate_claims(schema, claims),
-         {:ok, status_list_index} <- assign_status_list_index(workspace_id) do
+         :ok <- validate_claims(schema, claims) do
       {plaintext_code, code_hash} = TokenHash.generate_and_hash(32)
+      offer_id = Ecto.UUID.generate()
 
       expires_at =
         DateTime.utc_now() |> DateTime.add(86400, :second) |> DateTime.truncate(:second)
 
-      changeset =
-        CredentialOffer.create_changeset(%{
-          issuer_id: workspace_id,
-          schema_id: schema.id,
-          pre_authorized_code_hash: code_hash,
-          claims: claims,
-          status_list_index: status_list_index,
-          expires_at: expires_at
-        })
+      attrs_base = %{
+        id: offer_id,
+        issuer_id: workspace_id,
+        schema_id: schema.id,
+        pre_authorized_code_hash: code_hash,
+        claims: claims,
+        status_purpose: "revocation",
+        expires_at: expires_at
+      }
 
-      case Repo.insert(changeset) do
+      case insert_offer_with_retry(workspace, attrs_base) do
         {:ok, offer} ->
           offer_uri = build_offer_uri(plaintext_code, offer, schema, workspace)
 
           credential_preview =
-            SDJWT.build_preview(workspace, schema, claims, status_list_index: status_list_index)
+            SDJWT.build_preview(workspace, schema, claims,
+              status_list_index: offer.status_list_index
+            )
 
           {:ok,
            %{
@@ -355,6 +359,95 @@ defmodule Sovra.Issuer do
           error
       end
     end
+  end
+
+  @max_allocation_attempts 3
+  @max_widens_per_call 16
+
+  defp insert_offer_with_retry(workspace, attrs) do
+    status_list = fetch_status_list!(workspace.id, attrs.status_purpose)
+    do_insert_with_retry(workspace, attrs, status_list.width, 0, 0)
+  end
+
+  defp do_insert_with_retry(_workspace, _attrs, _width, _attempt, widens)
+       when widens > @max_widens_per_call do
+    {:error, :bitmap_exhausted}
+  end
+
+  defp do_insert_with_retry(workspace, attrs, width, attempt, widens)
+       when attempt >= @max_allocation_attempts do
+    case widen_status_list(workspace.id, attrs.status_purpose, width) do
+      {:ok, new_width} ->
+        do_insert_with_retry(workspace, attrs, new_width, 0, widens + 1)
+
+      {:error, :bitmap_exhausted} ->
+        {:error, :bitmap_exhausted}
+    end
+  end
+
+  defp do_insert_with_retry(workspace, attrs, width, attempt, widens) do
+    with {:ok, index} <-
+           assign_status_list_index(workspace, attrs.id, attrs.status_purpose, attempt, width) do
+      changeset = CredentialOffer.create_changeset(Map.put(attrs, :status_list_index, index))
+
+      case Repo.insert(changeset) do
+        {:ok, offer} ->
+          {:ok, offer}
+
+        {:error, %Ecto.Changeset{errors: errors} = changeset} ->
+          if status_index_collision?(errors) do
+            do_insert_with_retry(workspace, attrs, width, attempt + 1, widens)
+          else
+            {:error, changeset}
+          end
+      end
+    end
+  end
+
+  defp fetch_status_list!(workspace_id, purpose) do
+    case Repo.get_by(StatusList, workspace_id: workspace_id, status_purpose: purpose) do
+      nil ->
+        raise "missing status_lists row for workspace=#{workspace_id} purpose=#{purpose} — invariant violation"
+
+      %StatusList{} = sl ->
+        sl
+    end
+  end
+
+  @doc false
+  # Public for testing — internal callers should go through `do_insert_with_retry/5`.
+  def widen_status_list(workspace_id, purpose, observed_width) do
+    Repo.transaction(fn ->
+      query =
+        from sl in StatusList,
+          where: sl.workspace_id == ^workspace_id and sl.status_purpose == ^purpose,
+          lock: "FOR UPDATE"
+
+      sl = Repo.one!(query)
+
+      cond do
+        sl.width > observed_width ->
+          sl.width
+
+        sl.width >= StatusList.max_width() ->
+          Repo.rollback(:bitmap_exhausted)
+
+        true ->
+          sl
+          |> StatusList.bump_width_changeset()
+          |> Repo.update!()
+          |> Map.fetch!(:width)
+      end
+    end)
+  end
+
+  defp status_index_collision?(errors) do
+    expected = CredentialOffer.status_index_constraint() |> to_string()
+
+    Enum.any?(errors, fn
+      {:status_list_index, {_, [constraint: :unique, constraint_name: ^expected]}} -> true
+      _ -> false
+    end)
   end
 
   def build_offer_uri(pre_authorized_code, offer, schema, workspace) do
@@ -708,45 +801,31 @@ defmodule Sovra.Issuer do
   end
 
   # ── Status List Index Assignment ─────────────────────
+  #
+  # Indices are derived deterministically via HMAC over the workspace's
+  # `status_index_secret_key_id`. The truncation `width` comes from the
+  # per-(workspace, purpose) `status_lists` row and grows on exhaustion.
+  # Uniqueness is enforced by the DB unique index on
+  # `(issuer_id, status_list_index, status_purpose)`; on collision the
+  # caller bumps `attempt` (and eventually `width`) and re-allocates.
 
-  @max_status_list_index 131_071
+  defp assign_status_list_index(
+         %Workspace{status_index_secret_key_id: key_id},
+         offer_id,
+         purpose,
+         attempt,
+         width
+       )
+       when is_binary(key_id) and is_integer(width) do
+    payload = "sovra:status-index:#{purpose}:#{offer_id}:#{attempt}"
 
-  defp assign_status_list_index(issuer_id, purpose \\ "revocation") do
-    used_indices =
-      from(c in IssuedCredential,
-        where: c.issuer_id == ^issuer_id and c.status_purpose == ^purpose,
-        select: c.status_list_index
-      )
-      |> Repo.all()
-      |> Enum.reject(&is_nil/1)
-      |> MapSet.new()
+    case HmacKeyStore.hmac(key_id, payload) do
+      {:ok, mac} ->
+        <<index::unsigned-big-integer-size(width), _rest::bitstring>> = mac
+        {:ok, index}
 
-    # Also reserve indices from pending offers
-    offer_indices =
-      from(o in CredentialOffer,
-        where: o.issuer_id == ^issuer_id and not is_nil(o.status_list_index),
-        select: o.status_list_index
-      )
-      |> Repo.all()
-      |> MapSet.new()
-
-    all_used = MapSet.union(used_indices, offer_indices)
-    available_count = @max_status_list_index + 1 - MapSet.size(all_used)
-
-    if available_count <= 0 do
-      {:error, :bitmap_exhausted}
-    else
-      {:ok, find_random_unused_index(all_used)}
-    end
-  end
-
-  defp find_random_unused_index(used) do
-    candidate = :rand.uniform(@max_status_list_index + 1) - 1
-
-    if MapSet.member?(used, candidate) do
-      find_random_unused_index(used)
-    else
-      candidate
+      {:error, _} = error ->
+        error
     end
   end
 

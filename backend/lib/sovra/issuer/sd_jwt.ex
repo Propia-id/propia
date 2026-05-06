@@ -7,7 +7,6 @@ defmodule Sovra.Issuer.SDJWT do
   Issuer JWT payload contains _sd array of base64url(SHA-256(disclosure)) digests.
   """
 
-  alias Sovra.Crypto.{Key, P256}
   alias Sovra.Issuer.ClaimUtils
 
   @doc """
@@ -117,21 +116,7 @@ defmodule Sovra.Issuer.SDJWT do
   end
 
   defp sign_jwt(header, payload, signing_key_id) do
-    header_b64 = Base.url_encode64(Jason.encode!(header), padding: false)
-    payload_b64 = Base.url_encode64(Jason.encode!(payload), padding: false)
-    signing_input = "#{header_b64}.#{payload_b64}"
-
-    hash = :crypto.hash(:sha256, signing_input)
-
-    case Key.sign(signing_key_id, hash) do
-      {:ok, %{r: r, s: s}} ->
-        raw_sig = P256.pad_or_trim(r, 32) <> P256.pad_or_trim(s, 32)
-        sig_b64 = Base.url_encode64(raw_sig, padding: false)
-        {:ok, "#{signing_input}.#{sig_b64}"}
-
-      {:error, _} = error ->
-        error
-    end
+    Sovra.Crypto.JwtSigner.sign(header, payload, signing_key_id)
   end
 
   defp split_claims(claim_defs, claims) do

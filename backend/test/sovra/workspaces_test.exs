@@ -1,41 +1,12 @@
 defmodule Sovra.WorkspacesTest do
   use Sovra.DataCase, async: false
 
-  alias Sovra.Accounts.User
-  alias Sovra.Organizations.Organization
   alias Sovra.Workspaces
   alias Sovra.Workspaces.WorkspaceMember
 
-  defp create_user(suffix \\ "#{System.unique_integer([:positive])}") do
-    {:ok, account} =
-      User.admin_changeset(%{
-        email: "user-#{suffix}@example.com",
-        password: "a-very-strong-password-123"
-      })
-      |> Repo.insert()
-
-    account
-  end
-
-  defp create_org(suffix \\ "#{System.unique_integer([:positive])}") do
-    {:ok, org} =
-      %{name: "Org #{suffix}"}
-      |> Organization.create_changeset()
-      |> Repo.insert()
-
-    org
-  end
-
-  defp create_workspace(owner \\ nil, attrs \\ %{}) do
-    owner = owner || create_user()
-    org = create_org()
-    attrs = Map.merge(%{name: "Workspace #{System.unique_integer([:positive])}"}, attrs)
-
-    {:ok, %{workspace: ws, webhook_secret: secret}} =
-      Workspaces.create_workspace(org.id, attrs, owner.id)
-
-    %{workspace: ws, owner: owner, org: org, webhook_secret: secret}
-  end
+  defp create_user, do: fixture_user()
+  defp create_org, do: fixture_org()
+  defp create_workspace, do: fixture_workspace()
 
   describe "create_workspace/3" do
     test "creates workspace + owner member + webhook secret" do
@@ -52,6 +23,9 @@ defmodule Sovra.WorkspacesTest do
       assert String.starts_with?(secret, "whsec_")
 
       assert {:ok, "admin"} = Workspaces.member_role(ws.id, user.id)
+
+      assert is_binary(ws.status_index_secret_key_id)
+      assert ws.status_index_secret_key_id != ws.webhook_secret_key_id
     end
 
     test "accepts optional webhook_url at creation" do
