@@ -9,7 +9,7 @@ let
     pname = "sovra-mix-deps";
     version = "0.1.0";
     src = ../backend;
-    sha256 = "sha256-hWIOkVThsN9cgIqJsHNRTmNg4OE6rIT2zy3vxb57GzA=";
+    sha256 = "sha256-1an3sK32b1UkCX0WJDqDyX8TxFjs/xHSIKOESWf7oj4=";
   };
 
   # Fetch pnpm dependencies reproducibly.

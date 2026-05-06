@@ -89,6 +89,30 @@ defmodule Sovra.Workspaces do
     end
   end
 
+  @doc """
+  Loads a workspace and verifies that both the workspace and its parent
+  organization are active. Returns `{:ok, workspace}` (with `:organization`
+  preloaded), or `{:error, :workspace_not_found | :workspace_inactive |
+  :organization_inactive}`. Use this from any admin-action context that needs
+  to gate on tenant status.
+  """
+  def get_active_workspace(id) do
+    with {:ok, workspace} <- get_workspace(id) do
+      workspace = Repo.preload(workspace, :organization)
+
+      cond do
+        workspace.status != "active" ->
+          {:error, :workspace_inactive}
+
+        workspace.organization && workspace.organization.status != "active" ->
+          {:error, :organization_inactive}
+
+        true ->
+          {:ok, workspace}
+      end
+    end
+  end
+
   def get_workspace_by_did(did) when is_binary(did) do
     case Repo.get_by(Workspace, did: did) do
       nil -> {:error, :workspace_not_found}

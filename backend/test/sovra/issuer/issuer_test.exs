@@ -660,6 +660,405 @@ defmodule Sovra.IssuerTest do
     end
   end
 
+  describe "delete_schema/2 integrity guard" do
+    defp insert_issued_credential(issuer, schema) do
+      now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+      {:ok, cred} =
+        Sovra.Issuer.IssuedCredential.create_changeset(%{
+          issuer_id: issuer.id,
+          schema_id: schema.id,
+          holder_did: "did:sovra:0xholder#{System.unique_integer([:positive])}",
+          issued_at: now,
+          expires_at: DateTime.add(now, 86400, :second)
+        })
+        |> Repo.insert()
+
+      cred
+    end
+
+    test "rejects deletion when an issued credential references the schema" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+      _cred = insert_issued_credential(issuer, schema)
+
+      assert {:error, :schema_in_use} = Issuer.delete_schema(issuer.id, schema.id)
+      assert {:ok, ^schema} = Issuer.get_schema_by_id(schema.id)
+    end
+
+    test "rejects deletion when a pending offer references the schema" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+
+      {:ok, _result} =
+        Issuer.create_credential_offer(issuer.id, schema.schema_id, %{"name" => "Alice"})
+
+      assert {:error, :schema_in_use} = Issuer.delete_schema(issuer.id, schema.id)
+    end
+
+    test "rejects deletion when a token_exchanged offer references the schema" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+
+      {:ok, result} =
+        Issuer.create_credential_offer(issuer.id, schema.schema_id, %{"name" => "Alice"})
+
+      {:ok, _token_data} = Issuer.exchange_token(result.pre_authorized_code)
+
+      assert {:error, :schema_in_use} = Issuer.delete_schema(issuer.id, schema.id)
+    end
+
+    test "deletes a schema with no issued credentials or open offers" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+
+      assert {:ok, _} = Issuer.delete_schema(issuer.id, schema.id)
+      assert {:error, :schema_not_found} = Issuer.get_schema_by_id(schema.id)
+    end
+
+    test "another workspace cannot delete a schema it does not own" do
+      issuer_a = create_test_issuer()
+      issuer_b = create_test_issuer()
+      schema = create_test_schema(issuer_a)
+
+      assert {:error, :schema_not_found} = Issuer.delete_schema(issuer_b.id, schema.id)
+      assert {:ok, ^schema} = Issuer.get_schema_by_id(schema.id)
+    end
+
+    test "deleting any version cascades to all versions of the same schema_id" do
+      issuer = create_test_issuer()
+      v1 = create_test_schema(issuer)
+
+      {:ok, v2} =
+        Issuer.revise_schema(issuer.id, v1.schema_id, 1, %{
+          name: "v2",
+          claims: v1.claims,
+          validity_period: "1y"
+        })
+
+      assert {:ok, %{deleted_versions: 2, schema_id: schema_id_str}} =
+               Issuer.delete_schema(issuer.id, v2.id)
+
+      assert schema_id_str == v1.schema_id
+      assert {:error, :schema_not_found} = Issuer.get_schema_by_id(v1.id)
+      assert {:error, :schema_not_found} = Issuer.get_schema_by_id(v2.id)
+    end
+
+    test "v2 cannot be deleted while v1 has issued credentials (atomic, all-or-nothing)" do
+      issuer = create_test_issuer()
+      v1 = create_test_schema(issuer)
+      _cred = insert_issued_credential(issuer, v1)
+
+      {:ok, v2} =
+        Issuer.revise_schema(issuer.id, v1.schema_id, 1, %{
+          name: "v2",
+          claims: v1.claims,
+          validity_period: "1y"
+        })
+
+      assert {:error, :schema_in_use} = Issuer.delete_schema(issuer.id, v2.id)
+      assert {:ok, _} = Issuer.get_schema_by_id(v1.id)
+      assert {:ok, _} = Issuer.get_schema_by_id(v2.id)
+    end
+
+    test "v1 cannot be deleted while v2 has a pending offer (atomic, all-or-nothing)" do
+      issuer = create_test_issuer()
+      v1 = create_test_schema(issuer)
+
+      {:ok, v2} =
+        Issuer.revise_schema(issuer.id, v1.schema_id, 1, %{
+          name: "v2",
+          claims: v1.claims,
+          validity_period: "1y"
+        })
+
+      {:ok, _result} =
+        Issuer.create_credential_offer(issuer.id, v1.schema_id, %{"name" => "Bob"})
+
+      assert {:error, :schema_in_use} = Issuer.delete_schema(issuer.id, v1.id)
+      assert {:ok, _} = Issuer.get_schema_by_id(v1.id)
+      assert {:ok, _} = Issuer.get_schema_by_id(v2.id)
+    end
+
+    test "cascade delete removes designs from all versions" do
+      issuer = create_test_issuer()
+      v1 = create_test_schema(issuer)
+
+      {:ok, _design_v1} =
+        Issuer.upsert_design(issuer.id, v1.schema_id, %{
+          name: "v1 design",
+          display: %{title: %{text: "T"}},
+          styles: %{
+            thumbnail: %{uri: "https://example.com/x.png", alt: "x"},
+            background: %{color: "#000000"},
+            text: %{color: "#ffffff"}
+          }
+        })
+
+      {:ok, v2} =
+        Issuer.revise_schema(issuer.id, v1.schema_id, 1, %{
+          name: "v2",
+          claims: v1.claims,
+          validity_period: "1y"
+        })
+
+      assert {:ok, _} = Issuer.delete_schema(issuer.id, v2.id)
+
+      assert Repo.get_by(Sovra.Issuer.CredentialDesign, credential_schema_id: v1.id) == nil
+      assert Repo.get_by(Sovra.Issuer.CredentialDesign, credential_schema_id: v2.id) == nil
+    end
+  end
+
+  describe "revise_schema/3 versioning" do
+    test "inserts a new row with incremented version, preserves the prior row" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+
+      assert schema.version == 1
+
+      revised_claims = [
+        %{"key" => "name", "type" => "string", "required" => true, "disclosable" => true},
+        %{"key" => "age", "type" => "integer", "required" => false, "disclosable" => true},
+        %{"key" => "gpa", "type" => "number", "required" => false, "disclosable" => true}
+      ]
+
+      {:ok, v2} =
+        Issuer.revise_schema(issuer.id, schema.schema_id, 1, %{
+          name: "Test Credential v2",
+          claims: revised_claims,
+          validity_period: "2y"
+        })
+
+      assert v2.version == 2
+      assert v2.id != schema.id
+      assert v2.schema_id == schema.schema_id
+      assert v2.credential_type == schema.credential_type
+      assert v2.name == "Test Credential v2"
+      assert v2.validity_period == "2y"
+      assert length(v2.claims) == 3
+
+      # Prior row untouched
+      {:ok, refetched_v1} = Issuer.get_schema_by_id(schema.id)
+      assert refetched_v1.version == 1
+      assert refetched_v1.name == "Test Credential"
+      assert length(refetched_v1.claims) == 2
+    end
+
+    test "get_schema/2 returns the latest version after a revision" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+
+      {:ok, v2} =
+        Issuer.revise_schema(issuer.id, schema.schema_id, 1, %{
+          name: "Test Credential v2",
+          claims: schema.claims,
+          validity_period: "1y"
+        })
+
+      {:ok, latest} = Issuer.get_schema(issuer.id, schema.schema_id)
+      assert latest.id == v2.id
+      assert latest.version == 2
+    end
+
+    test "credentials issued under v1 still resolve to v1 after a revision" do
+      issuer = create_test_issuer()
+      v1 = create_test_schema(issuer)
+
+      now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+      {:ok, cred} =
+        Sovra.Issuer.IssuedCredential.create_changeset(%{
+          issuer_id: issuer.id,
+          schema_id: v1.id,
+          holder_did: "did:sovra:0xholder1",
+          issued_at: now,
+          expires_at: DateTime.add(now, 86400, :second)
+        })
+        |> Repo.insert()
+
+      {:ok, _v2} =
+        Issuer.revise_schema(issuer.id, v1.schema_id, 1, %{
+          name: "Test Credential v2",
+          claims: v1.claims,
+          validity_period: "1y"
+        })
+
+      reloaded = Repo.get!(Sovra.Issuer.IssuedCredential, cred.id)
+      assert reloaded.schema_id == v1.id
+
+      {:ok, resolved_schema} = Issuer.get_schema_by_id(reloaded.schema_id)
+      assert resolved_schema.version == 1
+    end
+
+    test "new offers after revision target the latest version" do
+      issuer = create_test_issuer()
+      v1 = create_test_schema(issuer)
+
+      {:ok, v2} =
+        Issuer.revise_schema(issuer.id, v1.schema_id, 1, %{
+          name: "Test Credential v2",
+          claims: v1.claims,
+          validity_period: "1y"
+        })
+
+      {:ok, result} =
+        Issuer.create_credential_offer(issuer.id, v1.schema_id, %{"name" => "Bob"})
+
+      offer = Repo.get!(CredentialOffer, result.offer.id)
+      assert offer.schema_id == v2.id
+    end
+
+    test "inherits the prior version's design" do
+      issuer = create_test_issuer()
+      v1 = create_test_schema(issuer)
+
+      {:ok, prior_design} =
+        Issuer.upsert_design(issuer.id, v1.schema_id, %{
+          name: "Diploma Card",
+          description: "A test diploma",
+          display: %{
+            title: %{text: "Diploma"},
+            subtitle: %{path: ["$.name"], fallback: "Unnamed"}
+          },
+          styles: %{
+            thumbnail: %{uri: "https://example.com/logo.png", alt: "logo"},
+            background: %{color: "#1a365d"},
+            text: %{color: "#ffffff"}
+          }
+        })
+
+      {:ok, v2} =
+        Issuer.revise_schema(issuer.id, v1.schema_id, 1, %{
+          name: "Diploma v2",
+          claims: v1.claims,
+          validity_period: "2y"
+        })
+
+      {:ok, inherited} = Issuer.get_design(issuer.id, v1.schema_id)
+      assert inherited.credential_schema_id == v2.id
+      assert inherited.id != prior_design.id
+      assert inherited.name == prior_design.name
+      assert inherited.description == prior_design.description
+      assert inherited.styles.background.color == "#1a365d"
+      assert inherited.display.title.text == "Diploma"
+
+      v1_design = Repo.get_by!(Sovra.Issuer.CredentialDesign, credential_schema_id: v1.id)
+      assert v1_design.id == prior_design.id
+    end
+
+    test "revise without a prior design leaves the new version designless" do
+      issuer = create_test_issuer()
+      v1 = create_test_schema(issuer)
+
+      {:ok, _v2} =
+        Issuer.revise_schema(issuer.id, v1.schema_id, 1, %{
+          name: "v2",
+          claims: v1.claims,
+          validity_period: "1y"
+        })
+
+      assert {:error, :design_not_found} = Issuer.get_design(issuer.id, v1.schema_id)
+    end
+
+    test "returns :schema_not_found when revising a schema that does not exist" do
+      issuer = create_test_issuer()
+
+      assert {:error, :schema_not_found} =
+               Issuer.revise_schema(issuer.id, "missing-schema", 1, %{
+                 name: "Whatever",
+                 claims: [],
+                 validity_period: "1y"
+               })
+    end
+
+    test "another workspace cannot revise a schema it does not own" do
+      issuer_a = create_test_issuer()
+      issuer_b = create_test_issuer()
+      schema_a = create_test_schema(issuer_a)
+
+      assert {:error, :schema_not_found} =
+               Issuer.revise_schema(issuer_b.id, schema_a.schema_id, 1, %{
+                 name: "Hijack",
+                 claims: schema_a.claims,
+                 validity_period: "1y"
+               })
+
+      {:ok, refetched} = Issuer.get_schema_by_id(schema_a.id)
+      assert refetched.version == 1
+      assert refetched.name == schema_a.name
+    end
+
+    test "inactive workspace cannot revise schemas" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+
+      issuer
+      |> Ecto.Changeset.change(%{status: "suspended"})
+      |> Repo.update!()
+
+      assert {:error, :workspace_inactive} =
+               Issuer.revise_schema(issuer.id, schema.schema_id, 1, %{
+                 name: "v2",
+                 claims: schema.claims,
+                 validity_period: "1y"
+               })
+    end
+
+    test "inactive workspace cannot delete schemas" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+
+      issuer
+      |> Ecto.Changeset.change(%{status: "suspended"})
+      |> Repo.update!()
+
+      assert {:error, :workspace_inactive} = Issuer.delete_schema(issuer.id, schema.id)
+    end
+
+    test "stale base_version returns :schema_revision_conflict" do
+      issuer = create_test_issuer()
+      v1 = create_test_schema(issuer)
+
+      {:ok, _v2} =
+        Issuer.revise_schema(issuer.id, v1.schema_id, 1, %{
+          name: "v2",
+          claims: v1.claims,
+          validity_period: "1y"
+        })
+
+      # Second revise still thinks it's branching from v1 — the latest is now v2.
+      assert {:error, :schema_revision_conflict} =
+               Issuer.revise_schema(issuer.id, v1.schema_id, 1, %{
+                 name: "v2-from-stale",
+                 claims: v1.claims,
+                 validity_period: "1y"
+               })
+    end
+
+    test "matching base_version after a prior revision succeeds (chained revises)" do
+      issuer = create_test_issuer()
+      v1 = create_test_schema(issuer)
+
+      {:ok, v2} =
+        Issuer.revise_schema(issuer.id, v1.schema_id, 1, %{
+          name: "v2",
+          claims: v1.claims,
+          validity_period: "1y"
+        })
+
+      assert v2.version == 2
+
+      {:ok, v3} =
+        Issuer.revise_schema(issuer.id, v1.schema_id, 2, %{
+          name: "v3",
+          claims: v1.claims,
+          validity_period: "1y"
+        })
+
+      assert v3.version == 3
+    end
+  end
+
   describe "OID4VCI.build_metadata projection" do
     test "falls back to schema.name when no design exists" do
       issuer = create_test_issuer()
@@ -698,6 +1097,24 @@ defmodule Sovra.IssuerTest do
       assert display_obj["text_color"] == "#ffffff"
       assert display_obj["logo"]["uri"] == "data:image/png;base64,abc"
       assert display_obj["logo"]["alt_text"] == "seal"
+    end
+
+    test "advertises only the latest version per schema_id" do
+      issuer = create_test_issuer()
+      v1 = create_test_schema(issuer)
+
+      {:ok, v2} =
+        Issuer.revise_schema(issuer.id, v1.schema_id, 1, %{
+          name: "Test Credential v2",
+          claims: v1.claims,
+          validity_period: "1y"
+        })
+
+      metadata = Sovra.Issuer.OID4VCI.build_metadata(issuer, [v1, v2], [])
+
+      configs = metadata["credential_configurations_supported"]
+      assert map_size(configs) == 1
+      assert configs[v2.credential_type]["display"] == [%{"name" => v2.name}]
     end
   end
 end

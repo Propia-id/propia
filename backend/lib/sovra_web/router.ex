@@ -139,6 +139,7 @@ defmodule SovraWeb.Router do
     get "/profile", AdminController, :get_issuer
     post "/schemas", AdminController, :create_schema
     get "/schemas", AdminController, :list_schemas
+    put "/schemas/:schema_id", AdminController, :revise_schema
     delete "/schemas/:id", AdminController, :delete_schema
     get "/schemas/:schema_id/design", AdminController, :get_design
     put "/schemas/:schema_id/design", AdminController, :upsert_design

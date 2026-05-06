@@ -48,7 +48,14 @@ defmodule Sovra.Issuer do
   end
 
   def get_schema(workspace_id, schema_id) do
-    case Repo.get_by(CredentialSchema, issuer_id: workspace_id, schema_id: schema_id) do
+    query =
+      from(s in CredentialSchema,
+        where: s.issuer_id == ^workspace_id and s.schema_id == ^schema_id,
+        order_by: [desc: :version],
+        limit: 1
+      )
+
+    case Repo.one(query) do
       nil -> {:error, :schema_not_found}
       schema -> {:ok, schema}
     end
@@ -64,16 +71,173 @@ defmodule Sovra.Issuer do
   def list_schemas(workspace_id) do
     from(s in CredentialSchema,
       where: s.issuer_id == ^workspace_id,
-      order_by: [asc: :inserted_at]
+      order_by: [asc: :inserted_at, asc: :version]
     )
     |> Repo.all()
   end
 
-  def delete_schema(workspace_id, schema_id) do
-    case Repo.get_by(CredentialSchema, id: schema_id, issuer_id: workspace_id) do
-      nil -> {:error, :schema_not_found}
-      schema -> Repo.delete(schema)
+  # Optimistic concurrency: caller must pass `base_version`, the version they
+  # observed when they started editing. The transaction locks the latest row
+  # FOR UPDATE, verifies it still matches base_version, and only then inserts.
+  # The `Postgrex.Error` rescue covers the narrow READ COMMITTED race where two
+  # concurrent revisers both pass the check before either commits — the unique
+  # constraint on (issuer_id, schema_id, version) catches the loser.
+  def revise_schema(workspace_id, schema_id, base_version, attrs)
+      when is_integer(base_version) do
+    with {:ok, _workspace} <- Workspaces.get_active_workspace(workspace_id) do
+      Repo.transaction(fn ->
+        prior =
+          Repo.one(
+            from s in CredentialSchema,
+              where: s.issuer_id == ^workspace_id and s.schema_id == ^schema_id,
+              order_by: [desc: :version],
+              limit: 1,
+              lock: "FOR UPDATE"
+          )
+
+        case prior do
+          nil ->
+            Repo.rollback(:schema_not_found)
+
+          %CredentialSchema{version: ^base_version} = prior ->
+            do_insert_revision(workspace_id, prior, attrs)
+
+          %CredentialSchema{} ->
+            Repo.rollback(:schema_revision_conflict)
+        end
+      end)
     end
+  end
+
+  defp do_insert_revision(workspace_id, prior, attrs) do
+    new_attrs =
+      attrs
+      |> Map.new(fn {k, v} -> {to_string(k), v} end)
+      |> Map.merge(%{
+        "issuer_id" => workspace_id,
+        "schema_id" => prior.schema_id,
+        "credential_type" => prior.credential_type,
+        "version" => prior.version + 1
+      })
+
+    try do
+      case CredentialSchema.create_changeset(new_attrs) |> Repo.insert() do
+        {:ok, new_schema} ->
+          inherit_design(prior, new_schema)
+          new_schema
+
+        {:error, changeset} ->
+          Repo.rollback(changeset)
+      end
+    rescue
+      e in Postgrex.Error ->
+        if Map.get(e.postgres || %{}, :code) == :unique_violation do
+          Repo.rollback(:schema_revision_conflict)
+        else
+          reraise e, __STACKTRACE__
+        end
+    end
+  end
+
+  # Carry the prior version's design to the new schema row so the credential keeps
+  # the same look across revisions; admin can still edit it after.
+  defp inherit_design(%CredentialSchema{} = prior, %CredentialSchema{} = new_schema) do
+    case Repo.get_by(CredentialDesign, credential_schema_id: prior.id) do
+      nil ->
+        :ok
+
+      design ->
+        new_design = %CredentialDesign{
+          name: design.name,
+          description: design.description,
+          display: design.display,
+          styles: design.styles,
+          back: design.back,
+          credential_schema_id: new_schema.id
+        }
+
+        case Repo.insert(new_design) do
+          {:ok, _} ->
+            :ok
+
+          {:error, changeset} ->
+            Repo.rollback(changeset)
+        end
+    end
+  end
+
+  # Deleting a schema removes every version sharing the same schema_id within
+  # the workspace, atomically. If *any* version has issued credentials or open
+  # offers, none are deleted — admins must clean up usage first.
+  #
+  # Concurrency: locks the schema rows FOR UPDATE inside the transaction. Postgres
+  # FK enforcement takes FOR KEY SHARE on the parent row when inserting a child,
+  # so concurrent offer/credential inserts that target these schemas block until
+  # this transaction commits or rolls back. The rescue clause is a backstop for
+  # any FK violation that still surfaces (custom triggers, future tables).
+  def delete_schema(workspace_id, id) do
+    with {:ok, _workspace} <- Workspaces.get_active_workspace(workspace_id) do
+      do_delete_schema(workspace_id, id)
+    end
+  end
+
+  defp do_delete_schema(workspace_id, id) do
+    Repo.transaction(fn ->
+      target =
+        Repo.one(
+          from s in CredentialSchema,
+            where: s.id == ^id and s.issuer_id == ^workspace_id,
+            lock: "FOR UPDATE"
+        )
+
+      case target do
+        nil ->
+          Repo.rollback(:schema_not_found)
+
+        %CredentialSchema{schema_id: schema_id_str} ->
+          version_ids =
+            Repo.all(
+              from s in CredentialSchema,
+                where: s.issuer_id == ^workspace_id and s.schema_id == ^schema_id_str,
+                lock: "FOR UPDATE",
+                select: s.id
+            )
+
+          if any_version_in_use?(version_ids) do
+            Repo.rollback(:schema_in_use)
+          else
+            try do
+              {count, _} =
+                Repo.delete_all(from s in CredentialSchema, where: s.id in ^version_ids)
+
+              %{schema_id: schema_id_str, deleted_versions: count}
+            rescue
+              e in Postgrex.Error ->
+                if Map.get(e.postgres || %{}, :code) == :foreign_key_violation do
+                  Repo.rollback(:schema_in_use)
+                else
+                  reraise e, __STACKTRACE__
+                end
+            end
+          end
+      end
+    end)
+  end
+
+  defp any_version_in_use?([]), do: false
+
+  # Mirrors the FK :restrict on offers/credentials: any referencing row blocks
+  # deletion. We intentionally don't filter offers by status — `"issued"` offers
+  # always have a matching IssuedCredential row, so they'd be caught either way;
+  # all other statuses point at live or audit-relevant state we shouldn't orphan.
+  defp any_version_in_use?(ids) do
+    issued_exists? =
+      Repo.exists?(from c in IssuedCredential, where: c.schema_id in ^ids)
+
+    offer_exists? =
+      Repo.exists?(from o in CredentialOffer, where: o.schema_id in ^ids)
+
+    issued_exists? or offer_exists?
   end
 
   # ── Credential Design Management ───────────────────────

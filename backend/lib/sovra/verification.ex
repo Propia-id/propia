@@ -54,7 +54,7 @@ defmodule Sovra.Verification do
   access (we don't disclose existence).
   """
   def get_session(workspace_id, id) when is_binary(workspace_id) and is_binary(id) do
-    with {:ok, _workspace} <- load_active_workspace(workspace_id) do
+    with {:ok, _workspace} <- Workspaces.get_active_workspace(workspace_id) do
       case Repo.get_by(Session, id: id, workspace_id: workspace_id) do
         nil -> {:error, :session_not_found}
         session -> {:ok, session}
@@ -68,7 +68,7 @@ defmodule Sovra.Verification do
   max 200).
   """
   def list_sessions(workspace_id, opts \\ []) when is_binary(workspace_id) do
-    with {:ok, _workspace} <- load_active_workspace(workspace_id) do
+    with {:ok, _workspace} <- Workspaces.get_active_workspace(workspace_id) do
       limit =
         opts
         |> Keyword.get(:limit, @list_default_limit)
@@ -111,7 +111,7 @@ defmodule Sovra.Verification do
   def create_session(workspace_id, dcql_query, opts \\ []) when is_map(dcql_query) do
     ttl = Keyword.get(opts, :ttl_seconds, @session_ttl_seconds)
 
-    with {:ok, workspace} <- load_active_workspace(workspace_id),
+    with {:ok, workspace} <- Workspaces.get_active_workspace(workspace_id),
          :ok <- validate_dcql(dcql_query) do
       nonce = random_token(16)
       state = random_token(16)
@@ -138,18 +138,6 @@ defmodule Sovra.Verification do
            authorization_request_uri: uri,
            authorization_request_uri_ref: uri_ref
          }}
-      end
-    end
-  end
-
-  defp load_active_workspace(workspace_id) do
-    with {:ok, workspace} <- Workspaces.get_workspace(workspace_id) do
-      workspace = Repo.preload(workspace, :organization)
-
-      cond do
-        workspace.status != "active" -> {:error, :workspace_inactive}
-        workspace.organization.status != "active" -> {:error, :organization_inactive}
-        true -> {:ok, workspace}
       end
     end
   end

@@ -14,7 +14,7 @@ defmodule Sovra.Issuer.OID4VCI do
     designs_by_schema_id = Map.new(designs, fn d -> {d.credential_schema_id, d} end)
 
     configs =
-      Map.new(schemas, fn schema ->
+      Map.new(latest_per_schema_id(schemas), fn schema ->
         {schema.credential_type,
          %{
            "format" => "vc+sd-jwt",
@@ -32,6 +32,12 @@ defmodule Sovra.Issuer.OID4VCI do
       "credential_configurations_supported" => configs,
       "display" => [display_entry(workspace)]
     }
+  end
+
+  defp latest_per_schema_id(schemas) do
+    schemas
+    |> Enum.group_by(& &1.schema_id)
+    |> Enum.map(fn {_, versions} -> Enum.max_by(versions, &(&1.version || 1)) end)
   end
 
   defp display_entry(%{organization: %{name: name} = org}) when is_binary(name) do

@@ -24,6 +24,6 @@ defmodule Sovra.Issuer.CredentialSchema do
     record
     |> cast(attrs, @required ++ [:version])
     |> validate_required(@required)
-    |> unique_constraint([:issuer_id, :schema_id])
+    |> unique_constraint([:issuer_id, :schema_id, :version])
   end
 end

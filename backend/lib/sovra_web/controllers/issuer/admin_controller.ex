@@ -153,6 +153,68 @@ defmodule SovraWeb.Issuer.AdminController do
     }
   )
 
+  operation(:revise_schema,
+    summary: "Revise credential schema (new version)",
+    description:
+      "Insert a new version of an existing schema, preserving prior versions and credentials issued under them.",
+    parameters: [
+      schema_id: [in: :path, type: :string, description: "Schema identifier", required: true]
+    ],
+    request_body:
+      {"Schema revision params", "application/json",
+       %OpenApiSpex.Schema{
+         type: :object,
+         required: [:name, :claims, :base_version],
+         properties: %{
+           name: %OpenApiSpex.Schema{type: :string},
+           claims: %OpenApiSpex.Schema{type: :array, items: %OpenApiSpex.Schema{type: :object}},
+           validity_period: %OpenApiSpex.Schema{type: :string, example: "1y"},
+           base_version: %OpenApiSpex.Schema{
+             type: :integer,
+             description:
+               "The version observed when editing began. Server rejects with 409 schema_revision_conflict if a newer version exists."
+           }
+         }
+       }},
+    responses: %{
+      201 =>
+        {"Schema revised", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             id: %OpenApiSpex.Schema{type: :string, format: :uuid},
+             schema_id: %OpenApiSpex.Schema{type: :string},
+             credential_type: %OpenApiSpex.Schema{type: :string},
+             name: %OpenApiSpex.Schema{type: :string},
+             claims: %OpenApiSpex.Schema{type: :array, items: %OpenApiSpex.Schema{type: :object}},
+             validity_period: %OpenApiSpex.Schema{type: :string},
+             version: %OpenApiSpex.Schema{type: :integer}
+           }
+         }},
+      404 =>
+        {"Schema not found", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }},
+      409 =>
+        {"Revision conflict", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }},
+      422 =>
+        {"Validation error", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             error: %OpenApiSpex.Schema{type: :string},
+             details: %OpenApiSpex.Schema{type: :object}
+           }
+         }}
+    }
+  )
+
   operation(:delete_schema,
     summary: "Delete credential schema",
     description: "Delete a credential schema by ID.",
@@ -163,6 +225,12 @@ defmodule SovraWeb.Issuer.AdminController do
       204 => {"Schema deleted", nil, nil},
       404 =>
         {"Schema not found", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }},
+      409 =>
+        {"Schema is in use", "application/json",
          %OpenApiSpex.Schema{
            type: :object,
            properties: %{error: %OpenApiSpex.Schema{type: :string}}
@@ -381,15 +449,80 @@ defmodule SovraWeb.Issuer.AdminController do
     })
   end
 
+  def revise_schema(conn, %{"schema_id" => schema_id} = params) do
+    case parse_base_version(params["base_version"]) do
+      :error ->
+        conn
+        |> put_status(422)
+        |> json(%{
+          error: "validation_error",
+          details: %{base_version: ["must be a positive integer"]}
+        })
+
+      {:ok, base_version} ->
+        workspace_id = conn.assigns.current_user.workspace_id
+
+        attrs = %{
+          name: params["name"],
+          claims: normalize_claims(params["claims"]),
+          validity_period: to_string(params["validity_period"] || "1y")
+        }
+
+        case Issuer.revise_schema(workspace_id, schema_id, base_version, attrs) do
+          {:ok, schema} ->
+            conn
+            |> put_status(201)
+            |> json(%{
+              id: schema.id,
+              schema_id: schema.schema_id,
+              credential_type: schema.credential_type,
+              name: schema.name,
+              claims: schema.claims,
+              validity_period: schema.validity_period,
+              version: schema.version
+            })
+
+          {:error, :schema_not_found} ->
+            conn |> put_status(404) |> json(%{error: "schema_not_found"})
+
+          {:error, :schema_revision_conflict} ->
+            conn |> put_status(409) |> json(%{error: "schema_revision_conflict"})
+
+          {:error, status} when status in [:workspace_inactive, :organization_inactive] ->
+            conn |> put_status(403) |> json(%{error: to_string(status)})
+
+          {:error, %Ecto.Changeset{} = changeset} ->
+            conn
+            |> put_status(422)
+            |> json(%{error: "validation_error", details: changeset_errors(changeset)})
+        end
+    end
+  end
+
+  defp parse_base_version(v) when is_integer(v) and v >= 1, do: {:ok, v}
+  defp parse_base_version(_), do: :error
+
   def delete_schema(conn, %{"id" => schema_id}) do
-    workspace_id = conn.assigns.current_user.workspace_id
+    case parse_uuid_or_404(conn, schema_id, "schema_not_found") do
+      {:halt, conn} ->
+        conn
 
-    case Issuer.delete_schema(workspace_id, schema_id) do
-      {:ok, _} ->
-        conn |> put_status(204) |> text("")
+      {:ok, schema_id} ->
+        workspace_id = conn.assigns.current_user.workspace_id
 
-      {:error, :schema_not_found} ->
-        conn |> put_status(404) |> json(%{error: "schema_not_found"})
+        case Issuer.delete_schema(workspace_id, schema_id) do
+          {:ok, _} ->
+            conn |> put_status(204) |> text("")
+
+          {:error, :schema_not_found} ->
+            conn |> put_status(404) |> json(%{error: "schema_not_found"})
+
+          {:error, :schema_in_use} ->
+            conn |> put_status(409) |> json(%{error: "schema_in_use"})
+
+          {:error, status} when status in [:workspace_inactive, :organization_inactive] ->
+            conn |> put_status(403) |> json(%{error: to_string(status)})
+        end
     end
   end
 
@@ -452,7 +585,7 @@ defmodule SovraWeb.Issuer.AdminController do
   )
 
   def get_design(conn, %{"schema_id" => schema_id}) do
-    workspace_id = conn.assigns.current_issuer_account.workspace_id
+    workspace_id = conn.assigns.current_user.workspace_id
 
     case Issuer.get_design(workspace_id, schema_id) do
       {:ok, design} -> json(conn, serialize_design(design))
@@ -462,7 +595,7 @@ defmodule SovraWeb.Issuer.AdminController do
   end
 
   def upsert_design(conn, %{"schema_id" => schema_id} = params) do
-    workspace_id = conn.assigns.current_issuer_account.workspace_id
+    workspace_id = conn.assigns.current_user.workspace_id
     attrs = Map.drop(params, ["schema_id"])
 
     case Issuer.upsert_design(workspace_id, schema_id, attrs) do
@@ -480,7 +613,7 @@ defmodule SovraWeb.Issuer.AdminController do
   end
 
   def delete_design(conn, %{"schema_id" => schema_id}) do
-    workspace_id = conn.assigns.current_issuer_account.workspace_id
+    workspace_id = conn.assigns.current_user.workspace_id
 
     case Issuer.delete_design(workspace_id, schema_id) do
       {:ok, _} -> conn |> put_status(204) |> text("")
@@ -533,6 +666,7 @@ defmodule SovraWeb.Issuer.AdminController do
             inserted_at: DateTime.to_iso8601(o.inserted_at),
             schema: %{
               id: o.schema.id,
+              schema_id: o.schema.schema_id,
               credential_type: o.schema.credential_type,
               name: o.schema.name
             }
@@ -602,17 +736,23 @@ defmodule SovraWeb.Issuer.AdminController do
   end
 
   def show_issued_credential(conn, %{"id" => credential_id}) do
-    workspace_id = conn.assigns.current_workspace_id
+    case parse_uuid_or_404(conn, credential_id, "credential_not_found") do
+      {:halt, conn} ->
+        conn
 
-    case Issuer.get_credential(workspace_id, credential_id) do
-      {:ok, {:issued, cred}} ->
-        json(conn, credential_view(cred))
+      {:ok, credential_id} ->
+        workspace_id = conn.assigns.current_workspace_id
 
-      {:ok, {:pending, offer}} ->
-        json(conn, pending_credential_view(offer))
+        case Issuer.get_credential(workspace_id, credential_id) do
+          {:ok, {:issued, cred}} ->
+            json(conn, credential_view(cred))
 
-      {:error, :credential_not_found} ->
-        conn |> put_status(404) |> json(%{error: "credential_not_found"})
+          {:ok, {:pending, offer}} ->
+            json(conn, pending_credential_view(offer))
+
+          {:error, :credential_not_found} ->
+            conn |> put_status(404) |> json(%{error: "credential_not_found"})
+        end
     end
   end
 
@@ -623,29 +763,35 @@ defmodule SovraWeb.Issuer.AdminController do
   }
 
   def update_credential_status(conn, %{"id" => credential_id, "status" => status}) do
-    case Map.fetch(@status_transitions, status) do
-      {:ok, fun} ->
-        workspace_id = conn.assigns.current_workspace_id
+    case parse_uuid_or_404(conn, credential_id, "credential_not_found") do
+      {:halt, conn} ->
+        conn
 
-        case fun.(workspace_id, credential_id) do
-          {:ok, cred} ->
-            json(conn, %{id: cred.id, status: cred.status})
+      {:ok, credential_id} ->
+        case Map.fetch(@status_transitions, status) do
+          {:ok, fun} ->
+            workspace_id = conn.assigns.current_workspace_id
 
-          {:error, :credential_not_found} ->
-            conn |> put_status(404) |> json(%{error: "credential_not_found"})
+            case fun.(workspace_id, credential_id) do
+              {:ok, cred} ->
+                json(conn, %{id: cred.id, status: cred.status})
 
-          {:error, :credential_not_yet_issued} ->
-            conn |> put_status(422) |> json(%{error: "credential_not_yet_issued"})
+              {:error, :credential_not_found} ->
+                conn |> put_status(404) |> json(%{error: "credential_not_found"})
 
-          {:error, :invalid_status_transition} ->
-            conn |> put_status(422) |> json(%{error: "invalid_status_transition"})
+              {:error, :credential_not_yet_issued} ->
+                conn |> put_status(422) |> json(%{error: "credential_not_yet_issued"})
 
-          {:error, reason} ->
-            conn |> put_status(422) |> json(%{error: to_string(reason)})
+              {:error, :invalid_status_transition} ->
+                conn |> put_status(422) |> json(%{error: "invalid_status_transition"})
+
+              {:error, reason} ->
+                conn |> put_status(422) |> json(%{error: to_string(reason)})
+            end
+
+          :error ->
+            conn |> put_status(400) |> json(%{error: "unknown_status"})
         end
-
-      :error ->
-        conn |> put_status(400) |> json(%{error: "unknown_status"})
     end
   end
 
@@ -658,6 +804,7 @@ defmodule SovraWeb.Issuer.AdminController do
       expires_at: DateTime.to_iso8601(c.expires_at),
       schema: %{
         id: c.schema.id,
+        schema_id: c.schema.schema_id,
         credential_type: c.schema.credential_type,
         name: c.schema.name
       }
@@ -687,6 +834,16 @@ defmodule SovraWeb.Issuer.AdminController do
   defp normalize_claims(%{"claims" => claims}) when is_list(claims), do: claims
   defp normalize_claims(claims) when is_list(claims), do: claims
   defp normalize_claims(other), do: other
+
+  # Validates a path UUID before it reaches Ecto. A malformed UUID would otherwise
+  # raise Ecto.Query.CastError → unhandled 500. Returns either {:ok, uuid} for the
+  # caller to continue, or {:halt, conn} with a 404 already rendered.
+  defp parse_uuid_or_404(conn, id, error_code) do
+    case Ecto.UUID.cast(id) do
+      {:ok, uuid} -> {:ok, uuid}
+      :error -> {:halt, conn |> put_status(404) |> json(%{error: error_code})}
+    end
+  end
 
   defp changeset_errors(changeset) do
     Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->
