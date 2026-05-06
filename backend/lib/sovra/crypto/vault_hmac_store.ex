@@ -91,6 +91,10 @@ defmodule Sovra.Crypto.VaultHmacStore do
     body = %{
       "type" => "hmac",
       "algorithm" => "sha2-256",
+      # OpenBao Transit requires key_size for type=hmac. 32 bytes matches
+      # the SHA-256 digest length (NIST FIPS 198-1 recommends key length
+      # >= output length).
+      "key_size" => 32,
       "exportable" => true
     }
 
