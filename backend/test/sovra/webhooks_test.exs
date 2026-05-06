@@ -2,7 +2,7 @@ defmodule Sovra.WebhooksTest do
   use Sovra.DataCase, async: false
   use Oban.Testing, repo: Sovra.Repo
 
-  alias Sovra.Issuer.IssuerAccount
+  alias Sovra.Accounts.User
   alias Sovra.Organizations.Organization
   alias Sovra.Webhooks
   alias Sovra.Webhooks.DeliveryJob
@@ -10,7 +10,7 @@ defmodule Sovra.WebhooksTest do
 
   defp create_workspace(webhook_url) do
     {:ok, user} =
-      IssuerAccount.admin_changeset(%{
+      User.admin_changeset(%{
         email: "user-#{System.unique_integer([:positive])}@example.com",
         password: "a-very-strong-password-123"
       })

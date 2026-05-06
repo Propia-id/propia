@@ -11,7 +11,7 @@ defmodule Sovra.Workspaces.WorkspaceMember do
     field :role, :string, default: "member"
 
     belongs_to :workspace, Sovra.Workspaces.Workspace, define_field: false
-    belongs_to :user, Sovra.Issuer.IssuerAccount, define_field: false
+    belongs_to :user, Sovra.Accounts.User, define_field: false
 
     timestamps(type: :utc_datetime)
   end

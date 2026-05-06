@@ -1,7 +1,7 @@
 defmodule SovraWeb.Plugs.RequireWorkspaceAdminPlug do
   @moduledoc """
   Restricts access to workspace endpoints to members with role `admin`.
-  Must run after `IssuerSessionPlug`. Does **not** bypass for platform
+  Must run after `UserSessionPlug`. Does **not** bypass for platform
   super-admins or org admins — workspace membership with role `admin` is
   required explicitly.
 
@@ -18,9 +18,9 @@ defmodule SovraWeb.Plugs.RequireWorkspaceAdminPlug do
   def init(opts), do: opts
 
   def call(conn, _opts) do
-    with %{account_id: account_id} <- conn.assigns[:current_issuer_account],
+    with %{user_id: user_id} <- conn.assigns[:current_user],
          workspace_id when is_binary(workspace_id) <- resolve_workspace_id(conn),
-         {:ok, "admin"} <- Workspaces.member_role(workspace_id, account_id) do
+         {:ok, "admin"} <- Workspaces.member_role(workspace_id, user_id) do
       conn
       |> assign(:current_workspace_id, workspace_id)
       |> assign(:current_workspace_role, "admin")

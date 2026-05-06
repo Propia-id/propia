@@ -9,8 +9,8 @@ defmodule Sovra.Organizations do
 
   import Ecto.Query
 
+  alias Sovra.Accounts.User
   alias Sovra.Organizations.{Organization, OrganizationMember}
-  alias Sovra.Issuer.IssuerAccount
   alias Sovra.Repo
 
   def create_organization(user_id, attrs) do
@@ -79,11 +79,11 @@ defmodule Sovra.Organizations do
   Returns members of an organization with their role and a placeholder status.
 
   TODO: when the user-accounts issue introduces a status column on
-  `issuer_accounts`, replace the literal with the real value.
+  `users`, replace the literal with the real value.
   """
   def list_members(org_id) do
     from(m in OrganizationMember,
-      join: u in IssuerAccount,
+      join: u in User,
       on: u.id == m.user_id,
       where: m.organization_id == ^org_id,
       order_by: [asc: u.email],

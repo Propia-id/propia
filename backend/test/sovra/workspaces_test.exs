@@ -1,14 +1,14 @@
 defmodule Sovra.WorkspacesTest do
   use Sovra.DataCase, async: false
 
-  alias Sovra.Issuer.IssuerAccount
+  alias Sovra.Accounts.User
   alias Sovra.Organizations.Organization
   alias Sovra.Workspaces
   alias Sovra.Workspaces.WorkspaceMember
 
   defp create_user(suffix \\ "#{System.unique_integer([:positive])}") do
     {:ok, account} =
-      IssuerAccount.admin_changeset(%{
+      User.admin_changeset(%{
         email: "user-#{suffix}@example.com",
         password: "a-very-strong-password-123"
       })

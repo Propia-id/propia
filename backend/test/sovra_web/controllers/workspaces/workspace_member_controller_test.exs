@@ -1,14 +1,14 @@
 defmodule SovraWeb.Workspaces.WorkspaceMemberControllerTest do
   use SovraWeb.ConnCase, async: false
 
-  alias Sovra.Auth.IssuerSession
-  alias Sovra.Issuer.IssuerAccount
+  alias Sovra.Accounts.User
+  alias Sovra.Auth.UserSession
   alias Sovra.Organizations.Organization
   alias Sovra.Workspaces
 
   defp user(suffix) do
     {:ok, account} =
-      IssuerAccount.admin_changeset(%{
+      User.admin_changeset(%{
         email: "#{suffix}-#{System.unique_integer([:positive])}@example.com",
         password: "a-very-strong-password-123"
       })
@@ -28,7 +28,7 @@ defmodule SovraWeb.Workspaces.WorkspaceMemberControllerTest do
     {:ok, %{workspace: ws}} =
       Workspaces.create_workspace(organization.id, %{name: "Acme"}, owner.id)
 
-    {:ok, token} = IssuerSession.create(owner.id, ws.id, "issuer")
+    {:ok, token} = UserSession.create(owner.id, ws.id, owner.is_admin)
 
     %{workspace: ws, owner: owner, token: token}
   end
@@ -98,7 +98,7 @@ defmodule SovraWeb.Workspaces.WorkspaceMemberControllerTest do
   test "plain member cannot add another member", %{conn: conn, workspace: ws} do
     member = user("member")
     {:ok, _} = Workspaces.add_member(ws.id, member.id, "member")
-    {:ok, member_token} = IssuerSession.create(member.id, ws.id, "issuer")
+    {:ok, member_token} = UserSession.create(member.id, ws.id, member.is_admin)
 
     conn =
       conn

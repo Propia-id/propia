@@ -5,7 +5,7 @@ defmodule SovraWeb.Organizations.OrganizationController do
   alias Sovra.Organizations
 
   tags(["Organizations"])
-  security([%{"IssuerCookieAuth" => []}])
+  security([%{"UserCookieAuth" => []}])
 
   @org_schema %OpenApiSpex.Schema{
     type: :object,
@@ -155,7 +155,7 @@ defmodule SovraWeb.Organizations.OrganizationController do
   )
 
   def create(conn, params) do
-    user_id = conn.assigns.current_issuer_account.account_id
+    user_id = conn.assigns.current_user.user_id
 
     attrs = %{
       name: params["name"],
@@ -175,13 +175,13 @@ defmodule SovraWeb.Organizations.OrganizationController do
   end
 
   def index(conn, _params) do
-    user_id = conn.assigns.current_issuer_account.account_id
+    user_id = conn.assigns.current_user.user_id
     organizations = Organizations.list_organizations_for_user(user_id)
     json(conn, %{organizations: organizations})
   end
 
   def show(conn, %{"org_id" => org_id}) do
-    user_id = conn.assigns.current_issuer_account.account_id
+    user_id = conn.assigns.current_user.user_id
 
     with {:ok, role} <- Organizations.member_role(org_id, user_id),
          {:ok, org} <- Organizations.get_organization(org_id) do

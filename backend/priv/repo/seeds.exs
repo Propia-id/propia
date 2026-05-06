@@ -2,10 +2,10 @@
 #
 #     mix run priv/repo/seeds.exs
 
-alias Sovra.Issuer.Accounts
+alias Sovra.Accounts
 
 # Create a default admin account for development
-case Accounts.create_admin("admin@sovra.dev", "password1234") do
+case Accounts.create_admin(%{email: "admin@sovra.dev", password: "password1234"}) do
   {:ok, account} ->
     IO.puts("Admin account created: #{account.email}")
 

@@ -1,14 +1,14 @@
 defmodule SovraWeb.Plugs.RequireOrgAdminPlugTest do
   use SovraWeb.ConnCase, async: true
 
-  alias Sovra.Issuer.IssuerAccount
+  alias Sovra.Accounts.User
   alias Sovra.Organizations
   alias Sovra.Repo
   alias SovraWeb.Plugs.RequireOrgAdminPlug
 
   defp user(suffix) do
     {:ok, account} =
-      IssuerAccount.admin_changeset(%{
+      User.admin_changeset(%{
         email: "#{suffix}-#{System.unique_integer([:positive])}@example.com",
         password: "a-very-strong-password-123"
       })
@@ -20,10 +20,10 @@ defmodule SovraWeb.Plugs.RequireOrgAdminPlugTest do
   defp conn_for(conn, account, org_id) do
     conn
     |> Map.put(:path_params, %{"org_id" => org_id})
-    |> assign(:current_issuer_account, %{
-      account_id: account.id,
+    |> assign(:current_user, %{
+      user_id: account.id,
       workspace_id: nil,
-      role: account.role
+      is_admin: account.is_admin
     })
   end
 
@@ -86,7 +86,7 @@ defmodule SovraWeb.Plugs.RequireOrgAdminPlugTest do
 
   test "rejects platform admin with no org membership (no bypass)", %{conn: conn} do
     owner = user("owner")
-    admin = user("platform-admin") |> Ecto.Changeset.change(role: "admin") |> Repo.update!()
+    admin = user("platform-admin")
 
     {:ok, %{organization: org}} =
       Organizations.create_organization(owner.id, %{name: "Acme"})

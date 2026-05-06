@@ -27,6 +27,12 @@ if base_url = System.get_env("ISSUER_BASE_URL") do
   config :sovra, :issuer, base_url: base_url
 end
 
+# Issuer frontend URL — used for CORS allow-list and reset-password links.
+if frontend_url = System.get_env("ISSUER_FRONTEND_URL") do
+  config :sovra, :issuer_frontend_url, frontend_url
+  config :cors_plug, origin: [frontend_url], credentials: true, max_age: 86_400
+end
+
 # Vault/OpenBao config — available in all environments when VAULT_ADDR is set
 if System.get_env("VAULT_ADDR") do
   config :sovra, :vault,

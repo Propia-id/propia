@@ -15,10 +15,10 @@ defmodule SovraWeb.ApiSpec do
       paths: Paths.from_router(SovraWeb.Router),
       components: %Components{
         securitySchemes: %{
-          "IssuerCookieAuth" => %SecurityScheme{
+          "UserCookieAuth" => %SecurityScheme{
             type: "apiKey",
             in: "cookie",
-            name: "issuer_session"
+            name: "session"
           },
           "BearerAuth" => %SecurityScheme{
             type: "http",

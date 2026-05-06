@@ -70,7 +70,10 @@ defmodule Sovra.MixProject do
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"},
       {:open_api_spex, "~> 3.21"},
-      {:oban, "~> 2.18"}
+      {:oban, "~> 2.18"},
+      {:swoosh, "~> 1.16"},
+      {:phoenix_swoosh, "~> 1.2"},
+      {:gen_smtp, "~> 1.2"}
     ]
   end
 

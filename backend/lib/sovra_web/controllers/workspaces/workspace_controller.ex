@@ -2,11 +2,11 @@ defmodule SovraWeb.Workspaces.WorkspaceController do
   use SovraWeb, :controller
   use OpenApiSpex.ControllerSpecs
 
-  alias Sovra.Auth.IssuerSession
+  alias Sovra.Auth.UserSession
   alias Sovra.Workspaces
 
   tags(["Workspaces"])
-  security([%{"IssuerCookieAuth" => []}])
+  security([%{"UserCookieAuth" => []}])
 
   @workspace_schema %OpenApiSpex.Schema{
     type: :object,
@@ -182,7 +182,7 @@ defmodule SovraWeb.Workspaces.WorkspaceController do
     }
   )
 
-  @cookie_name "issuer_session"
+  @cookie_name "session"
   @cookie_opts [
     http_only: true,
     secure: Application.compile_env(:sovra, :env) == :prod,
@@ -192,7 +192,7 @@ defmodule SovraWeb.Workspaces.WorkspaceController do
   ]
 
   def index(conn, _params) do
-    user_id = conn.assigns.current_issuer_account.account_id
+    user_id = conn.assigns.current_user.user_id
     workspaces = Workspaces.list_workspaces_for_user(user_id)
     json(conn, %{workspaces: workspaces})
   end
@@ -207,7 +207,7 @@ defmodule SovraWeb.Workspaces.WorkspaceController do
   end
 
   def create(conn, %{"org_id" => org_id} = params) do
-    user_id = conn.assigns.current_issuer_account.account_id
+    user_id = conn.assigns.current_user.user_id
 
     attrs = %{
       name: params["name"],
@@ -234,7 +234,7 @@ defmodule SovraWeb.Workspaces.WorkspaceController do
   end
 
   def show(conn, %{"workspace_id" => workspace_id}) do
-    user_id = conn.assigns.current_issuer_account.account_id
+    user_id = conn.assigns.current_user.user_id
 
     with {:ok, role} <- Workspaces.member_role(workspace_id, user_id),
          {:ok, workspace} <- Workspaces.get_workspace(workspace_id) do
@@ -285,12 +285,12 @@ defmodule SovraWeb.Workspaces.WorkspaceController do
   end
 
   def switch(conn, %{"workspace_id" => workspace_id}) do
-    %{account_id: account_id, role: role} = conn.assigns.current_issuer_account
+    %{user_id: user_id, is_admin: is_admin} = conn.assigns.current_user
 
-    with {:ok, _role} <- Workspaces.member_role(workspace_id, account_id),
+    with {:ok, _role} <- Workspaces.member_role(workspace_id, user_id),
          {:ok, workspace} <- Workspaces.get_workspace(workspace_id),
-         {:ok, new_token} <- IssuerSession.create(account_id, workspace_id, role) do
-      _ = IssuerSession.revoke(conn.assigns[:current_session_token])
+         {:ok, new_token} <- UserSession.create(user_id, workspace_id, is_admin) do
+      _ = UserSession.revoke(conn.assigns[:current_session_token])
 
       conn
       |> put_resp_cookie(@cookie_name, new_token, @cookie_opts)

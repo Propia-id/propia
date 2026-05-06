@@ -4,7 +4,7 @@ defmodule Sovra.Verification.ExpiredSessionsSweeperTest do
 
   import Ecto.Query
 
-  alias Sovra.Issuer.IssuerAccount
+  alias Sovra.Accounts.User
   alias Sovra.Organizations.Organization
   alias Sovra.Verification
   alias Sovra.Verification.ExpiredSessionsSweeper
@@ -13,7 +13,7 @@ defmodule Sovra.Verification.ExpiredSessionsSweeperTest do
 
   defp create_workspace do
     {:ok, account} =
-      IssuerAccount.admin_changeset(%{
+      User.admin_changeset(%{
         email: "user-#{System.unique_integer([:positive])}@example.com",
         password: "a-very-strong-password-123"
       })

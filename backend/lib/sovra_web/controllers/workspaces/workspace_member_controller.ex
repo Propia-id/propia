@@ -2,12 +2,12 @@ defmodule SovraWeb.Workspaces.WorkspaceMemberController do
   use SovraWeb, :controller
   use OpenApiSpex.ControllerSpecs
 
-  alias Sovra.Issuer.IssuerAccount
+  alias Sovra.Accounts.User
   alias Sovra.Repo
   alias Sovra.Workspaces
 
   tags(["Workspace Members"])
-  security([%{"IssuerCookieAuth" => []}])
+  security([%{"UserCookieAuth" => []}])
 
   @member %OpenApiSpex.Schema{
     type: :object,
@@ -107,11 +107,11 @@ defmodule SovraWeb.Workspaces.WorkspaceMemberController do
   def add(conn, %{"workspace_id" => workspace_id, "email" => email, "role" => role}) do
     email_downcased = String.downcase(email)
 
-    case Repo.get_by(IssuerAccount, email: email_downcased) do
+    case Repo.get_by(User, email: email_downcased) do
       nil ->
         conn |> put_status(404) |> json(%{error: "user_not_found"})
 
-      %IssuerAccount{id: user_id, email: user_email} ->
+      %User{id: user_id, email: user_email} ->
         case Workspaces.add_member(workspace_id, user_id, role) do
           {:ok, _} ->
             conn
@@ -133,7 +133,7 @@ defmodule SovraWeb.Workspaces.WorkspaceMemberController do
       }) do
     case Workspaces.update_member_role(workspace_id, user_id, role) do
       {:ok, _member} ->
-        case Repo.get(IssuerAccount, user_id) do
+        case Repo.get(User, user_id) do
           nil ->
             conn |> put_status(404) |> json(%{error: "user_not_found"})
 

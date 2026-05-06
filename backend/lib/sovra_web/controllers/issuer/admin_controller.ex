@@ -2,12 +2,12 @@ defmodule SovraWeb.Issuer.AdminController do
   use SovraWeb, :controller
   use OpenApiSpex.ControllerSpecs
 
+  alias Sovra.Accounts
   alias Sovra.Issuer
-  alias Sovra.Issuer.Accounts
   alias Sovra.Workspaces
 
   tags(["Issuer Admin"])
-  security([%{"IssuerCookieAuth" => []}])
+  security([%{"UserCookieAuth" => []}])
 
   operation(:create_issuer_account,
     summary: "Create issuer account (super-admin)",
@@ -20,7 +20,8 @@ defmodule SovraWeb.Issuer.AdminController do
          properties: %{
            email: %OpenApiSpex.Schema{type: :string, format: :email},
            password: %OpenApiSpex.Schema{type: :string},
-           issuer_name: %OpenApiSpex.Schema{type: :string}
+           issuer_name: %OpenApiSpex.Schema{type: :string},
+           full_name: %OpenApiSpex.Schema{type: :string}
          }
        }},
     responses: %{
@@ -261,12 +262,18 @@ defmodule SovraWeb.Issuer.AdminController do
     }
   )
 
-  def create_issuer_account(conn, %{
-        "email" => email,
-        "password" => password,
-        "issuer_name" => issuer_name
-      }) do
-    case Accounts.register_issuer(email, password, issuer_name) do
+  def create_issuer_account(
+        conn,
+        %{"email" => email, "password" => password, "issuer_name" => issuer_name} = params
+      ) do
+    full_name = Map.get(params, "full_name") || email |> String.split("@") |> hd()
+
+    case Accounts.register_user(%{
+           email: email,
+           password: password,
+           full_name: full_name,
+           workspace_name: issuer_name
+         }) do
       {:ok, %{workspace: workspace} = result} ->
         conn
         |> put_status(201)
@@ -303,7 +310,7 @@ defmodule SovraWeb.Issuer.AdminController do
   end
 
   def get_issuer(conn, _params) do
-    workspace_id = conn.assigns.current_issuer_account.workspace_id
+    workspace_id = conn.assigns.current_user.workspace_id
 
     case Workspaces.get_workspace(workspace_id) do
       {:ok, workspace} ->
@@ -321,7 +328,7 @@ defmodule SovraWeb.Issuer.AdminController do
   end
 
   def create_schema(conn, params) do
-    workspace_id = conn.assigns.current_issuer_account.workspace_id
+    workspace_id = conn.assigns.current_user.workspace_id
 
     attrs = %{
       schema_id: params["schema_id"],
@@ -355,7 +362,7 @@ defmodule SovraWeb.Issuer.AdminController do
   end
 
   def list_schemas(conn, _params) do
-    workspace_id = conn.assigns.current_issuer_account.workspace_id
+    workspace_id = conn.assigns.current_user.workspace_id
     schemas = Issuer.list_schemas(workspace_id)
 
     json(conn, %{
@@ -375,7 +382,7 @@ defmodule SovraWeb.Issuer.AdminController do
   end
 
   def delete_schema(conn, %{"id" => schema_id}) do
-    workspace_id = conn.assigns.current_issuer_account.workspace_id
+    workspace_id = conn.assigns.current_user.workspace_id
 
     case Issuer.delete_schema(workspace_id, schema_id) do
       {:ok, _} ->
@@ -513,7 +520,7 @@ defmodule SovraWeb.Issuer.AdminController do
   defp embed_value(other), do: other
 
   def list_offers(conn, _params) do
-    workspace_id = conn.assigns.current_issuer_account.workspace_id
+    workspace_id = conn.assigns.current_user.workspace_id
     offers = Issuer.list_offers(workspace_id)
 
     json(conn, %{

@@ -6,16 +6,16 @@ defmodule SovraWeb.Issuer.AdminCredentialStatusTest do
   use SovraWeb.ConnCase, async: false
   use Oban.Testing, repo: Sovra.Repo
 
-  alias Sovra.Auth.IssuerSession
+  alias Sovra.Accounts.User
+  alias Sovra.Auth.UserSession
   alias Sovra.Issuer
-  alias Sovra.Issuer.IssuerAccount
   alias Sovra.Organizations.Organization
   alias Sovra.Webhooks.DeliveryJob
   alias Sovra.Workspaces
 
   defp user(suffix) do
     {:ok, account} =
-      IssuerAccount.admin_changeset(%{
+      User.admin_changeset(%{
         email: "#{suffix}-#{System.unique_integer([:positive])}@example.com",
         password: "a-very-strong-password-123"
       })
@@ -68,7 +68,7 @@ defmodule SovraWeb.Issuer.AdminCredentialStatusTest do
   defp authed(conn, user, workspace_id),
     do:
       (
-        {:ok, token} = IssuerSession.create(user.id, workspace_id, "issuer")
+        {:ok, token} = UserSession.create(user.id, workspace_id, user.is_admin)
         put_req_header(conn, "authorization", "Bearer #{token}")
       )
 

@@ -51,8 +51,8 @@ defmodule Sovra.Issuer.OID4VCITest do
 
     test "surfaces organization name, logo, and website when present" do
       owner =
-        %Sovra.Issuer.IssuerAccount{}
-        |> Sovra.Issuer.IssuerAccount.admin_changeset(%{
+        %Sovra.Accounts.User{}
+        |> Sovra.Accounts.User.admin_changeset(%{
           email: "owner-#{System.unique_integer([:positive])}@example.com",
           password: "a-very-strong-password-123"
         })
@@ -107,8 +107,8 @@ defmodule Sovra.Issuer.OID4VCITest do
 
     test "omits logo/url when absent on organization" do
       owner =
-        %Sovra.Issuer.IssuerAccount{}
-        |> Sovra.Issuer.IssuerAccount.admin_changeset(%{
+        %Sovra.Accounts.User{}
+        |> Sovra.Accounts.User.admin_changeset(%{
           email: "owner-#{System.unique_integer([:positive])}@example.com",
           password: "a-very-strong-password-123"
         })

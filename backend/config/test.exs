@@ -32,6 +32,13 @@ config :sovra,
 # Oban — manual mode so jobs don't run unless asserted on
 config :sovra, Oban, testing: :manual
 
+# Mailer — Test adapter so emails are captured for assertions
+config :sovra, Sovra.Mailer, adapter: Swoosh.Adapters.Test
+
+# Lower bcrypt cost in tests so the suite stays fast. log_rounds: 4 is a
+# small constant; the prod default of 12 is overridden in config.exs.
+config :bcrypt_elixir, log_rounds: 4
+
 # Print only warnings and errors during test
 config :logger, level: :warning
 

@@ -13,8 +13,15 @@ defmodule SovraWeb.Router do
     plug SovraWeb.Plugs.SessionPlug, max_age: 300
   end
 
-  pipeline :issuer_session do
-    plug SovraWeb.Plugs.IssuerSessionPlug
+  pipeline :user_session do
+    plug SovraWeb.Plugs.OriginCheckPlug
+    plug SovraWeb.Plugs.UserSessionPlug
+  end
+
+  # Public auth routes also need Origin checking on mutations because they
+  # set/clear cookies (login/register/logout/refresh).
+  pipeline :auth_origin_check do
+    plug SovraWeb.Plugs.OriginCheckPlug
   end
 
   pipeline :token_rate_limited do
@@ -58,6 +65,7 @@ defmodule SovraWeb.Router do
   if Application.compile_env(:sovra, :dev_routes) do
     scope "/dev" do
       get "/swaggerui", OpenApiSpex.Plug.SwaggerUI, path: "/api/openapi"
+      forward "/mailbox", Plug.Swoosh.MailboxPreview
     end
   end
 
@@ -112,17 +120,21 @@ defmodule SovraWeb.Router do
     post "/token", CredentialController, :token
   end
 
-  # Issuer auth (public, rate limited)
-  scope "/api/v1/issuer/auth", SovraWeb.Issuer do
-    pipe_through [:api, :auth_rate_limited]
+  # Public auth endpoints (rate limited + Origin allow-list on mutations)
+  scope "/api/v1/auth", SovraWeb do
+    pipe_through [:api, :auth_rate_limited, :auth_origin_check]
 
+    post "/register", AuthController, :register
     post "/login", AuthController, :login
     post "/logout", AuthController, :logout
+    post "/refresh", AuthController, :refresh
+    post "/password/reset-request", AuthController, :password_reset_request
+    post "/password/reset", AuthController, :password_reset_confirm
   end
 
   # Issuer admin API (authenticated)
   scope "/api/v1/issuer/admin", SovraWeb.Issuer do
-    pipe_through [:api, :issuer_session]
+    pipe_through [:api, :user_session]
 
     get "/profile", AdminController, :get_issuer
     post "/schemas", AdminController, :create_schema
@@ -140,7 +152,7 @@ defmodule SovraWeb.Router do
   # Verification listings on the dashboard (JWT session) — reuses the
   # workspace-scoped controller actions also exposed under /api/v1/verifier/.
   scope "/api/v1/issuer/admin", SovraWeb.Verifier do
-    pipe_through [:api, :issuer_session]
+    pipe_through [:api, :user_session]
 
     get "/verifications", VerificationController, :index
     get "/verifications/:id", VerificationController, :show
@@ -148,7 +160,7 @@ defmodule SovraWeb.Router do
 
   # Admin-only credential status changes (workspace admin required)
   scope "/api/v1/issuer/admin", SovraWeb.Issuer do
-    pipe_through [:api, :issuer_session, :require_workspace_admin]
+    pipe_through [:api, :user_session, :require_workspace_admin]
 
     put "/credentials/:id/status/:status", AdminController, :update_credential_status
   end
@@ -166,7 +178,7 @@ defmodule SovraWeb.Router do
 
   # Super-admin API (admin role required)
   scope "/api/v1/issuer/admin", SovraWeb.Issuer do
-    pipe_through [:api, :issuer_session, :require_admin]
+    pipe_through [:api, :user_session, :require_admin]
 
     get "/issuers", AdminController, :list_issuers
     post "/issuers", AdminController, :create_issuer_account
@@ -174,7 +186,7 @@ defmodule SovraWeb.Router do
 
   # Organizations API (authenticated; any member can read their orgs)
   scope "/api/v1/organizations", SovraWeb.Organizations do
-    pipe_through [:api, :issuer_session]
+    pipe_through [:api, :user_session]
 
     post "/", OrganizationController, :create
     get "/", OrganizationController, :index
@@ -183,7 +195,7 @@ defmodule SovraWeb.Router do
 
   # Organization admin operations (owner or admin)
   scope "/api/v1/organizations", SovraWeb.Organizations do
-    pipe_through [:api, :issuer_session, :require_org_admin]
+    pipe_through [:api, :user_session, :require_org_admin]
 
     patch "/:org_id", OrganizationController, :update
     get "/:org_id/members", OrganizationController, :list_members
@@ -191,14 +203,14 @@ defmodule SovraWeb.Router do
 
   # Organization owner-only operations
   scope "/api/v1/organizations", SovraWeb.Organizations do
-    pipe_through [:api, :issuer_session, :require_org_owner]
+    pipe_through [:api, :user_session, :require_org_owner]
 
     post "/:org_id/deactivate", OrganizationController, :deactivate
   end
 
   # Org-scoped workspace collection ops (admin/owner only)
   scope "/api/v1/organizations/:org_id/workspaces", SovraWeb.Workspaces do
-    pipe_through [:api, :issuer_session, :require_org_admin]
+    pipe_through [:api, :user_session, :require_org_admin]
 
     get "/", WorkspaceController, :list
     post "/", WorkspaceController, :create
@@ -206,7 +218,7 @@ defmodule SovraWeb.Router do
 
   # Workspace API — any authenticated user (reads for members)
   scope "/api/v1/workspaces", SovraWeb.Workspaces do
-    pipe_through [:api, :issuer_session]
+    pipe_through [:api, :user_session]
 
     get "/", WorkspaceController, :index
     get "/:workspace_id", WorkspaceController, :show
@@ -215,7 +227,7 @@ defmodule SovraWeb.Router do
 
   # Workspace admin operations (workspace admin required)
   scope "/api/v1/workspaces", SovraWeb.Workspaces do
-    pipe_through [:api, :issuer_session, :require_workspace_admin]
+    pipe_through [:api, :user_session, :require_workspace_admin]
 
     patch "/:workspace_id", WorkspaceController, :update
 

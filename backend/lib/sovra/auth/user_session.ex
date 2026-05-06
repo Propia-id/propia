@@ -1,7 +1,8 @@
-defmodule Sovra.Auth.IssuerSession do
+defmodule Sovra.Auth.UserSession do
   @moduledoc """
-  JWT-based session tokens for issuer dashboard authentication.
-  Tokens are HMAC-SHA256 signed, 1-hour expiry, with revocation support.
+  Short-lived JWT access tokens for end-user authentication.
+  Tokens are HMAC-SHA256 signed, 1-hour expiry, with revocation support
+  via the token denylist.
   """
 
   require Logger
@@ -10,16 +11,16 @@ defmodule Sovra.Auth.IssuerSession do
 
   @session_ttl 3600
 
-  def create(account_id, workspace_id, role \\ "issuer") do
+  def create(user_id, workspace_id, is_admin \\ false) do
     now = System.system_time(:second)
 
     claims = %{
-      "sub" => account_id,
+      "sub" => user_id,
       "workspace_id" => workspace_id,
-      "role" => role,
-      "scope" => "issuer_admin",
-      "iss" => "sovra-issuer",
-      "aud" => "sovra-issuer",
+      "is_admin" => is_admin,
+      "scope" => "user",
+      "iss" => "sovra",
+      "aud" => "sovra",
       "jti" => generate_jti(),
       "iat" => now,
       "exp" => now + @session_ttl
@@ -41,9 +42,9 @@ defmodule Sovra.Auth.IssuerSession do
            fields:
              %{
                "sub" => sub,
-               "scope" => "issuer_admin",
-               "iss" => "sovra-issuer",
-               "aud" => "sovra-issuer",
+               "scope" => "user",
+               "iss" => "sovra",
+               "aud" => "sovra",
                "exp" => exp
              } = fields
          }, _jws} ->
@@ -57,9 +58,9 @@ defmodule Sovra.Auth.IssuerSession do
             true ->
               {:ok,
                %{
-                 account_id: sub,
+                 user_id: sub,
                  workspace_id: fields["workspace_id"],
-                 role: fields["role"] || "issuer"
+                 is_admin: fields["is_admin"] || false
                }}
           end
 
@@ -68,7 +69,7 @@ defmodule Sovra.Auth.IssuerSession do
       end
     rescue
       e in [ArgumentError, FunctionClauseError, ErlangError] ->
-        Logger.warning("Issuer session verification failed: #{inspect(e)}")
+        Logger.warning("User session verification failed: #{inspect(e)}")
         {:error, :invalid}
     end
   end
@@ -92,7 +93,7 @@ defmodule Sovra.Auth.IssuerSession do
   end
 
   defp signing_key do
-    Sovra.Auth.KeyDerivation.derive_key(:issuer_session) |> JOSE.JWK.from_oct()
+    Sovra.Auth.KeyDerivation.derive_key(:user_session) |> JOSE.JWK.from_oct()
   end
 
   defp generate_jti, do: Base.url_encode64(:crypto.strong_rand_bytes(16), padding: false)

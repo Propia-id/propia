@@ -1,7 +1,7 @@
 defmodule Sovra.Workspaces.ApiKeysTest do
   use Sovra.DataCase, async: false
 
-  alias Sovra.Issuer.IssuerAccount
+  alias Sovra.Accounts.User
   alias Sovra.Organizations.Organization
   alias Sovra.Workspaces
   alias Sovra.Workspaces.ApiKey
@@ -9,7 +9,7 @@ defmodule Sovra.Workspaces.ApiKeysTest do
 
   defp setup_workspace(_context) do
     {:ok, user} =
-      IssuerAccount.admin_changeset(%{
+      User.admin_changeset(%{
         email: "user-#{System.unique_integer([:positive])}@example.com",
         password: "a-very-strong-password-123"
       })

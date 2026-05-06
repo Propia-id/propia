@@ -8,13 +8,13 @@ defmodule SovraWeb.Verify.StatusListControllerTest do
   """
   use SovraWeb.ConnCase, async: false
 
-  alias Sovra.Issuer.IssuerAccount
+  alias Sovra.Accounts.User
   alias Sovra.Organizations.Organization
   alias Sovra.Workspaces
 
   defp create_workspace do
     {:ok, account} =
-      IssuerAccount.admin_changeset(%{
+      User.admin_changeset(%{
         email: "user-#{System.unique_integer([:positive])}@example.com",
         password: "a-very-strong-password-123"
       })

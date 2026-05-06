@@ -1,15 +1,15 @@
 defmodule SovraWeb.Workspaces.ApiKeyControllerTest do
   use SovraWeb.ConnCase, async: false
 
-  alias Sovra.Auth.IssuerSession
-  alias Sovra.Issuer.IssuerAccount
+  alias Sovra.Accounts.User
+  alias Sovra.Auth.UserSession
   alias Sovra.Organizations.Organization
   alias Sovra.Workspaces
   alias Sovra.Workspaces.ApiKeys
 
   defp setup_env(_) do
     {:ok, owner} =
-      IssuerAccount.admin_changeset(%{
+      User.admin_changeset(%{
         email: "o-#{System.unique_integer([:positive])}@example.com",
         password: "a-very-strong-password-123"
       })
@@ -23,7 +23,7 @@ defmodule SovraWeb.Workspaces.ApiKeyControllerTest do
     {:ok, %{workspace: ws}} =
       Workspaces.create_workspace(organization.id, %{name: "Acme"}, owner.id)
 
-    {:ok, token} = IssuerSession.create(owner.id, ws.id, "issuer")
+    {:ok, token} = UserSession.create(owner.id, ws.id, owner.is_admin)
 
     %{workspace: ws, owner: owner, token: token}
   end
@@ -65,14 +65,14 @@ defmodule SovraWeb.Workspaces.ApiKeyControllerTest do
 
   test "plain member cannot create keys", %{conn: conn, workspace: ws} do
     {:ok, member} =
-      IssuerAccount.admin_changeset(%{
+      User.admin_changeset(%{
         email: "m-#{System.unique_integer([:positive])}@example.com",
         password: "a-very-strong-password-123"
       })
       |> Sovra.Repo.insert()
 
     {:ok, _} = Workspaces.add_member(ws.id, member.id, "member")
-    {:ok, member_token} = IssuerSession.create(member.id, ws.id, "issuer")
+    {:ok, member_token} = UserSession.create(member.id, ws.id, member.is_admin)
 
     conn =
       conn

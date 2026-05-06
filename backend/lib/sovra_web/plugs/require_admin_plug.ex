@@ -1,7 +1,7 @@
 defmodule SovraWeb.Plugs.RequireAdminPlug do
   @moduledoc """
   Plug that restricts access to admin-only routes.
-  Must be used after IssuerSessionPlug.
+  Must be used after UserSessionPlug.
   """
 
   import Plug.Conn
@@ -10,8 +10,8 @@ defmodule SovraWeb.Plugs.RequireAdminPlug do
   def init(opts), do: opts
 
   def call(conn, _opts) do
-    case conn.assigns[:current_issuer_account] do
-      %{role: "admin"} ->
+    case conn.assigns[:current_user] do
+      %{is_admin: true} ->
         conn
 
       _ ->

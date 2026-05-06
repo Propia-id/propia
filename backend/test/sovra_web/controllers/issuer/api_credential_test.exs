@@ -16,7 +16,7 @@ defmodule SovraWeb.Issuer.ApiCredentialTest do
 
   alias Sovra.Issuer
   alias Sovra.Issuer.IssuedCredential
-  alias Sovra.Issuer.IssuerAccount
+  alias Sovra.Accounts.User
   alias Sovra.Organizations.Organization
   alias Sovra.Webhooks.DeliveryJob
   alias Sovra.Workspaces
@@ -24,7 +24,7 @@ defmodule SovraWeb.Issuer.ApiCredentialTest do
 
   defp setup_workspace_with_credential do
     {:ok, owner} =
-      IssuerAccount.admin_changeset(%{
+      User.admin_changeset(%{
         email: "owner-#{System.unique_integer([:positive])}@example.com",
         password: "a-very-strong-password-123"
       })
@@ -66,7 +66,7 @@ defmodule SovraWeb.Issuer.ApiCredentialTest do
 
   defp setup_workspace_with_pending_offer do
     {:ok, owner} =
-      IssuerAccount.admin_changeset(%{
+      User.admin_changeset(%{
         email: "owner-#{System.unique_integer([:positive])}@example.com",
         password: "a-very-strong-password-123"
       })

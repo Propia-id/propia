@@ -1,7 +1,7 @@
-defmodule SovraWeb.Plugs.IssuerSessionPlug do
+defmodule SovraWeb.Plugs.UserSessionPlug do
   @moduledoc """
-  Plug that authenticates issuer dashboard requests via session JWT.
-  Reads from `issuer_session` cookie first, falls back to `Authorization: Bearer` header.
+  Plug that authenticates user requests via session JWT.
+  Reads from `session` cookie first, falls back to `Authorization: Bearer` header.
   """
 
   import Plug.Conn
@@ -13,20 +13,20 @@ defmodule SovraWeb.Plugs.IssuerSessionPlug do
     conn = fetch_cookies(conn)
 
     token =
-      conn.cookies["issuer_session"] ||
+      conn.cookies["session"] ||
         case get_req_header(conn, "authorization") do
           ["Bearer " <> t] -> t
           _ -> nil
         end
 
     if token do
-      case Sovra.Auth.IssuerSession.verify(token) do
-        {:ok, %{account_id: account_id, workspace_id: workspace_id, role: role}} ->
+      case Sovra.Auth.UserSession.verify(token) do
+        {:ok, %{user_id: user_id, workspace_id: workspace_id, is_admin: is_admin}} ->
           conn
-          |> assign(:current_issuer_account, %{
-            account_id: account_id,
+          |> assign(:current_user, %{
+            user_id: user_id,
             workspace_id: workspace_id,
-            role: role
+            is_admin: is_admin
           })
           |> assign(:current_workspace_id, workspace_id)
           |> assign(:current_auth_method, :session)

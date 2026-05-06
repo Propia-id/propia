@@ -1,7 +1,7 @@
 defmodule SovraWeb.Plugs.RequireOrgAdminPlug do
   @moduledoc """
   Restricts access to organization endpoints to `owner` or `admin` members.
-  Must be used after `IssuerSessionPlug`. Does NOT bypass for platform
+  Must be used after `UserSessionPlug`. Does NOT bypass for platform
   super-admins — Sovra admins must be explicit org members to act on one.
   """
 
@@ -13,9 +13,9 @@ defmodule SovraWeb.Plugs.RequireOrgAdminPlug do
   def init(opts), do: opts
 
   def call(conn, _opts) do
-    with %{account_id: account_id} <- conn.assigns[:current_issuer_account],
+    with %{user_id: user_id} <- conn.assigns[:current_user],
          org_id when is_binary(org_id) <- conn.path_params["org_id"] || conn.params["org_id"] do
-      case Organizations.member_role(org_id, account_id) do
+      case Organizations.member_role(org_id, user_id) do
         {:ok, role} when role in ~w(owner admin) ->
           assign(conn, :current_org_role, role)
 

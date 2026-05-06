@@ -1,7 +1,7 @@
 defmodule Sovra.OrganizationsTest do
   use Sovra.DataCase, async: true
 
-  alias Sovra.Issuer.IssuerAccount
+  alias Sovra.Accounts.User
   alias Sovra.Organizations
   alias Sovra.Organizations.{Organization, OrganizationMember}
 
@@ -9,7 +9,7 @@ defmodule Sovra.OrganizationsTest do
     # Use admin_changeset (the only path that doesn't require a workspace),
     # since we're testing Organizations in isolation from Workspaces here.
     {:ok, account} =
-      IssuerAccount.admin_changeset(%{
+      User.admin_changeset(%{
         email: "user-#{suffix}@example.com",
         password: "a-very-strong-password-123"
       })

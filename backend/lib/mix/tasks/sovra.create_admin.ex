@@ -18,7 +18,7 @@ defmodule Mix.Tasks.Sovra.CreateAdmin do
   def run([email, password]) do
     Mix.Task.run("app.start")
 
-    case Sovra.Issuer.Accounts.create_admin(email, password) do
+    case Sovra.Accounts.create_admin(%{email: email, password: password}) do
       {:ok, account} ->
         Mix.shell().info("Admin account created: #{account.email} (id: #{account.id})")
 

@@ -4,7 +4,7 @@ defmodule SovraWeb.Verify.DirectPostControllerTest do
 
   alias Sovra.Crypto.P256
   alias Sovra.Issuer
-  alias Sovra.Issuer.IssuerAccount
+  alias Sovra.Accounts.User
   alias Sovra.Organizations.Organization
   alias Sovra.Verification
   alias Sovra.Workspaces
@@ -47,7 +47,7 @@ defmodule SovraWeb.Verify.DirectPostControllerTest do
 
   defp create_workspace(name) do
     {:ok, account} =
-      IssuerAccount.admin_changeset(%{
+      User.admin_changeset(%{
         email: "user-#{System.unique_integer([:positive])}@example.com",
         password: "a-very-strong-password-123"
       })

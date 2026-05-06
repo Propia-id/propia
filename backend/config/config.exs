@@ -47,10 +47,15 @@ config :phoenix, :json_library, Jason
 config :hammer,
   backend: {Hammer.Backend.ETS, [expiry_ms: 300_000, cleanup_interval_ms: 60_000]}
 
-# Oban job runner (webhook delivery + verification housekeeping)
+# Bcrypt — pin the work factor explicitly so a future library default change
+# doesn't silently alter password hashing cost. log_rounds: 12 is bcrypt_elixir's
+# current default (~250ms per hash on modern hardware).
+config :bcrypt_elixir, log_rounds: 12
+
+# Oban job runner (webhooks, mailers, verification housekeeping)
 config :sovra, Oban,
   repo: Sovra.Repo,
-  queues: [webhooks: 10, verification: 1],
+  queues: [webhooks: 10, mailers: 10, verification: 1],
   plugins: [
     {Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7},
     {Oban.Plugins.Cron,
@@ -58,6 +63,25 @@ config :sovra, Oban,
        {"* * * * *", Sovra.Verification.ExpiredSessionsSweeper}
      ]}
   ]
+
+# Mailer (Swoosh). Local adapter in dev/test; configure SMTP/Resend/etc. in
+# runtime.exs for prod.
+config :sovra, Sovra.Mailer, adapter: Swoosh.Adapters.Local
+
+config :swoosh, :api_client, false
+
+# Frontend URL used when building reset-password links etc.
+config :sovra,
+       :issuer_frontend_url,
+       System.get_env("ISSUER_FRONTEND_URL", "http://localhost:5173")
+
+# CORS — explicit allow-list for cross-origin requests with credentials.
+# In dev we permit the issuer frontend origin and a couple of common alt ports;
+# prod is overridden via runtime.exs.
+config :cors_plug,
+  origin: [System.get_env("ISSUER_FRONTEND_URL", "http://localhost:5173")],
+  credentials: true,
+  max_age: 86_400
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.

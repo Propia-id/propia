@@ -1,15 +1,15 @@
 defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
   use SovraWeb.ConnCase, async: false
 
-  alias Sovra.Auth.IssuerSession
-  alias Sovra.Issuer.IssuerAccount
+  alias Sovra.Accounts.User
+  alias Sovra.Auth.UserSession
   alias Sovra.Organizations
   alias Sovra.Organizations.Organization
   alias Sovra.Workspaces
 
   defp user(suffix) do
     {:ok, account} =
-      IssuerAccount.admin_changeset(%{
+      User.admin_changeset(%{
         email: "#{suffix}-#{System.unique_integer([:positive])}@example.com",
         password: "a-very-strong-password-123"
       })
@@ -44,7 +44,7 @@ defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
   end
 
   defp authed(conn, account, workspace_id \\ nil) do
-    {:ok, token} = IssuerSession.create(account.id, workspace_id, account.role || "issuer")
+    {:ok, token} = UserSession.create(account.id, workspace_id, account.is_admin)
     put_req_header(conn, "authorization", "Bearer #{token}")
   end
 

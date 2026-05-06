@@ -8,11 +8,12 @@ defmodule Sovra.Auth.KeyDerivation do
   scope/audience checks were weakened.
   """
 
-  @type purpose :: :guardian_session | :issuer_session | :oauth_state
+  @type purpose :: :guardian_session | :user_session | :oauth_state | :oban_args
 
   @doc "Derives a 32-byte purpose-specific key via HMAC-SHA256(master, info)."
   @spec derive_key(purpose()) :: binary()
-  def derive_key(purpose) when purpose in [:guardian_session, :issuer_session, :oauth_state] do
+  def derive_key(purpose)
+      when purpose in [:guardian_session, :user_session, :oauth_state, :oban_args] do
     master = Application.fetch_env!(:sovra, :session_secret)
     info = "sovra:" <> Atom.to_string(purpose)
     :crypto.mac(:hmac, :sha256, master, info)

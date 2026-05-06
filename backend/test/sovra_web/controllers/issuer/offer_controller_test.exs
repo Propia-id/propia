@@ -2,16 +2,16 @@ defmodule SovraWeb.Issuer.OfferControllerTest do
   use SovraWeb.ConnCase, async: false
   use Oban.Testing, repo: Sovra.Repo
 
-  alias Sovra.Auth.IssuerSession
+  alias Sovra.Accounts.User
+  alias Sovra.Auth.UserSession
   alias Sovra.Issuer
-  alias Sovra.Issuer.IssuerAccount
   alias Sovra.Organizations.Organization
   alias Sovra.Workspaces
   alias Sovra.Workspaces.ApiKeys
 
   defp create_user do
     {:ok, account} =
-      IssuerAccount.admin_changeset(%{
+      User.admin_changeset(%{
         email: "user-#{System.unique_integer([:positive])}@example.com",
         password: "a-very-strong-password-123"
       })
@@ -52,7 +52,7 @@ defmodule SovraWeb.Issuer.OfferControllerTest do
       %{workspace: ws, user: user} = create_workspace()
       schema = create_schema(ws.id)
 
-      {:ok, token} = IssuerSession.create(user.id, ws.id, "issuer")
+      {:ok, token} = UserSession.create(user.id, ws.id, user.is_admin)
 
       resp =
         conn

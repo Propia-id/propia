@@ -14,8 +14,8 @@ defmodule Sovra.Workspaces do
   alias Sovra.Crypto.HmacKeyStore
   alias Sovra.Crypto.Key
   alias Sovra.Ethereum.DIDRegistry
+  alias Sovra.Accounts.User
   alias Sovra.Issuer.ClaimUtils
-  alias Sovra.Issuer.IssuerAccount
   alias Sovra.Repo
   alias Sovra.Workspaces.Workspace
   alias Sovra.Workspaces.WorkspaceMember
@@ -182,7 +182,7 @@ defmodule Sovra.Workspaces do
 
   def list_members(workspace_id) do
     from(m in WorkspaceMember,
-      join: u in IssuerAccount,
+      join: u in User,
       on: u.id == m.user_id,
       where: m.workspace_id == ^workspace_id,
       order_by: [asc: u.email],

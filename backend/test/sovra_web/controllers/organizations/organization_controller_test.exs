@@ -1,14 +1,14 @@
 defmodule SovraWeb.Organizations.OrganizationControllerTest do
   use SovraWeb.ConnCase, async: true
 
-  alias Sovra.Auth.IssuerSession
-  alias Sovra.Issuer.IssuerAccount
+  alias Sovra.Accounts.User
+  alias Sovra.Auth.UserSession
   alias Sovra.Organizations
   alias Sovra.Repo
 
   defp create_user(suffix) do
     {:ok, account} =
-      IssuerAccount.admin_changeset(%{
+      User.admin_changeset(%{
         email: "#{suffix}-#{System.unique_integer([:positive])}@example.com",
         password: "a-very-strong-password-123"
       })
@@ -18,7 +18,7 @@ defmodule SovraWeb.Organizations.OrganizationControllerTest do
   end
 
   defp authed_conn(conn, account) do
-    {:ok, token} = IssuerSession.create(account.id, nil, account.role || "issuer")
+    {:ok, token} = UserSession.create(account.id, nil, account.is_admin)
 
     conn
     |> put_req_header("authorization", "Bearer #{token}")
@@ -118,12 +118,6 @@ defmodule SovraWeb.Organizations.OrganizationControllerTest do
     } do
       # Platform admin, but NOT a member of this org.
       admin = create_user("platform-admin")
-
-      # Ensure they have platform role "admin".
-      admin =
-        admin
-        |> Ecto.Changeset.change(role: "admin")
-        |> Repo.update!()
 
       conn =
         conn

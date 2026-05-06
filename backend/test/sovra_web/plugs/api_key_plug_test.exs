@@ -1,7 +1,7 @@
 defmodule SovraWeb.Plugs.ApiKeyPlugTest do
   use SovraWeb.ConnCase, async: false
 
-  alias Sovra.Issuer.IssuerAccount
+  alias Sovra.Accounts.User
   alias Sovra.Organizations.Organization
   alias Sovra.Workspaces
   alias Sovra.Workspaces.ApiKeys
@@ -9,7 +9,7 @@ defmodule SovraWeb.Plugs.ApiKeyPlugTest do
 
   defp setup_workspace_and_key(_) do
     {:ok, user} =
-      IssuerAccount.admin_changeset(%{
+      User.admin_changeset(%{
         email: "u-#{System.unique_integer([:positive])}@example.com",
         password: "a-very-strong-password-123"
       })

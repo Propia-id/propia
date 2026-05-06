@@ -2,8 +2,9 @@ defmodule Sovra.IssuerTest do
   use Sovra.DataCase, async: false
   use Oban.Testing, repo: Sovra.Repo
 
+  alias Sovra.Accounts.User
   alias Sovra.Issuer
-  alias Sovra.Issuer.{CredentialOffer, IssuerAccount, TokenHash}
+  alias Sovra.Issuer.{CredentialOffer, TokenHash}
   alias Sovra.Crypto.P256
   alias Sovra.Organizations.Organization
   alias Sovra.Webhooks.DeliveryJob
@@ -16,7 +17,7 @@ defmodule Sovra.IssuerTest do
 
   defp create_test_user do
     {:ok, account} =
-      IssuerAccount.admin_changeset(%{
+      User.admin_changeset(%{
         email: "owner-#{System.unique_integer([:positive])}@example.com",
         password: "a-very-strong-password-123"
       })
