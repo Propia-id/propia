@@ -41,7 +41,7 @@ defmodule Sovra.Issuer.StatusListTest do
 
   defp create_workspace do
     StubHmac.clear_wildcard()
-    fixture_workspace().workspace
+    provision_workspace(fixture_workspace().workspace)
   end
 
   defp create_schema(workspace_id) do

@@ -15,6 +15,12 @@ defmodule SovraWeb.Workspaces.WorkspaceController do
       name: %OpenApiSpex.Schema{type: :string},
       did: %OpenApiSpex.Schema{type: :string, nullable: true},
       status: %OpenApiSpex.Schema{type: :string},
+      provisioning_status: %OpenApiSpex.Schema{
+        type: :string,
+        enum: ["pending", "done", "failed"]
+      },
+      provisioning_error: %OpenApiSpex.Schema{type: :string, nullable: true},
+      provisioned_at: %OpenApiSpex.Schema{type: :string, format: :"date-time", nullable: true},
       webhook_url: %OpenApiSpex.Schema{type: :string, nullable: true},
       organization_id: %OpenApiSpex.Schema{type: :string, format: :uuid},
       role: %OpenApiSpex.Schema{type: :string, nullable: true}
@@ -167,6 +173,24 @@ defmodule SovraWeb.Workspaces.WorkspaceController do
     }
   )
 
+  operation(:retry_provisioning,
+    summary: "Retry workspace provisioning",
+    description:
+      "Re-enqueues the async provisioning job for a workspace whose " <>
+        "`provisioning_status` is `failed`. Org admin/owner only.",
+    parameters: [
+      org_id: [in: :path, type: :string, required: true, description: "Organization UUID"],
+      workspace_id: [in: :path, type: :string, required: true, description: "Workspace UUID"]
+    ],
+    responses: %{
+      200 => {"Re-enqueued", "application/json", @workspace_schema},
+      401 => {"Missing session", "application/json", @error},
+      403 => {"Not an org admin", "application/json", @error},
+      404 => {"Workspace not found in this organization", "application/json", @error},
+      409 => {"Not in failed state", "application/json", @error}
+    }
+  )
+
   operation(:switch,
     summary: "Switch current workspace",
     description:
@@ -284,6 +308,22 @@ defmodule SovraWeb.Workspaces.WorkspaceController do
     end
   end
 
+  def retry_provisioning(conn, %{"org_id" => org_id, "workspace_id" => workspace_id}) do
+    case Workspaces.retry_provisioning(workspace_id, org_id) do
+      {:ok, workspace} ->
+        json(conn, workspace_json(workspace, conn.assigns[:current_org_role]))
+
+      {:error, :workspace_not_found} ->
+        conn |> put_status(404) |> json(%{error: "workspace_not_found"})
+
+      {:error, :organization_deactivated} ->
+        conn |> put_status(409) |> json(%{error: "organization_deactivated"})
+
+      {:error, reason} when reason in [:already_pending, :already_provisioned] ->
+        conn |> put_status(409) |> json(%{error: Atom.to_string(reason)})
+    end
+  end
+
   def switch(conn, %{"workspace_id" => workspace_id}) do
     %{user_id: user_id, is_admin: is_admin} = conn.assigns.current_user
 
@@ -312,11 +352,17 @@ defmodule SovraWeb.Workspaces.WorkspaceController do
       name: workspace.name,
       did: Map.get(workspace, :did),
       status: Map.get(workspace, :status),
+      provisioning_status: Map.get(workspace, :provisioning_status),
+      provisioning_error: Map.get(workspace, :provisioning_error),
+      provisioned_at: format_datetime(Map.get(workspace, :provisioned_at)),
       webhook_url: Map.get(workspace, :webhook_url),
       organization_id: Map.get(workspace, :organization_id),
       role: role
     }
   end
+
+  defp format_datetime(nil), do: nil
+  defp format_datetime(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
 
   defp atomize(attrs) do
     for {k, v} <- attrs, into: %{} do

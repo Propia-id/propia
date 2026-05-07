@@ -11,15 +11,13 @@ defmodule Sovra.Workspaces do
 
   import Ecto.Query
 
-  alias Sovra.Crypto.HmacKeyStore
-  alias Sovra.Crypto.Key
-  alias Sovra.Ethereum.DIDRegistry
   alias Sovra.Accounts.User
-  alias Sovra.Issuer.ClaimUtils
+  alias Sovra.Crypto.HmacKeyStore
   alias Sovra.Issuer.StatusList
   alias Sovra.Repo
   alias Sovra.Workspaces.Workspace
   alias Sovra.Workspaces.WorkspaceMember
+  alias Sovra.Workspaces.WorkspaceProvisioningJob
 
   require Logger
 
@@ -28,27 +26,23 @@ defmodule Sovra.Workspaces do
   founding admin member. Generates a webhook HMAC secret via the configured
   store — the plaintext is returned **exactly once** so the caller can reveal
   it to the user.
+
+  The signing key, EOA, DID, and on-chain registration are produced
+  asynchronously by `Sovra.Workspaces.WorkspaceProvisioningJob`. The
+  workspace is returned with `provisioning_status: "pending"` and nil
+  cryptographic fields; it transitions to `"done"` (or `"failed"`) once the
+  provisioning job runs.
   """
   def create_workspace(organization_id, attrs, owner_user_id) do
-    workspace_uuid = Ecto.UUID.generate()
     name = Map.get(attrs, :name) || Map.get(attrs, "name")
     webhook_url = Map.get(attrs, :webhook_url) || Map.get(attrs, "webhook_url")
 
-    with {:ok, %{key_id: signing_key_id, public_key_x: x, public_key_y: y}} <-
-           Key.generate_key("workspace_#{workspace_uuid}_signing"),
-         {:ok, eoa_address, eoa_key_id} <- generate_eoa_keypair(workspace_uuid),
-         {:ok, %{key_id: webhook_key_id, plaintext: webhook_secret}} <-
+    with {:ok, %{key_id: webhook_key_id, plaintext: webhook_secret}} <-
            HmacKeyStore.generate_hmac_key(),
          {:ok, %{key_id: status_index_key_id}} <- HmacKeyStore.generate_hmac_key() do
       changeset =
         Workspace.create_changeset(%{
           name: name,
-          eoa_address: eoa_address,
-          eoa_key_id: eoa_key_id,
-          signing_key_id: signing_key_id,
-          signing_public_key_x: x,
-          signing_public_key_y: y,
-          did: "did:sovra:#{eoa_address}",
           organization_id: organization_id,
           webhook_url: webhook_url,
           webhook_secret_key_id: webhook_key_id,
@@ -70,26 +64,115 @@ defmodule Sovra.Workspaces do
       |> Ecto.Multi.insert(:status_list_suspension, fn %{workspace: ws} ->
         StatusList.create_changeset(%{workspace_id: ws.id, status_purpose: "suspension"})
       end)
-      |> Ecto.Multi.run(:register_did, fn _repo, %{workspace: workspace} ->
-        case register_did_on_chain(workspace, x, y) do
-          :ok -> {:ok, :registered}
-          {:error, :ethereum_not_configured} -> {:ok, :skipped}
-          {:error, reason} -> {:error, reason}
-        end
+      |> Oban.insert(:provisioning_job, fn %{workspace: ws} ->
+        WorkspaceProvisioningJob.new(%{workspace_id: ws.id})
       end)
       |> Repo.transaction()
       |> case do
         {:ok, %{workspace: workspace}} ->
           {:ok, %{workspace: workspace, webhook_secret: webhook_secret}}
 
-        {:error, :register_did, reason, _} ->
-          {:error, {:chain_registration_failed, reason}}
-
         {:error, _step, changeset, _} ->
           {:error, changeset}
       end
     end
   end
+
+  @doc """
+  Mark a workspace's provisioning as complete. Called by the provisioning
+  job once keys, DID, and on-chain registration have all succeeded. The
+  cryptographic fields must already be persisted on the row by earlier
+  steps of the job; this only flips the status, sets `provisioned_at`, and
+  clears any prior error.
+  """
+  def mark_provisioning_done(workspace_id, %DateTime{} = provisioned_at) do
+    with {:ok, workspace} <- get_workspace(workspace_id) do
+      workspace
+      |> Workspace.provisioning_done_changeset(%{
+        eoa_address: workspace.eoa_address,
+        eoa_key_id: workspace.eoa_key_id,
+        signing_key_id: workspace.signing_key_id,
+        signing_public_key_x: workspace.signing_public_key_x,
+        signing_public_key_y: workspace.signing_public_key_y,
+        did: workspace.did,
+        provisioned_at: provisioned_at
+      })
+      |> Repo.update()
+    end
+  end
+
+  @doc """
+  Mark a workspace's provisioning as permanently failed with a free-form
+  error reason. Called by the provisioning job after Oban exhausts all
+  attempts.
+  """
+  def mark_provisioning_failed(workspace_id, error) when is_binary(error) do
+    with {:ok, workspace} <- get_workspace(workspace_id) do
+      workspace
+      |> Workspace.provisioning_failed_changeset(error)
+      |> Repo.update()
+    end
+  end
+
+  @doc """
+  Reset a `failed` workspace to `pending` and re-enqueue its provisioning
+  job. The workspace must belong to `organization_id` (tenancy enforced
+  here so HTTP plugs can stay generic).
+
+  Returns:
+  - `{:ok, workspace}` when re-enqueued.
+  - `{:error, :workspace_not_found}` when the id doesn't exist or doesn't
+    belong to the organization.
+  - `{:error, :already_pending}` / `{:error, :already_provisioned}` when
+    the row isn't in `failed`.
+  - `{:error, :organization_deactivated}` when the parent organization has
+    been deactivated.
+  """
+  def retry_provisioning(workspace_id, organization_id) do
+    case Repo.get(Workspace, workspace_id) do
+      nil ->
+        {:error, :workspace_not_found}
+
+      %Workspace{organization_id: org_id} when org_id != organization_id ->
+        {:error, :workspace_not_found}
+
+      %Workspace{provisioning_status: "pending"} ->
+        {:error, :already_pending}
+
+      %Workspace{provisioning_status: "done"} ->
+        {:error, :already_provisioned}
+
+      %Workspace{provisioning_status: "failed"} = workspace ->
+        with :ok <- ensure_org_active(workspace.organization_id) do
+          Ecto.Multi.new()
+          |> Ecto.Multi.update(:workspace, Workspace.provisioning_retry_changeset(workspace))
+          |> Oban.insert(:provisioning_job, fn %{workspace: ws} ->
+            WorkspaceProvisioningJob.new(%{workspace_id: ws.id})
+          end)
+          |> Repo.transaction()
+          |> case do
+            {:ok, %{workspace: ws}} -> {:ok, ws}
+            {:error, _step, reason, _} -> {:error, reason}
+          end
+        end
+    end
+  end
+
+  defp ensure_org_active(organization_id) do
+    case Repo.get(Sovra.Organizations.Organization, organization_id) do
+      nil -> {:error, :workspace_not_found}
+      %{status: "deactivated"} -> {:error, :organization_deactivated}
+      _ -> :ok
+    end
+  end
+
+  @doc """
+  Guard for issuer/verifier mutating entry points: rejects workspaces that
+  haven't completed async provisioning. Read flows (listings, lookups)
+  should not call this — they keep working pre-provision.
+  """
+  def assert_provisioned(%Workspace{provisioning_status: "done"}), do: :ok
+  def assert_provisioned(%Workspace{}), do: {:error, :workspace_not_provisioned}
 
   def get_workspace(id) do
     case Repo.get(Workspace, id) do
@@ -146,6 +229,9 @@ defmodule Sovra.Workspaces do
         name: w.name,
         did: w.did,
         status: w.status,
+        provisioning_status: w.provisioning_status,
+        provisioning_error: w.provisioning_error,
+        provisioned_at: w.provisioned_at,
         organization_id: w.organization_id,
         webhook_url: w.webhook_url
       }
@@ -164,6 +250,9 @@ defmodule Sovra.Workspaces do
         name: w.name,
         did: w.did,
         status: w.status,
+        provisioning_status: w.provisioning_status,
+        provisioning_error: w.provisioning_error,
+        provisioned_at: w.provisioned_at,
         organization_id: w.organization_id,
         webhook_url: w.webhook_url,
         role: m.role
@@ -281,48 +370,5 @@ defmodule Sovra.Workspaces do
       select: count()
     )
     |> Repo.one()
-  end
-
-  # ── Private helpers ────────────────────────────────────
-
-  defp generate_eoa_keypair(workspace_uuid) do
-    private_key = :crypto.strong_rand_bytes(32)
-
-    case ExSecp256k1.create_public_key(private_key) do
-      {:ok, public_key} ->
-        <<4, pub_bytes::binary-64>> = public_key
-        address_bytes = ExKeccak.hash_256(pub_bytes) |> binary_part(12, 20)
-        eoa_address = "0x" <> Base.encode16(address_bytes, case: :lower)
-
-        eoa_key_id = "workspace_#{workspace_uuid}_eoa"
-
-        {:ok, eoa_address, eoa_key_id}
-
-      {:error, _} = error ->
-        error
-    end
-  end
-
-  defp register_did_on_chain(workspace, pub_key_x, pub_key_y) do
-    if ethereum_configured?() do
-      service_endpoint = "#{ClaimUtils.base_url()}/#{workspace.did}"
-
-      case DIDRegistry.register_issuer_did(
-             workspace.eoa_address,
-             pub_key_x,
-             pub_key_y,
-             service_endpoint
-           ) do
-        {:ok, _tx_hash} -> :ok
-        {:error, _} = error -> error
-      end
-    else
-      {:error, :ethereum_not_configured}
-    end
-  end
-
-  defp ethereum_configured? do
-    config = Application.get_env(:sovra, :ethereum, [])
-    config[:admin_private_key] != nil and config[:did_registry_address] != nil
   end
 end

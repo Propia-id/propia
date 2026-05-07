@@ -112,6 +112,7 @@ defmodule Sovra.Verification do
     ttl = Keyword.get(opts, :ttl_seconds, @session_ttl_seconds)
 
     with {:ok, workspace} <- Workspaces.get_active_workspace(workspace_id),
+         :ok <- Workspaces.assert_provisioned(workspace),
          :ok <- validate_dcql(dcql_query) do
       nonce = random_token(16)
       state = random_token(16)

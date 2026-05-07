@@ -215,6 +215,10 @@ defmodule SovraWeb.Router do
 
     get "/", WorkspaceController, :list
     post "/", WorkspaceController, :create
+
+    post "/:workspace_id/retry_provisioning",
+         WorkspaceController,
+         :retry_provisioning
   end
 
   # Workspace API — any authenticated user (reads for members)

@@ -6,7 +6,7 @@ defmodule SovraWeb.Verify.RequestControllerTest do
   alias Sovra.Verification
   alias Sovra.Verification.Session
 
-  defp create_workspace, do: fixture_workspace(name: "Verifier").workspace
+  defp create_workspace, do: provision_workspace(fixture_workspace(name: "Verifier").workspace)
 
   defp dcql_query do
     %{

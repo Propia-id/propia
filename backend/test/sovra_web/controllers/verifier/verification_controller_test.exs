@@ -9,7 +9,7 @@ defmodule SovraWeb.Verifier.VerificationControllerTest do
 
   defp create_workspace do
     %{workspace: ws, org: org} = fixture_workspace(name: "Verifier")
-    %{workspace: ws, organization: org}
+    %{workspace: provision_workspace(ws), organization: org}
   end
 
   defp dcql_query do

@@ -6,7 +6,7 @@ defmodule Sovra.Credentials.BitstringStatusListTest do
   alias Sovra.Credentials.BitstringStatusList
   alias Sovra.Credentials.SDJWT, as: SDJWTReader
 
-  defp create_workspace, do: fixture_workspace().workspace
+  defp create_workspace, do: provision_workspace(fixture_workspace().workspace)
 
   describe "encode/1" do
     test "round-trips uint256 words through gzip+base64url with multibase 'u' prefix" do

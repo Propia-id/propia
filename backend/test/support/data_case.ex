@@ -42,6 +42,18 @@ defmodule Sovra.DataCase do
   end
 
   @doc """
+  Drain the workspace provisioning queue and reload the workspace. Use in
+  tests that need a fully provisioned workspace (signing key, EOA, DID,
+  `provisioning_status: "done"`). Relies on the test config wiring of
+  `SovraTest.Ethereum.StubDIDRegistry` so the on-chain step succeeds
+  without a live node.
+  """
+  def provision_workspace(%Sovra.Workspaces.Workspace{} = workspace) do
+    Oban.drain_queue(queue: :provisioning, with_safety: false)
+    Sovra.Repo.reload!(workspace)
+  end
+
+  @doc """
   A helper that transforms changeset errors into a map of messages.
 
       assert {:error, changeset} = Accounts.create_user(%{password: "short"})

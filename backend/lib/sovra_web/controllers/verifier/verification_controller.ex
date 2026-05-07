@@ -227,6 +227,9 @@ defmodule SovraWeb.Verifier.VerificationController do
       {:error, :workspace_inactive} ->
         conn |> put_status(403) |> json(%{error: "workspace_inactive"})
 
+      {:error, :workspace_not_provisioned} ->
+        conn |> put_status(409) |> json(%{error: "workspace_not_provisioned"})
+
       {:error, :organization_inactive} ->
         conn |> put_status(403) |> json(%{error: "organization_inactive"})
 

@@ -86,6 +86,9 @@ defmodule SovraWeb.Issuer.OfferController do
       {:error, :workspace_not_found} ->
         conn |> put_status(404) |> json(%{error: "workspace_not_found"})
 
+      {:error, :workspace_not_provisioned} ->
+        conn |> put_status(409) |> json(%{error: "workspace_not_provisioned"})
+
       {:error, :schema_not_found} ->
         conn |> put_status(404) |> json(%{error: "schema_not_found"})
 

@@ -10,7 +10,7 @@ defmodule SovraWeb.Issuer.OfferControllerTest do
 
   defp create_workspace do
     %{workspace: ws, owner: user} = fixture_workspace(name: "Acme")
-    %{workspace: ws, user: user}
+    %{workspace: provision_workspace(ws), user: user}
   end
 
   defp create_schema(workspace_id) do

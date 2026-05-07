@@ -33,7 +33,7 @@ defmodule Sovra.Verification.VerifierTest do
 
   defp create_user, do: fixture_user()
 
-  defp create_workspace(name), do: fixture_workspace(name: name).workspace
+  defp create_workspace(name), do: provision_workspace(fixture_workspace(name: name).workspace)
 
   defp create_schema(workspace_id) do
     {:ok, schema} =

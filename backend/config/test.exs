@@ -24,6 +24,13 @@ config :sovra,
   key_store: Sovra.Crypto.SoftwareKeyStore,
   hmac_key_store: Sovra.Crypto.DatabaseHmacStore,
   auth_provider: Sovra.Auth.MockAuthProvider,
+  did_registry: SovraTest.Ethereum.StubDIDRegistry,
+  revocation_registry: SovraTest.Ethereum.StubRevocationRegistry,
+  ethereum: [
+    admin_private_key: "0x" <> String.duplicate("11", 32),
+    did_registry_address: "0x0000000000000000000000000000000000000001",
+    rpc_url: "http://127.0.0.1:1729"
+  ],
   session_secret: "test-secret-must-be-at-least-32-bytes-long-for-hmac!",
   google_client_id: "test-client-id",
   google_client_secret: "test-client-secret",

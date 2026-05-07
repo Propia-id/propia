@@ -8,7 +8,7 @@ defmodule Sovra.Verification.ExpiredSessionsSweeperTest do
   alias Sovra.Verification.ExpiredSessionsSweeper
   alias Sovra.Verification.Session
 
-  defp create_workspace, do: fixture_workspace(name: "V").workspace
+  defp create_workspace, do: provision_workspace(fixture_workspace(name: "V").workspace)
 
   defp dcql_query do
     %{

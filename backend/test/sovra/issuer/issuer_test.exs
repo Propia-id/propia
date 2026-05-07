@@ -16,7 +16,7 @@ defmodule Sovra.IssuerTest do
   end
 
   defp create_test_user, do: fixture_user()
-  defp create_test_issuer, do: fixture_workspace().workspace
+  defp create_test_issuer, do: provision_workspace(fixture_workspace().workspace)
 
   defp create_test_schema(issuer) do
     attrs = %{
@@ -45,6 +45,8 @@ defmodule Sovra.IssuerTest do
 
       {:ok, %{workspace: issuer, webhook_secret: webhook_secret}} =
         Workspaces.create_workspace(org.id, %{name: "New Issuer"}, user.id)
+
+      issuer = provision_workspace(issuer)
 
       assert issuer.name == "New Issuer"
       assert String.starts_with?(issuer.eoa_address, "0x")

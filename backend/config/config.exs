@@ -55,7 +55,7 @@ config :bcrypt_elixir, log_rounds: 12
 # Oban job runner (webhooks, mailers, verification housekeeping)
 config :sovra, Oban,
   repo: Sovra.Repo,
-  queues: [webhooks: 10, mailers: 10, verification: 1],
+  queues: [webhooks: 10, mailers: 10, verification: 1, provisioning: 5],
   plugins: [
     {Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7},
     {Oban.Plugins.Cron,

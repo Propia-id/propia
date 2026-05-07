@@ -28,7 +28,7 @@ defmodule SovraWeb.Verify.StatusListControllerTest do
     :ok
   end
 
-  defp create_workspace, do: fixture_workspace().workspace
+  defp create_workspace, do: provision_workspace(fixture_workspace().workspace)
 
   test "400 on unknown purpose", %{conn: conn} do
     ws = create_workspace()

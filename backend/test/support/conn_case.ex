@@ -24,9 +24,12 @@ defmodule SovraWeb.ConnCase do
 
       use SovraWeb, :verified_routes
 
+      alias Sovra.Repo
+
       # Import conveniences for testing with connections
       import Plug.Conn
       import Phoenix.ConnTest
+      import Sovra.DataCase, only: [provision_workspace: 1, errors_on: 1]
       import SovraWeb.ConnCase
       import Sovra.Fixtures
     end

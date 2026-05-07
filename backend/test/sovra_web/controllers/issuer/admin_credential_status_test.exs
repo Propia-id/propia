@@ -37,6 +37,7 @@ defmodule SovraWeb.Issuer.AdminCredentialStatusTest do
     owner = user("owner")
     org = org()
     {:ok, %{workspace: ws}} = Workspaces.create_workspace(org.id, %{name: "Acme"}, owner.id)
+    ws = provision_workspace(ws)
 
     {:ok, schema} =
       Issuer.create_schema(ws.id, %{

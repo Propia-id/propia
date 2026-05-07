@@ -424,6 +424,9 @@ defmodule SovraWeb.Issuer.AdminController do
         |> put_status(422)
         |> json(%{error: "validation_error", details: changeset_errors(changeset)})
 
+      {:error, :workspace_not_provisioned} ->
+        conn |> put_status(409) |> json(%{error: "workspace_not_provisioned"})
+
       {:error, _reason} ->
         conn |> put_status(500) |> json(%{error: "internal_error"})
     end
@@ -781,6 +784,9 @@ defmodule SovraWeb.Issuer.AdminController do
 
               {:error, :credential_not_yet_issued} ->
                 conn |> put_status(422) |> json(%{error: "credential_not_yet_issued"})
+
+              {:error, :workspace_not_provisioned} ->
+                conn |> put_status(409) |> json(%{error: "workspace_not_provisioned"})
 
               {:error, :invalid_status_transition} ->
                 conn |> put_status(422) |> json(%{error: "invalid_status_transition"})

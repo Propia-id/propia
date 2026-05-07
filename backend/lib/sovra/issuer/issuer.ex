@@ -36,6 +36,7 @@ defmodule Sovra.Issuer do
     attrs = Map.put(attrs, :issuer_id, workspace_id)
 
     with {:ok, workspace} <- Workspaces.get_workspace(workspace_id),
+         :ok <- Workspaces.assert_provisioned(workspace),
          {:ok, schema} <- CredentialSchema.create_changeset(attrs) |> Repo.insert() do
       case register_credential_type_on_chain(workspace.eoa_address, schema.credential_type) do
         :ok ->
@@ -320,6 +321,7 @@ defmodule Sovra.Issuer do
 
   def create_credential_offer(workspace_id, schema_id, claims) do
     with {:ok, workspace} <- Workspaces.get_workspace(workspace_id),
+         :ok <- Workspaces.assert_provisioned(workspace),
          {:ok, schema} <- get_schema(workspace_id, schema_id),
          :ok <- validate_claims(schema, claims) do
       {plaintext_code, code_hash} = TokenHash.generate_and_hash(32)
@@ -562,6 +564,11 @@ defmodule Sovra.Issuer do
   defp deliver_credential(offer, holder_did) do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
 
+    # No assert_provisioned here: an offer can only exist if the workspace
+    # was provisioned at offer-creation time (gated in create_credential_offer/3),
+    # and the cryptographic columns persist across retries. Letting the
+    # holder's OID4VCI flow finish keeps us spec-compliant — the credential
+    # endpoint must not return non-OID4VCI error codes.
     with {:ok, workspace} <- Workspaces.get_workspace(offer.issuer_id),
          {:ok, schema} <- get_schema_by_id(offer.schema_id),
          {:ok, sd_jwt} <-
@@ -690,7 +697,7 @@ defmodule Sovra.Issuer do
       credential_id,
       "revoked",
       "credential.revoked",
-      &RevocationRegistry.revoke/2
+      fn addr, idx -> revocation_registry().revoke(addr, idx) end
     )
   end
 
@@ -700,7 +707,7 @@ defmodule Sovra.Issuer do
       credential_id,
       "suspended",
       "credential.suspended",
-      &RevocationRegistry.suspend/2
+      fn addr, idx -> revocation_registry().suspend(addr, idx) end
     )
   end
 
@@ -710,12 +717,14 @@ defmodule Sovra.Issuer do
       credential_id,
       "issued",
       "credential.unsuspended",
-      &RevocationRegistry.unsuspend/2
+      fn addr, idx -> revocation_registry().unsuspend(addr, idx) end
     )
   end
 
   defp change_credential_status(workspace_id, credential_id, new_status, event, chain_call) do
     with {:ok, cred} <- resolve_issued_or_pending(workspace_id, credential_id),
+         {:ok, workspace} <- Workspaces.get_workspace(workspace_id),
+         :ok <- Workspaces.assert_provisioned(workspace),
          :ok <- validate_status_transition(cred, new_status),
          :ok <- maybe_sync_chain_status(chain_call, workspace_id, cred.status_list_index),
          {:ok, updated} <-
@@ -833,8 +842,8 @@ defmodule Sovra.Issuer do
 
   defp initialize_bitmaps_on_chain(eoa_address) do
     if ethereum_configured?() do
-      with {:ok, _} <- RevocationRegistry.initialize_bitmap(eoa_address, 0),
-           {:ok, _} <- RevocationRegistry.initialize_bitmap(eoa_address, 1) do
+      with {:ok, _} <- revocation_registry().initialize_bitmap(eoa_address, 0),
+           {:ok, _} <- revocation_registry().initialize_bitmap(eoa_address, 1) do
         :ok
       end
     else
@@ -871,4 +880,7 @@ defmodule Sovra.Issuer do
     config = Application.get_env(:sovra, :ethereum, [])
     config[:admin_private_key] != nil and config[:did_registry_address] != nil
   end
+
+  defp revocation_registry,
+    do: Application.get_env(:sovra, :revocation_registry, RevocationRegistry)
 end

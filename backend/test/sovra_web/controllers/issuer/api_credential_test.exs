@@ -36,6 +36,7 @@ defmodule SovraWeb.Issuer.ApiCredentialTest do
       |> Sovra.Repo.insert()
 
     {:ok, %{workspace: ws}} = Workspaces.create_workspace(org.id, %{name: "Acme"}, owner.id)
+    ws = provision_workspace(ws)
     {:ok, %{api_key: key}} = ApiKeys.create_api_key(ws.id, "Prod")
 
     {:ok, schema} =
@@ -78,6 +79,7 @@ defmodule SovraWeb.Issuer.ApiCredentialTest do
       |> Sovra.Repo.insert()
 
     {:ok, %{workspace: ws}} = Workspaces.create_workspace(org.id, %{name: "Acme"}, owner.id)
+    ws = provision_workspace(ws)
     {:ok, %{api_key: key}} = ApiKeys.create_api_key(ws.id, "Prod")
 
     {:ok, schema} =

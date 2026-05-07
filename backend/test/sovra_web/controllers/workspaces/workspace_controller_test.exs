@@ -22,7 +22,7 @@ defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
     owner = owner || user("owner")
     org = org_with_owner(owner)
     {:ok, %{workspace: ws}} = Workspaces.create_workspace(org.id, %{name: "Acme"}, owner.id)
-    %{workspace: ws, owner: owner, org: org}
+    %{workspace: provision_workspace(ws), owner: owner, org: org}
   end
 
   defp authed(conn, account, workspace_id \\ nil) do
@@ -46,6 +46,8 @@ defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
 
       assert resp["workspace"]["name"] == "Fresh"
       assert resp["workspace"]["role"] == "admin"
+      assert resp["workspace"]["provisioning_status"] == "pending"
+      assert resp["workspace"]["did"] == nil
       assert is_binary(resp["webhook_secret"])
 
       assert {:ok, "admin"} = Workspaces.member_role(resp["workspace"]["id"], owner.id)
@@ -237,6 +239,88 @@ defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
         |> post("/api/v1/workspaces/#{ws.id}/switch")
 
       assert json_response(conn, 403)
+    end
+  end
+
+  describe "POST /api/v1/organizations/:org_id/workspaces/:workspace_id/retry_provisioning" do
+    test "org admin retries a failed workspace", %{conn: conn} do
+      %{workspace: ws, owner: owner, org: organization} = create_workspace()
+      {:ok, _} = Workspaces.mark_provisioning_failed(ws.id, "boom")
+
+      resp =
+        conn
+        |> authed(owner)
+        |> post("/api/v1/organizations/#{organization.id}/workspaces/#{ws.id}/retry_provisioning")
+        |> json_response(200)
+
+      assert resp["id"] == ws.id
+      assert resp["provisioning_status"] == "pending"
+      assert resp["provisioning_error"] == nil
+    end
+
+    test "409 when workspace is already pending", %{conn: conn} do
+      owner = user("owner")
+      organization = org_with_owner(owner)
+
+      {:ok, %{workspace: ws}} =
+        Workspaces.create_workspace(organization.id, %{name: "Pending"}, owner.id)
+
+      resp =
+        conn
+        |> authed(owner)
+        |> post("/api/v1/organizations/#{organization.id}/workspaces/#{ws.id}/retry_provisioning")
+        |> json_response(409)
+
+      assert resp["error"] == "already_pending"
+    end
+
+    test "409 when workspace is already provisioned", %{conn: conn} do
+      %{workspace: ws, owner: owner, org: organization} = create_workspace()
+
+      resp =
+        conn
+        |> authed(owner)
+        |> post("/api/v1/organizations/#{organization.id}/workspaces/#{ws.id}/retry_provisioning")
+        |> json_response(409)
+
+      assert resp["error"] == "already_provisioned"
+    end
+
+    test "404 when the workspace belongs to a different organization", %{conn: conn} do
+      %{workspace: ws} = create_workspace()
+      foreigner = user("foreigner")
+      other_org = org_with_owner(foreigner)
+
+      resp =
+        conn
+        |> authed(foreigner)
+        |> post("/api/v1/organizations/#{other_org.id}/workspaces/#{ws.id}/retry_provisioning")
+        |> json_response(404)
+
+      assert resp["error"] == "workspace_not_found"
+    end
+
+    test "403 when caller is a workspace admin but not org admin", %{conn: conn} do
+      owner = user("owner")
+      organization = org_with_owner(owner)
+
+      {:ok, %{workspace: ws}} =
+        Workspaces.create_workspace(organization.id, %{name: "W"}, owner.id)
+
+      ws = provision_workspace(ws)
+      {:ok, _} = Workspaces.mark_provisioning_failed(ws.id, "boom")
+
+      ws_admin = user("ws_admin")
+      {:ok, _} = Organizations.add_member(organization.id, ws_admin.id, "member")
+      {:ok, _} = Workspaces.add_member(ws.id, ws_admin.id, "admin")
+
+      resp =
+        conn
+        |> authed(ws_admin)
+        |> post("/api/v1/organizations/#{organization.id}/workspaces/#{ws.id}/retry_provisioning")
+        |> json_response(403)
+
+      assert resp["error"] == "org_admin_required"
     end
   end
 end

@@ -1,15 +1,22 @@
 defmodule Sovra.WorkspacesTest do
   use Sovra.DataCase, async: false
+  use Oban.Testing, repo: Sovra.Repo
 
+  alias Sovra.Organizations.Organization
   alias Sovra.Workspaces
   alias Sovra.Workspaces.WorkspaceMember
+  alias Sovra.Workspaces.WorkspaceProvisioningJob
 
   defp create_user, do: fixture_user()
   defp create_org, do: fixture_org()
-  defp create_workspace, do: fixture_workspace()
+
+  defp create_workspace do
+    result = fixture_workspace()
+    %{result | workspace: provision_workspace(result.workspace)}
+  end
 
   describe "create_workspace/3" do
-    test "creates workspace + owner member + webhook secret" do
+    test "creates workspace + owner member + webhook secret in pending state" do
       user = create_user()
       org = create_org()
 
@@ -19,13 +26,35 @@ defmodule Sovra.WorkspacesTest do
       assert ws.name == "Acme"
       assert ws.organization_id == org.id
       assert ws.status == "active"
+      assert ws.provisioning_status == "pending"
+      assert ws.did == nil
+      assert ws.signing_key_id == nil
+      assert ws.eoa_address == nil
       assert is_binary(ws.webhook_secret_key_id)
       assert String.starts_with?(secret, "whsec_")
 
       assert {:ok, "admin"} = Workspaces.member_role(ws.id, user.id)
 
+      assert_enqueued(worker: WorkspaceProvisioningJob, args: %{"workspace_id" => ws.id})
+
       assert is_binary(ws.status_index_secret_key_id)
       assert ws.status_index_secret_key_id != ws.webhook_secret_key_id
+    end
+
+    test "transitions to done after provisioning job runs" do
+      user = create_user()
+      org = create_org()
+
+      {:ok, %{workspace: ws}} =
+        Workspaces.create_workspace(org.id, %{name: "Acme"}, user.id)
+
+      provisioned = provision_workspace(ws)
+
+      assert provisioned.provisioning_status == "done"
+      assert provisioned.did == "did:sovra:" <> provisioned.eoa_address
+      assert is_binary(provisioned.signing_key_id)
+      assert is_binary(provisioned.eoa_key_id)
+      assert %DateTime{} = provisioned.provisioned_at
     end
 
     test "accepts optional webhook_url at creation" do
@@ -52,6 +81,70 @@ defmodule Sovra.WorkspacesTest do
                  %{name: "Acme", webhook_url: "not-a-url"},
                  user.id
                )
+    end
+
+    test "rolls back the provisioning job when the workspace insert fails" do
+      user = create_user()
+      org = create_org()
+
+      assert {:error, %Ecto.Changeset{}} =
+               Workspaces.create_workspace(
+                 org.id,
+                 %{name: "Acme", webhook_url: "not-a-url"},
+                 user.id
+               )
+
+      refute_enqueued(worker: WorkspaceProvisioningJob)
+    end
+  end
+
+  describe "retry_provisioning/2" do
+    test "re-enqueues the provisioning job for a failed workspace" do
+      %{workspace: ws, org: org} = create_workspace()
+
+      {:ok, _} = Workspaces.mark_provisioning_failed(ws.id, "boom")
+      ws = Repo.reload!(ws)
+      assert ws.provisioning_status == "failed"
+
+      assert {:ok, retried} = Workspaces.retry_provisioning(ws.id, org.id)
+      assert retried.provisioning_status == "pending"
+      assert retried.provisioning_error == nil
+
+      assert_enqueued(worker: WorkspaceProvisioningJob, args: %{"workspace_id" => ws.id})
+    end
+
+    test "rejects retry on a pending workspace" do
+      user = create_user()
+      org = create_org()
+
+      {:ok, %{workspace: ws}} =
+        Workspaces.create_workspace(org.id, %{name: "Acme"}, user.id)
+
+      assert {:error, :already_pending} = Workspaces.retry_provisioning(ws.id, org.id)
+    end
+
+    test "rejects retry on a done workspace" do
+      %{workspace: ws, org: org} = create_workspace()
+
+      assert {:error, :already_provisioned} = Workspaces.retry_provisioning(ws.id, org.id)
+    end
+
+    test "treats a workspace from a different org as not found" do
+      %{workspace: ws} = create_workspace()
+      other_org = create_org()
+
+      assert {:error, :workspace_not_found} =
+               Workspaces.retry_provisioning(ws.id, other_org.id)
+    end
+
+    test "refuses retry when the parent organization has been deactivated" do
+      %{workspace: ws, org: org} = create_workspace()
+
+      {:ok, _} = Workspaces.mark_provisioning_failed(ws.id, "boom")
+      {:ok, _} = org |> Organization.status_changeset("deactivated") |> Repo.update()
+
+      assert {:error, :organization_deactivated} =
+               Workspaces.retry_provisioning(ws.id, org.id)
     end
   end
 
