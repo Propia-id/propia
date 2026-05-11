@@ -43,7 +43,7 @@ defmodule SovraWeb.Workspaces.WorkspaceMemberControllerTest do
     resp =
       conn
       |> authed(token)
-      |> post("/api/v1/workspaces/#{ws.id}/members", %{
+      |> post("/dashboard/workspaces/#{ws.id}/members", %{
         "email" => new.email,
         "role" => "member"
       })
@@ -61,7 +61,7 @@ defmodule SovraWeb.Workspaces.WorkspaceMemberControllerTest do
     resp =
       conn
       |> authed(token)
-      |> patch("/api/v1/workspaces/#{ws.id}/members/#{new.id}", %{"role" => "admin"})
+      |> patch("/dashboard/workspaces/#{ws.id}/members/#{new.id}", %{"role" => "admin"})
       |> json_response(200)
 
     assert resp["role"] == "admin"
@@ -76,7 +76,7 @@ defmodule SovraWeb.Workspaces.WorkspaceMemberControllerTest do
     conn =
       conn
       |> authed(token)
-      |> patch("/api/v1/workspaces/#{ws.id}/members/#{owner.id}", %{"role" => "member"})
+      |> patch("/dashboard/workspaces/#{ws.id}/members/#{owner.id}", %{"role" => "member"})
 
     assert json_response(conn, 409) == %{"error" => "last_admin"}
   end
@@ -90,7 +90,7 @@ defmodule SovraWeb.Workspaces.WorkspaceMemberControllerTest do
     conn =
       conn
       |> authed(token)
-      |> delete("/api/v1/workspaces/#{ws.id}/members/#{owner.id}")
+      |> delete("/dashboard/workspaces/#{ws.id}/members/#{owner.id}")
 
     assert json_response(conn, 409) == %{"error" => "last_admin"}
   end
@@ -103,7 +103,7 @@ defmodule SovraWeb.Workspaces.WorkspaceMemberControllerTest do
     conn =
       conn
       |> authed(member_token)
-      |> post("/api/v1/workspaces/#{ws.id}/members", %{
+      |> post("/dashboard/workspaces/#{ws.id}/members", %{
         "email" => "x@example.com",
         "role" => "member"
       })

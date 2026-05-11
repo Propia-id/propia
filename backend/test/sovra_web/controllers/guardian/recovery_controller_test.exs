@@ -3,9 +3,9 @@ defmodule SovraWeb.Guardian.RecoveryControllerTest do
 
   import Sovra.GuardianHelpers
 
-  describe "POST /api/v1/recovery/initiate" do
+  describe "POST /wallet/recovery/initiate" do
     test "returns 401 without session", %{conn: conn} do
-      conn = post(conn, "/api/v1/recovery/initiate", %{})
+      conn = post(conn, "/wallet/recovery/initiate", %{})
 
       assert %{"error" => "missing_authorization"} = json_response(conn, 401)
     end
@@ -16,7 +16,7 @@ defmodule SovraWeb.Guardian.RecoveryControllerTest do
       conn =
         conn
         |> auth_conn(holder.sovra_address)
-        |> post("/api/v1/recovery/initiate", %{})
+        |> post("/wallet/recovery/initiate", %{})
 
       assert %{"error" => "missing_required_fields"} = json_response(conn, 400)
     end
@@ -27,7 +27,7 @@ defmodule SovraWeb.Guardian.RecoveryControllerTest do
       conn =
         conn
         |> auth_conn(holder.sovra_address)
-        |> post("/api/v1/recovery/initiate", %{
+        |> post("/wallet/recovery/initiate", %{
           "newKeyX" => "not-hex",
           "newKeyY" => "not-hex",
           "keyToReplace" => 0
@@ -37,9 +37,9 @@ defmodule SovraWeb.Guardian.RecoveryControllerTest do
     end
   end
 
-  describe "POST /api/v1/recovery/finalize" do
+  describe "POST /wallet/recovery/finalize" do
     test "returns 401 without session", %{conn: conn} do
-      conn = post(conn, "/api/v1/recovery/finalize")
+      conn = post(conn, "/wallet/recovery/finalize")
 
       assert %{"error" => "missing_authorization"} = json_response(conn, 401)
     end

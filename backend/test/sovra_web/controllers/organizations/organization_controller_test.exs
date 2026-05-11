@@ -15,14 +15,14 @@ defmodule SovraWeb.Organizations.OrganizationControllerTest do
     |> put_req_header("accept", "application/json")
   end
 
-  describe "POST /api/v1/organizations" do
+  describe "POST /dashboard/organizations" do
     test "creates an org and makes the caller owner", %{conn: conn} do
       user = create_user("owner")
 
       resp =
         conn
         |> authed_conn(user)
-        |> post("/api/v1/organizations", %{
+        |> post("/dashboard/organizations", %{
           name: "Acme",
           logo_url: "https://acme.test/logo.png",
           website: "https://acme.test"
@@ -40,7 +40,7 @@ defmodule SovraWeb.Organizations.OrganizationControllerTest do
       conn =
         conn
         |> put_req_header("accept", "application/json")
-        |> post("/api/v1/organizations", %{name: "Acme"})
+        |> post("/dashboard/organizations", %{name: "Acme"})
 
       assert json_response(conn, 401)
     end
@@ -51,7 +51,7 @@ defmodule SovraWeb.Organizations.OrganizationControllerTest do
       resp =
         conn
         |> authed_conn(user)
-        |> post("/api/v1/organizations", %{})
+        |> post("/dashboard/organizations", %{})
         |> json_response(422)
 
       assert resp["error"] == "validation_error"
@@ -59,7 +59,7 @@ defmodule SovraWeb.Organizations.OrganizationControllerTest do
     end
   end
 
-  describe "PATCH /api/v1/organizations/:id (as admin)" do
+  describe "PATCH /dashboard/organizations/:id (as admin)" do
     setup do
       owner = create_user("owner")
 
@@ -73,7 +73,7 @@ defmodule SovraWeb.Organizations.OrganizationControllerTest do
       resp =
         conn
         |> authed_conn(owner)
-        |> patch("/api/v1/organizations/#{org.id}", %{name: "Acme Inc."})
+        |> patch("/dashboard/organizations/#{org.id}", %{name: "Acme Inc."})
         |> json_response(200)
 
       assert resp["name"] == "Acme Inc."
@@ -85,7 +85,7 @@ defmodule SovraWeb.Organizations.OrganizationControllerTest do
       conn =
         conn
         |> authed_conn(stranger)
-        |> patch("/api/v1/organizations/#{org.id}", %{name: "Hostile"})
+        |> patch("/dashboard/organizations/#{org.id}", %{name: "Hostile"})
 
       assert json_response(conn, 404) == %{"error" => "organization_not_found"}
     end
@@ -97,7 +97,7 @@ defmodule SovraWeb.Organizations.OrganizationControllerTest do
       conn =
         conn
         |> authed_conn(member)
-        |> patch("/api/v1/organizations/#{org.id}", %{name: "Nope"})
+        |> patch("/dashboard/organizations/#{org.id}", %{name: "Nope"})
 
       assert json_response(conn, 403) == %{"error" => "org_admin_required"}
     end
@@ -112,13 +112,13 @@ defmodule SovraWeb.Organizations.OrganizationControllerTest do
       conn =
         conn
         |> authed_conn(admin)
-        |> patch("/api/v1/organizations/#{org.id}", %{name: "Nope"})
+        |> patch("/dashboard/organizations/#{org.id}", %{name: "Nope"})
 
       assert json_response(conn, 404) == %{"error" => "organization_not_found"}
     end
   end
 
-  describe "POST /api/v1/organizations/:id/deactivate" do
+  describe "POST /dashboard/organizations/:id/deactivate" do
     setup do
       owner = create_user("owner")
 
@@ -132,7 +132,7 @@ defmodule SovraWeb.Organizations.OrganizationControllerTest do
       resp =
         conn
         |> authed_conn(owner)
-        |> post("/api/v1/organizations/#{org.id}/deactivate")
+        |> post("/dashboard/organizations/#{org.id}/deactivate")
         |> json_response(200)
 
       assert resp["status"] == "deactivated"
@@ -145,7 +145,7 @@ defmodule SovraWeb.Organizations.OrganizationControllerTest do
       conn =
         conn
         |> authed_conn(admin)
-        |> post("/api/v1/organizations/#{org.id}/deactivate")
+        |> post("/dashboard/organizations/#{org.id}/deactivate")
 
       assert json_response(conn, 403) == %{"error" => "org_owner_required"}
     end
@@ -153,18 +153,18 @@ defmodule SovraWeb.Organizations.OrganizationControllerTest do
     test "update refused after deactivate", %{conn: conn, owner: owner, org: org} do
       conn
       |> authed_conn(owner)
-      |> post("/api/v1/organizations/#{org.id}/deactivate")
+      |> post("/dashboard/organizations/#{org.id}/deactivate")
 
       conn2 =
         build_conn()
         |> authed_conn(owner)
-        |> patch("/api/v1/organizations/#{org.id}", %{name: "Too late"})
+        |> patch("/dashboard/organizations/#{org.id}", %{name: "Too late"})
 
       assert json_response(conn2, 422)["error"] == "validation_error"
     end
   end
 
-  describe "GET /api/v1/organizations/:id/members" do
+  describe "GET /dashboard/organizations/:id/members" do
     test "lists all members with role and status for org admin", %{conn: conn} do
       owner = create_user("owner")
       member = create_user("member")
@@ -177,7 +177,7 @@ defmodule SovraWeb.Organizations.OrganizationControllerTest do
       resp =
         conn
         |> authed_conn(owner)
-        |> get("/api/v1/organizations/#{org.id}/members")
+        |> get("/dashboard/organizations/#{org.id}/members")
         |> json_response(200)
 
       roles = Map.new(resp["members"], &{&1["id"], &1["role"]})
@@ -198,13 +198,13 @@ defmodule SovraWeb.Organizations.OrganizationControllerTest do
       conn =
         conn
         |> authed_conn(member)
-        |> get("/api/v1/organizations/#{org.id}/members")
+        |> get("/dashboard/organizations/#{org.id}/members")
 
       assert json_response(conn, 403) == %{"error" => "org_admin_required"}
     end
   end
 
-  describe "GET /api/v1/organizations" do
+  describe "GET /dashboard/organizations" do
     test "lists only orgs the caller belongs to", %{conn: conn} do
       owner_a = create_user("a")
       owner_b = create_user("b")
@@ -217,7 +217,7 @@ defmodule SovraWeb.Organizations.OrganizationControllerTest do
       resp =
         conn
         |> authed_conn(owner_a)
-        |> get("/api/v1/organizations")
+        |> get("/dashboard/organizations")
         |> json_response(200)
 
       ids = Enum.map(resp["organizations"], & &1["id"])

@@ -13,7 +13,7 @@ defmodule Sovra.Issuer.OAuthMetadata do
 
     %{
       "issuer" => issuer,
-      "token_endpoint" => "#{base_url}/api/v1/issuer/token",
+      "token_endpoint" => "#{base_url}/wallet/issuer/token",
       "token_endpoint_auth_methods_supported" => ["none"],
       "grant_types_supported" => [
         "urn:ietf:params:oauth:grant-type:pre-authorized_code"

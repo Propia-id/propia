@@ -1,6 +1,6 @@
 defmodule SovraWeb.Issuer.AdminCredentialStatusTest do
   @moduledoc """
-  Covers `PUT /api/v1/issuer/admin/credentials/:id/status/:status` on the
+  Covers `PUT /dashboard/issuer/credentials/:id/status/:status` on the
   dashboard (JWT) pipeline. Workspace-admin required; plain members get 403.
   """
   use SovraWeb.ConnCase, async: false
@@ -79,7 +79,7 @@ defmodule SovraWeb.Issuer.AdminCredentialStatusTest do
     resp =
       conn
       |> authed(owner, ws.id)
-      |> put("/api/v1/issuer/admin/credentials/#{cred.id}/status/revoked")
+      |> put("/dashboard/issuer/credentials/#{cred.id}/status/revoked")
       |> json_response(200)
 
     assert resp["id"] == cred.id
@@ -94,7 +94,7 @@ defmodule SovraWeb.Issuer.AdminCredentialStatusTest do
     resp =
       conn
       |> authed(owner, ws.id)
-      |> put("/api/v1/issuer/admin/credentials/#{cred.id}/status/suspended")
+      |> put("/dashboard/issuer/credentials/#{cred.id}/status/suspended")
       |> json_response(200)
 
     assert resp["status"] == "suspended"
@@ -108,7 +108,7 @@ defmodule SovraWeb.Issuer.AdminCredentialStatusTest do
     conn =
       conn
       |> authed(owner, ws.id)
-      |> put("/api/v1/issuer/admin/credentials/#{cred.id}/status/garbage")
+      |> put("/dashboard/issuer/credentials/#{cred.id}/status/garbage")
 
     assert json_response(conn, 400) == %{"error" => "unknown_status"}
   end
@@ -121,7 +121,7 @@ defmodule SovraWeb.Issuer.AdminCredentialStatusTest do
     conn =
       conn
       |> authed(member, ws.id)
-      |> put("/api/v1/issuer/admin/credentials/#{cred.id}/status/revoked")
+      |> put("/dashboard/issuer/credentials/#{cred.id}/status/revoked")
 
     assert json_response(conn, 403) == %{"error" => "workspace_admin_required"}
   end
@@ -133,7 +133,7 @@ defmodule SovraWeb.Issuer.AdminCredentialStatusTest do
     conn =
       conn
       |> authed(owner_a, ws_a.id)
-      |> put("/api/v1/issuer/admin/credentials/#{cred_b.id}/status/revoked")
+      |> put("/dashboard/issuer/credentials/#{cred_b.id}/status/revoked")
 
     assert json_response(conn, 404) == %{"error" => "credential_not_found"}
   end

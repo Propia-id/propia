@@ -30,7 +30,7 @@ defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
     put_req_header(conn, "authorization", "Bearer #{token}")
   end
 
-  describe "POST /api/v1/organizations/:org_id/workspaces" do
+  describe "POST /dashboard/organizations/:org_id/workspaces" do
     test "creates a workspace + returns webhook_secret once + caller is admin", %{conn: conn} do
       owner = user("owner")
       organization = org_with_owner(owner)
@@ -38,7 +38,7 @@ defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
       resp =
         conn
         |> authed(owner)
-        |> post("/api/v1/organizations/#{organization.id}/workspaces", %{
+        |> post("/dashboard/organizations/#{organization.id}/workspaces", %{
           "name" => "Fresh",
           "webhook_url" => "https://example.test/hook"
         })
@@ -60,7 +60,7 @@ defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
       resp =
         conn
         |> authed(attacker)
-        |> post("/api/v1/organizations/#{victim_org.id}/workspaces", %{"name" => "Hijack"})
+        |> post("/dashboard/organizations/#{victim_org.id}/workspaces", %{"name" => "Hijack"})
         |> json_response(404)
 
       assert resp["error"] == "organization_not_found"
@@ -75,7 +75,7 @@ defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
       resp =
         conn
         |> authed(member)
-        |> post("/api/v1/organizations/#{organization.id}/workspaces", %{"name" => "Nope"})
+        |> post("/dashboard/organizations/#{organization.id}/workspaces", %{"name" => "Nope"})
         |> json_response(403)
 
       assert resp["error"] == "org_admin_required"
@@ -85,13 +85,13 @@ defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
       conn =
         conn
         |> put_req_header("accept", "application/json")
-        |> post("/api/v1/organizations/#{Ecto.UUID.generate()}/workspaces", %{"name" => "X"})
+        |> post("/dashboard/organizations/#{Ecto.UUID.generate()}/workspaces", %{"name" => "X"})
 
       assert json_response(conn, 401)
     end
   end
 
-  describe "GET /api/v1/organizations/:org_id/workspaces" do
+  describe "GET /dashboard/organizations/:org_id/workspaces" do
     test "org admin sees every workspace in the org regardless of membership", %{conn: conn} do
       owner = user("owner")
       organization = org_with_owner(owner)
@@ -106,7 +106,7 @@ defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
       resp =
         conn
         |> authed(owner)
-        |> get("/api/v1/organizations/#{organization.id}/workspaces")
+        |> get("/dashboard/organizations/#{organization.id}/workspaces")
         |> json_response(200)
 
       ids = Enum.map(resp["workspaces"], & &1["id"]) |> Enum.sort()
@@ -120,7 +120,7 @@ defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
       resp =
         conn
         |> authed(attacker)
-        |> get("/api/v1/organizations/#{victim_org.id}/workspaces")
+        |> get("/dashboard/organizations/#{victim_org.id}/workspaces")
         |> json_response(404)
 
       assert resp["error"] == "organization_not_found"
@@ -135,14 +135,14 @@ defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
       resp =
         conn
         |> authed(member)
-        |> get("/api/v1/organizations/#{organization.id}/workspaces")
+        |> get("/dashboard/organizations/#{organization.id}/workspaces")
         |> json_response(403)
 
       assert resp["error"] == "org_admin_required"
     end
   end
 
-  describe "GET /api/v1/workspaces" do
+  describe "GET /dashboard/workspaces" do
     test "returns only workspaces the caller belongs to", %{conn: conn} do
       %{workspace: ws_a, owner: owner_a} = create_workspace()
       %{workspace: _ws_b} = create_workspace()
@@ -150,7 +150,7 @@ defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
       resp =
         conn
         |> authed(owner_a, ws_a.id)
-        |> get("/api/v1/workspaces")
+        |> get("/dashboard/workspaces")
         |> json_response(200)
 
       ids = Enum.map(resp["workspaces"], & &1["id"])
@@ -158,14 +158,14 @@ defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
     end
   end
 
-  describe "PATCH /api/v1/workspaces/:workspace_id" do
+  describe "PATCH /dashboard/workspaces/:workspace_id" do
     test "admin updates name and webhook URL", %{conn: conn} do
       %{workspace: ws, owner: owner} = create_workspace()
 
       resp =
         conn
         |> authed(owner, ws.id)
-        |> patch("/api/v1/workspaces/#{ws.id}", %{
+        |> patch("/dashboard/workspaces/#{ws.id}", %{
           "name" => "Renamed",
           "webhook_url" => "https://new.test/h"
         })
@@ -183,27 +183,27 @@ defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
       conn =
         conn
         |> authed(member, ws.id)
-        |> patch("/api/v1/workspaces/#{ws.id}", %{"name" => "Nope"})
+        |> patch("/dashboard/workspaces/#{ws.id}", %{"name" => "Nope"})
 
       assert json_response(conn, 403) == %{"error" => "workspace_admin_required"}
     end
   end
 
-  describe "POST /api/v1/workspaces/:workspace_id/regenerate_webhook_secret" do
+  describe "POST /dashboard/workspaces/:workspace_id/regenerate_webhook_secret" do
     test "admin rotates secret", %{conn: conn} do
       %{workspace: ws, owner: owner} = create_workspace()
 
       resp =
         conn
         |> authed(owner, ws.id)
-        |> post("/api/v1/workspaces/#{ws.id}/regenerate_webhook_secret")
+        |> post("/dashboard/workspaces/#{ws.id}/regenerate_webhook_secret")
         |> json_response(200)
 
       assert is_binary(resp["webhook_secret"])
     end
   end
 
-  describe "POST /api/v1/workspaces/:workspace_id/switch" do
+  describe "POST /dashboard/workspaces/:workspace_id/switch" do
     test "mints a new JWT and revokes the previous one", %{conn: conn} do
       owner = user("owner")
       organization = org()
@@ -214,15 +214,16 @@ defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
       {:ok, %{workspace: ws_b}} =
         Workspaces.create_workspace(organization.id, %{name: "B"}, owner.id)
 
-      resp =
+      conn =
         conn
         |> authed(owner, ws_a.id)
-        |> post("/api/v1/workspaces/#{ws_b.id}/switch")
-        |> json_response(200)
+        |> post("/dashboard/workspaces/#{ws_b.id}/switch")
 
-      assert resp["id"] == ws_b.id
+      assert json_response(conn, 200)["id"] == ws_b.id
 
-      # The returned cookie has the switched workspace_id baked in.
+      # The new session cookie must be scoped to /dashboard so subsequent
+      # dashboard requests carry it.
+      assert %{path: "/dashboard"} = conn.resp_cookies["session"]
     end
 
     test "non-member 403", %{conn: conn} do
@@ -236,13 +237,13 @@ defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
       conn =
         conn
         |> authed(stranger, stranger_ws.id)
-        |> post("/api/v1/workspaces/#{ws.id}/switch")
+        |> post("/dashboard/workspaces/#{ws.id}/switch")
 
       assert json_response(conn, 403)
     end
   end
 
-  describe "POST /api/v1/organizations/:org_id/workspaces/:workspace_id/retry_provisioning" do
+  describe "POST /dashboard/organizations/:org_id/workspaces/:workspace_id/retry_provisioning" do
     test "org admin retries a failed workspace", %{conn: conn} do
       %{workspace: ws, owner: owner, org: organization} = create_workspace()
       {:ok, _} = Workspaces.mark_provisioning_failed(ws.id, "boom")
@@ -250,7 +251,9 @@ defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
       resp =
         conn
         |> authed(owner)
-        |> post("/api/v1/organizations/#{organization.id}/workspaces/#{ws.id}/retry_provisioning")
+        |> post(
+          "/dashboard/organizations/#{organization.id}/workspaces/#{ws.id}/retry_provisioning"
+        )
         |> json_response(200)
 
       assert resp["id"] == ws.id
@@ -268,7 +271,9 @@ defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
       resp =
         conn
         |> authed(owner)
-        |> post("/api/v1/organizations/#{organization.id}/workspaces/#{ws.id}/retry_provisioning")
+        |> post(
+          "/dashboard/organizations/#{organization.id}/workspaces/#{ws.id}/retry_provisioning"
+        )
         |> json_response(409)
 
       assert resp["error"] == "already_pending"
@@ -280,7 +285,9 @@ defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
       resp =
         conn
         |> authed(owner)
-        |> post("/api/v1/organizations/#{organization.id}/workspaces/#{ws.id}/retry_provisioning")
+        |> post(
+          "/dashboard/organizations/#{organization.id}/workspaces/#{ws.id}/retry_provisioning"
+        )
         |> json_response(409)
 
       assert resp["error"] == "already_provisioned"
@@ -294,7 +301,7 @@ defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
       resp =
         conn
         |> authed(foreigner)
-        |> post("/api/v1/organizations/#{other_org.id}/workspaces/#{ws.id}/retry_provisioning")
+        |> post("/dashboard/organizations/#{other_org.id}/workspaces/#{ws.id}/retry_provisioning")
         |> json_response(404)
 
       assert resp["error"] == "workspace_not_found"
@@ -317,7 +324,9 @@ defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
       resp =
         conn
         |> authed(ws_admin)
-        |> post("/api/v1/organizations/#{organization.id}/workspaces/#{ws.id}/retry_provisioning")
+        |> post(
+          "/dashboard/organizations/#{organization.id}/workspaces/#{ws.id}/retry_provisioning"
+        )
         |> json_response(403)
 
       assert resp["error"] == "org_admin_required"

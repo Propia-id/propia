@@ -19,7 +19,7 @@
 #   GUARDIAN_SESSION_SECRET=<secret>
 #   GOOGLE_CLIENT_ID=<id>
 #   GOOGLE_CLIENT_SECRET=<secret>
-#   GOOGLE_REDIRECT_URI=https://yourdomain.com/api/v1/holder/auth/callback
+#   GOOGLE_REDIRECT_URI=https://yourdomain.com/wallet/auth/callback
 #   VAULT_TOKEN=<OpenBao app token>
 
 { config, lib, pkgs, ... }:
@@ -280,10 +280,27 @@ in
         forceSSL = cfg.nginx.enableACME;
         enableACME = cfg.nginx.enableACME;
 
-        # API routes → Phoenix backend
+        # API-key endpoints → Phoenix backend
         locations."/api" = {
           proxyPass = "http://127.0.0.1:${toString cfg.port}";
           proxyWebsockets = true;
+        };
+
+        # Staff dashboard endpoints → Phoenix backend
+        locations."/dashboard" = {
+          proxyPass = "http://127.0.0.1:${toString cfg.port}";
+          proxyWebsockets = true;
+        };
+
+        # Wallet-facing endpoints (OID4VCI, OID4VP, holder auth, recovery) → Phoenix backend
+        locations."/wallet" = {
+          proxyPass = "http://127.0.0.1:${toString cfg.port}";
+          proxyWebsockets = true;
+        };
+
+        # OpenAPI specs (dashboard/wallet/api) → Phoenix backend
+        locations."/openapi" = {
+          proxyPass = "http://127.0.0.1:${toString cfg.port}";
         };
 
         # WebSocket endpoint

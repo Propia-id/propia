@@ -34,7 +34,7 @@ config :sovra,
   session_secret: "test-secret-must-be-at-least-32-bytes-long-for-hmac!",
   google_client_id: "test-client-id",
   google_client_secret: "test-client-secret",
-  google_redirect_uri: "http://localhost:4002/api/v1/holder/auth/callback"
+  google_redirect_uri: "http://localhost:4002/wallet/auth/callback"
 
 # Oban — manual mode so jobs don't run unless asserted on
 config :sovra, Oban, testing: :manual

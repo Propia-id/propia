@@ -27,7 +27,7 @@ defmodule Sovra.Issuer.OAuthMetadataTest do
   test "exposes the shared token endpoint and anonymous pre-authorized access flag" do
     metadata = OAuthMetadata.build_metadata(%{did: "did:sovra:0xabc"})
 
-    assert metadata["token_endpoint"] == "https://sovra.example/api/v1/issuer/token"
+    assert metadata["token_endpoint"] == "https://sovra.example/wallet/issuer/token"
     assert metadata["token_endpoint_auth_methods_supported"] == ["none"]
     assert metadata["pre-authorized_grant_anonymous_access_supported"] == true
   end

@@ -28,7 +28,7 @@ defmodule Sovra.Issuer.OID4VCI do
     %{
       "credential_issuer" => credential_issuer,
       "authorization_servers" => [credential_issuer],
-      "credential_endpoint" => "#{base_url}/api/v1/issuer/credential",
+      "credential_endpoint" => "#{base_url}/wallet/issuer/credential",
       "credential_configurations_supported" => configs,
       "display" => [display_entry(workspace)]
     }

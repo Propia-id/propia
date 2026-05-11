@@ -47,7 +47,7 @@ defmodule SovraWeb.Issuer.OfferController do
     summary: "Create credential offer",
     description:
       "Create a pre-authorized OID4VCI credential offer. Reachable via dashboard " <>
-        "JWT session at `/api/v1/issuer/admin/offers` and via workspace API key " <>
+        "JWT session at `/dashboard/issuer/offers` and via workspace API key " <>
         "(`Authorization: Bearer sovra_sk_...`) at `/api/v1/issuer/credential-offer`.",
     request_body: {"Offer params", "application/json", @request_body},
     responses: %{

@@ -162,7 +162,7 @@ defmodule Sovra.Verification do
 
   defp build_request_params(session, workspace, opts) do
     base = ClaimUtils.base_url()
-    response_uri = "#{base}/api/v1/verify/direct_post/#{session.id}"
+    response_uri = "#{base}/wallet/verifier/direct_post/#{session.id}"
     json_dcql? = Keyword.get(opts, :json, false)
 
     %{
@@ -183,7 +183,7 @@ defmodule Sovra.Verification do
   """
   def build_authorization_request_uri_ref(%Session{} = session, workspace) do
     base = ClaimUtils.base_url()
-    request_uri = "#{base}/api/v1/verify/request/#{session.id}"
+    request_uri = "#{base}/wallet/verifier/request/#{session.id}"
 
     params =
       URI.encode_query(%{

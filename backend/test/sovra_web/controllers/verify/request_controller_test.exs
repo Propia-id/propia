@@ -20,14 +20,14 @@ defmodule SovraWeb.Verify.RequestControllerTest do
     }
   end
 
-  describe "GET /api/v1/verify/request/:session_id" do
+  describe "GET /wallet/verifier/request/:session_id" do
     test "200 returns the OID4VP authorization request object", %{conn: conn} do
       ws = create_workspace()
       {:ok, %{session: session}} = Verification.create_session(ws.id, dcql_query())
 
       resp =
         conn
-        |> get("/api/v1/verify/request/#{session.id}")
+        |> get("/wallet/verifier/request/#{session.id}")
         |> json_response(200)
 
       assert resp["client_id"] == "verifier:#{ws.id}"
@@ -36,13 +36,13 @@ defmodule SovraWeb.Verify.RequestControllerTest do
       assert resp["nonce"] == session.nonce
       assert resp["state"] == session.state
       assert resp["dcql_query"] == dcql_query()
-      assert String.contains?(resp["response_uri"], "/api/v1/verify/direct_post/#{session.id}")
+      assert String.contains?(resp["response_uri"], "/wallet/verifier/direct_post/#{session.id}")
     end
 
     test "404 for unknown session", %{conn: conn} do
       resp =
         conn
-        |> get("/api/v1/verify/request/#{Ecto.UUID.generate()}")
+        |> get("/wallet/verifier/request/#{Ecto.UUID.generate()}")
         |> json_response(404)
 
       assert resp == %{"error" => "session_not_found"}
@@ -61,7 +61,7 @@ defmodule SovraWeb.Verify.RequestControllerTest do
 
       resp =
         conn
-        |> get("/api/v1/verify/request/#{session.id}")
+        |> get("/wallet/verifier/request/#{session.id}")
         |> json_response(404)
 
       assert resp == %{"error" => "session_not_found"}

@@ -135,7 +135,7 @@ defmodule SovraWeb.Verify.DirectPostControllerTest do
     ctx.sd_jwt <> build_kb(ctx.holder_keys, payload)
   end
 
-  describe "POST /api/v1/verify/direct_post/:session_id" do
+  describe "POST /wallet/verifier/direct_post/:session_id" do
     test "200 with a valid vp_token marks the session completed", %{conn: conn} do
       ctx = setup_pending_session()
 
@@ -147,7 +147,7 @@ defmodule SovraWeb.Verify.DirectPostControllerTest do
 
       _resp =
         conn
-        |> post("/api/v1/verify/direct_post/#{ctx.session.id}", %{
+        |> post("/wallet/verifier/direct_post/#{ctx.session.id}", %{
           "vp_token" => vp,
           "state" => ctx.session.state
         })
@@ -167,7 +167,7 @@ defmodule SovraWeb.Verify.DirectPostControllerTest do
 
       _resp =
         conn
-        |> post("/api/v1/verify/direct_post/#{ctx.session.id}", %{
+        |> post("/wallet/verifier/direct_post/#{ctx.session.id}", %{
           "vp_token" => "not-a-valid-vp-token",
           "state" => ctx.session.state
         })
@@ -189,7 +189,7 @@ defmodule SovraWeb.Verify.DirectPostControllerTest do
 
       resp =
         conn
-        |> post("/api/v1/verify/direct_post/#{Ecto.UUID.generate()}", %{
+        |> post("/wallet/verifier/direct_post/#{Ecto.UUID.generate()}", %{
           "vp_token" => vp,
           "state" => ctx.session.state
         })
@@ -201,7 +201,7 @@ defmodule SovraWeb.Verify.DirectPostControllerTest do
     test "404 when state is unknown", %{conn: conn} do
       resp =
         conn
-        |> post("/api/v1/verify/direct_post/#{Ecto.UUID.generate()}", %{
+        |> post("/wallet/verifier/direct_post/#{Ecto.UUID.generate()}", %{
           "vp_token" => "anything",
           "state" => "unknown-state-#{System.unique_integer([:positive])}"
         })
@@ -215,7 +215,7 @@ defmodule SovraWeb.Verify.DirectPostControllerTest do
 
       resp =
         conn
-        |> post("/api/v1/verify/direct_post/#{ctx.session.id}", %{"state" => ctx.session.state})
+        |> post("/wallet/verifier/direct_post/#{ctx.session.id}", %{"state" => ctx.session.state})
         |> json_response(400)
 
       assert resp == %{"error" => "missing_vp_token"}
@@ -226,7 +226,7 @@ defmodule SovraWeb.Verify.DirectPostControllerTest do
 
       resp =
         conn
-        |> post("/api/v1/verify/direct_post/#{ctx.session.id}", %{"vp_token" => "x"})
+        |> post("/wallet/verifier/direct_post/#{ctx.session.id}", %{"vp_token" => "x"})
         |> json_response(400)
 
       assert resp == %{"error" => "missing_state"}

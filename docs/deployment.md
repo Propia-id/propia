@@ -246,7 +246,7 @@ SECRET_KEY_BASE=$(openssl rand -base64 64 | tr -d '\n')
 GUARDIAN_SESSION_SECRET=$(openssl rand -base64 64 | tr -d '\n')
 GOOGLE_CLIENT_ID=your-google-client-id
 GOOGLE_CLIENT_SECRET=your-google-client-secret
-GOOGLE_REDIRECT_URI=https://yourdomain.com/api/v1/holder/auth/callback
+GOOGLE_REDIRECT_URI=https://yourdomain.com/wallet/auth/callback
 VAULT_TOKEN=<token from OpenBao init>
 EOF
 sudo chmod 600 /etc/sovra/env

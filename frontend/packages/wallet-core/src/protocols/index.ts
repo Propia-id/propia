@@ -98,7 +98,7 @@ export class IssuanceProtocol {
         "urn:ietf:params:oauth:grant-type:pre-authorized_code"
       ];
     const tokenResponse = await this.api.exchangeToken(
-      metadata.token_endpoint ?? `${offer.credential_issuer}/api/v1/issuer/token`,
+      metadata.token_endpoint,
       grant["pre-authorized_code"],
       txCode,
     );
@@ -113,7 +113,7 @@ export class IssuanceProtocol {
     // 4. Request credential
     const credConfigId = offer.credential_configuration_ids[0];
     const sdJwtString = await this.api.requestCredential(
-      metadata.credential_endpoint ?? `${offer.credential_issuer}/api/v1/issuer/credential`,
+      metadata.credential_endpoint,
       tokenResponse.access_token,
       { proof_type: "jwt", jwt: proofJwt },
       credConfigId,

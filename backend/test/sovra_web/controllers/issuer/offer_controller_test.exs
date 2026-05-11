@@ -28,7 +28,7 @@ defmodule SovraWeb.Issuer.OfferControllerTest do
     schema
   end
 
-  describe "POST /api/v1/issuer/admin/offers (JWT path)" do
+  describe "POST /dashboard/issuer/offers (JWT path)" do
     test "201 with the unified response shape", %{conn: conn} do
       %{workspace: ws, user: user} = create_workspace()
       schema = create_schema(ws.id)
@@ -38,7 +38,7 @@ defmodule SovraWeb.Issuer.OfferControllerTest do
       resp =
         conn
         |> put_req_header("authorization", "Bearer #{token}")
-        |> post("/api/v1/issuer/admin/offers", %{
+        |> post("/dashboard/issuer/offers", %{
           "schema_id" => schema.schema_id,
           "claims" => %{"name" => "Alice"}
         })

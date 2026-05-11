@@ -153,7 +153,11 @@ defmodule SovraWeb.AuthController do
   @access_max_age 3600
   @refresh_max_age 14 * 24 * 3600
   # Cookie path covers /refresh AND /logout so the cookie is sent on both.
-  @refresh_cookie_path "/api/v1/auth"
+  @refresh_cookie_path "/dashboard/auth"
+  # Access cookie path covers the dashboard surface (the only callers that
+  # need a session JWT). Narrower than the previous "/api/v1" — API-key
+  # endpoints never need the session cookie.
+  @access_cookie_path "/dashboard"
 
   def register(conn, params) do
     case Accounts.register_user(params) do
@@ -240,7 +244,7 @@ defmodule SovraWeb.AuthController do
     end
 
     conn
-    |> delete_resp_cookie(@access_cookie, path: "/api/v1")
+    |> delete_resp_cookie(@access_cookie, path: @access_cookie_path)
     |> delete_resp_cookie(@refresh_cookie, path: @refresh_cookie_path)
     |> json(%{ok: true})
   end
@@ -277,7 +281,7 @@ defmodule SovraWeb.AuthController do
           {:error, _reason} ->
             # Clear cookies so a compromised or stale client can't keep retrying.
             conn
-            |> delete_resp_cookie(@access_cookie, path: "/api/v1")
+            |> delete_resp_cookie(@access_cookie, path: @access_cookie_path)
             |> delete_resp_cookie(@refresh_cookie, path: @refresh_cookie_path)
             |> put_status(401)
             |> json(%{error: "invalid_refresh"})
@@ -330,7 +334,7 @@ defmodule SovraWeb.AuthController do
       http_only: true,
       secure: Application.get_env(:sovra, :env) == :prod,
       same_site: "Strict",
-      path: "/api/v1",
+      path: @access_cookie_path,
       max_age: @access_max_age
     ]
   end

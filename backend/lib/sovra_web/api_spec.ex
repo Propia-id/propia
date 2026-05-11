@@ -1,5 +1,14 @@
 defmodule SovraWeb.ApiSpec do
-  alias OpenApiSpex.{Info, OpenApi, Paths, Server, SecurityScheme, Components}
+  @moduledoc """
+  OpenAPI document for the integrator-facing API (workspace API key).
+
+  Paths served: `/api/v1/*` (excluding the public `/api/v1/status/*` endpoint,
+  which has no API-key requirement but is included so external monitoring can
+  see its shape).
+  """
+
+  alias OpenApiSpex.{Components, Info, OpenApi, SecurityScheme, Server}
+  alias SovraWeb.OpenApiHelpers
 
   @behaviour OpenApi
 
@@ -9,23 +18,23 @@ defmodule SovraWeb.ApiSpec do
       info: %Info{
         title: "Sovra API",
         version: "1.0.0",
-        description: "Self-sovereign identity platform implementing OID4VCI credential issuance."
+        description:
+          "Server-to-server API for credential issuance and verification. " <>
+            "Authenticated with a workspace API key passed as " <>
+            "`Authorization: Bearer sovra_sk_...`."
       },
       servers: [%Server{url: "http://localhost:4000"}],
-      paths: Paths.from_router(SovraWeb.Router),
+      paths: OpenApiHelpers.paths_with_prefix(SovraWeb.Router, "/api/v1/"),
       components: %Components{
         securitySchemes: %{
-          "UserCookieAuth" => %SecurityScheme{
-            type: "apiKey",
-            in: "cookie",
-            name: "session"
-          },
-          "BearerAuth" => %SecurityScheme{
+          "ApiKeyAuth" => %SecurityScheme{
             type: "http",
-            scheme: "bearer"
+            scheme: "bearer",
+            description: "Workspace API key. Format: `Bearer sovra_sk_...`."
           }
         }
-      }
+      },
+      security: [%{"ApiKeyAuth" => []}]
     }
     |> OpenApiSpex.resolve_schema_modules()
   end

@@ -9,11 +9,11 @@ defmodule SovraWeb.AuthControllerTest do
   alias Sovra.Auth.PasswordReset
   alias Sovra.Auth.RefreshTokens
 
-  describe "POST /api/v1/auth/register" do
+  describe "POST /dashboard/auth/register" do
     setup do
       # Reset the per-IP rate limit bucket so tests in this describe don't
       # collide on the 5/min/IP cap.
-      Hammer.delete_buckets("rate_limit:/api/v1/auth/register:127.0.0.1")
+      Hammer.delete_buckets("rate_limit:/dashboard/auth/register:127.0.0.1")
       :ok
     end
 
@@ -24,7 +24,7 @@ defmodule SovraWeb.AuthControllerTest do
       conn =
         conn
         |> put_req_header("content-type", "application/json")
-        |> post("/api/v1/auth/register", %{
+        |> post("/dashboard/auth/register", %{
           "email" => email,
           "password" => "a-very-strong-password-123",
           "full_name" => "Riley Register"
@@ -38,8 +38,11 @@ defmodule SovraWeb.AuthControllerTest do
       assert [_workspace] = resp["workspaces"]
 
       cookies = conn.resp_cookies
-      assert %{value: _, http_only: true} = cookies["session"]
-      assert %{value: _, http_only: true} = cookies["refresh_token"]
+      # Session cookie is scoped to /dashboard so every dashboard endpoint
+      # receives it; refresh cookie is scoped to /dashboard/auth so it only
+      # travels on refresh/logout.
+      assert %{value: _, http_only: true, path: "/dashboard"} = cookies["session"]
+      assert %{value: _, http_only: true, path: "/dashboard/auth"} = cookies["refresh_token"]
 
       assert_enqueued(worker: MailerJob, args: %{"kind" => "welcome"})
     end
@@ -48,7 +51,7 @@ defmodule SovraWeb.AuthControllerTest do
       conn =
         conn
         |> put_req_header("content-type", "application/json")
-        |> post("/api/v1/auth/register", %{
+        |> post("/dashboard/auth/register", %{
           "email" => "x",
           "password" => "short",
           "full_name" => ""
@@ -67,7 +70,7 @@ defmodule SovraWeb.AuthControllerTest do
       # First registration succeeds.
       conn
       |> put_req_header("content-type", "application/json")
-      |> post("/api/v1/auth/register", %{
+      |> post("/dashboard/auth/register", %{
         "email" => email,
         "password" => "a-very-strong-password-123",
         "full_name" => "First Person"
@@ -78,7 +81,7 @@ defmodule SovraWeb.AuthControllerTest do
       conn2 =
         build_conn()
         |> put_req_header("content-type", "application/json")
-        |> post("/api/v1/auth/register", %{
+        |> post("/dashboard/auth/register", %{
           "email" => email,
           "password" => "a-different-strong-password-456",
           "full_name" => "Second Person"
@@ -97,7 +100,7 @@ defmodule SovraWeb.AuthControllerTest do
 
       conn
       |> put_req_header("content-type", "application/json")
-      |> post("/api/v1/auth/register", %{
+      |> post("/dashboard/auth/register", %{
         "email" => "#{base}@example.com",
         "password" => "a-very-strong-password-123",
         "full_name" => "Lower Case"
@@ -107,7 +110,7 @@ defmodule SovraWeb.AuthControllerTest do
       conn2 =
         build_conn()
         |> put_req_header("content-type", "application/json")
-        |> post("/api/v1/auth/register", %{
+        |> post("/dashboard/auth/register", %{
           "email" => "#{String.upcase(base)}@EXAMPLE.COM",
           "password" => "a-different-strong-password-456",
           "full_name" => "Upper Case"
@@ -120,7 +123,7 @@ defmodule SovraWeb.AuthControllerTest do
     end
   end
 
-  describe "POST /api/v1/auth/login" do
+  describe "POST /dashboard/auth/login" do
     setup do
       email = "login-#{System.unique_integer([:positive])}@example.com"
 
@@ -139,7 +142,7 @@ defmodule SovraWeb.AuthControllerTest do
       conn =
         conn
         |> put_req_header("content-type", "application/json")
-        |> post("/api/v1/auth/login", %{
+        |> post("/dashboard/auth/login", %{
           "email" => email,
           "password" => "a-very-strong-password-123"
         })
@@ -155,13 +158,13 @@ defmodule SovraWeb.AuthControllerTest do
       conn =
         conn
         |> put_req_header("content-type", "application/json")
-        |> post("/api/v1/auth/login", %{"email" => email, "password" => "nope-nope-nope"})
+        |> post("/dashboard/auth/login", %{"email" => email, "password" => "nope-nope-nope"})
 
       assert json_response(conn, 401) == %{"error" => "invalid_credentials"}
     end
   end
 
-  describe "POST /api/v1/auth/refresh" do
+  describe "POST /dashboard/auth/refresh" do
     test "rotates refresh token and mints new access cookie", %{conn: conn} do
       email = "rf-#{System.unique_integer([:positive])}@example.com"
 
@@ -178,7 +181,7 @@ defmodule SovraWeb.AuthControllerTest do
       conn =
         conn
         |> put_req_cookie("refresh_token", refresh_plaintext)
-        |> post("/api/v1/auth/refresh")
+        |> post("/dashboard/auth/refresh")
 
       resp = json_response(conn, 200)
       assert resp["user"]["email"] == email
@@ -192,7 +195,7 @@ defmodule SovraWeb.AuthControllerTest do
     end
 
     test "missing cookie → 401", %{conn: conn} do
-      conn = post(conn, "/api/v1/auth/refresh")
+      conn = post(conn, "/dashboard/auth/refresh")
       assert json_response(conn, 401) == %{"error" => "invalid_refresh"}
     end
 
@@ -200,7 +203,7 @@ defmodule SovraWeb.AuthControllerTest do
       conn =
         conn
         |> put_req_cookie("refresh_token", "garbage")
-        |> post("/api/v1/auth/refresh")
+        |> post("/dashboard/auth/refresh")
 
       assert json_response(conn, 401) == %{"error" => "invalid_refresh"}
     end
@@ -229,15 +232,17 @@ defmodule SovraWeb.AuthControllerTest do
       conn =
         conn
         |> put_req_cookie("refresh_token", refresh_plaintext)
-        |> post("/api/v1/auth/refresh")
+        |> post("/dashboard/auth/refresh")
 
       assert json_response(conn, 401) == %{"error" => "invalid_refresh"}
-      assert %{max_age: 0} = conn.resp_cookies["session"]
-      assert %{max_age: 0} = conn.resp_cookies["refresh_token"]
+      # Deletion must target the same paths as the cookies set originally,
+      # otherwise the browser keeps the stale cookies.
+      assert %{max_age: 0, path: "/dashboard"} = conn.resp_cookies["session"]
+      assert %{max_age: 0, path: "/dashboard/auth"} = conn.resp_cookies["refresh_token"]
     end
   end
 
-  describe "POST /api/v1/auth/password/reset-request" do
+  describe "POST /dashboard/auth/password/reset-request" do
     test "always returns 200 (no enumeration) and enqueues a mailer for known email",
          %{conn: conn} do
       email = "reset-#{System.unique_integer([:positive])}@example.com"
@@ -250,7 +255,7 @@ defmodule SovraWeb.AuthControllerTest do
         })
         |> Sovra.Repo.insert()
 
-      conn = post(conn, "/api/v1/auth/password/reset-request", %{"email" => email})
+      conn = post(conn, "/dashboard/auth/password/reset-request", %{"email" => email})
       assert json_response(conn, 200) == %{"ok" => true}
 
       assert_enqueued(worker: MailerJob, args: %{"kind" => "password_reset"})
@@ -258,7 +263,7 @@ defmodule SovraWeb.AuthControllerTest do
 
     test "returns 200 for unknown email and does NOT enqueue", %{conn: conn} do
       conn =
-        post(conn, "/api/v1/auth/password/reset-request", %{
+        post(conn, "/dashboard/auth/password/reset-request", %{
           "email" => "ghost-#{System.unique_integer([:positive])}@example.com"
         })
 
@@ -267,7 +272,7 @@ defmodule SovraWeb.AuthControllerTest do
     end
   end
 
-  describe "POST /api/v1/auth/password/reset" do
+  describe "POST /dashboard/auth/password/reset" do
     test "consumes token, updates password, sends mailer", %{conn: conn} do
       email = "rcfm-#{System.unique_integer([:positive])}@example.com"
 
@@ -288,7 +293,7 @@ defmodule SovraWeb.AuthControllerTest do
       assert_email_sent(subject: "Reset your Sovra password")
 
       conn =
-        post(conn, "/api/v1/auth/password/reset", %{
+        post(conn, "/dashboard/auth/password/reset", %{
           "token" => token,
           "password" => "a-new-strong-password-456"
         })
@@ -302,7 +307,7 @@ defmodule SovraWeb.AuthControllerTest do
       conn =
         build_conn()
         |> put_req_header("content-type", "application/json")
-        |> post("/api/v1/auth/login", %{
+        |> post("/dashboard/auth/login", %{
           "email" => email,
           "password" => "a-new-strong-password-456"
         })
@@ -312,7 +317,7 @@ defmodule SovraWeb.AuthControllerTest do
 
     test "invalid token → 422", %{conn: conn} do
       conn =
-        post(conn, "/api/v1/auth/password/reset", %{
+        post(conn, "/dashboard/auth/password/reset", %{
           "token" => "definitely-not-real",
           "password" => "a-new-strong-password-456"
         })
@@ -321,7 +326,7 @@ defmodule SovraWeb.AuthControllerTest do
     end
   end
 
-  describe "POST /api/v1/auth/logout" do
+  describe "POST /dashboard/auth/logout" do
     test "clears cookies and revokes tokens", %{conn: conn} do
       email = "lo-#{System.unique_integer([:positive])}@example.com"
 
@@ -336,7 +341,7 @@ defmodule SovraWeb.AuthControllerTest do
       login_conn =
         build_conn()
         |> put_req_header("content-type", "application/json")
-        |> post("/api/v1/auth/login", %{
+        |> post("/dashboard/auth/login", %{
           "email" => email,
           "password" => "a-very-strong-password-123"
         })
@@ -348,12 +353,12 @@ defmodule SovraWeb.AuthControllerTest do
         conn
         |> put_req_cookie("session", session)
         |> put_req_cookie("refresh_token", refresh)
-        |> post("/api/v1/auth/logout")
+        |> post("/dashboard/auth/logout")
 
       assert json_response(conn, 200) == %{"ok" => true}
-      # Cookies are cleared with max_age: 0 in the response.
-      assert %{max_age: 0} = conn.resp_cookies["session"]
-      assert %{max_age: 0} = conn.resp_cookies["refresh_token"]
+      # Cookies are cleared with max_age: 0 at the same paths used to set them.
+      assert %{max_age: 0, path: "/dashboard"} = conn.resp_cookies["session"]
+      assert %{max_age: 0, path: "/dashboard/auth"} = conn.resp_cookies["refresh_token"]
 
       # The refresh token is revoked server-side too — re-presenting it fails.
       assert {:error, _} = RefreshTokens.rotate(refresh)
@@ -363,7 +368,7 @@ defmodule SovraWeb.AuthControllerTest do
   describe "Origin allow-list (CSRF defense-in-depth)" do
     setup do
       # Reset the Hammer rate-limit bucket so prior tests don't interfere.
-      Hammer.delete_buckets("rate_limit:/api/v1/auth/refresh:127.0.0.1")
+      Hammer.delete_buckets("rate_limit:/dashboard/auth/refresh:127.0.0.1")
       :ok
     end
 
@@ -372,7 +377,7 @@ defmodule SovraWeb.AuthControllerTest do
         conn
         |> put_req_header("content-type", "application/json")
         |> put_req_header("origin", "https://attacker.example")
-        |> post("/api/v1/auth/refresh")
+        |> post("/dashboard/auth/refresh")
 
       assert json_response(conn, 403) == %{"error" => "origin_not_allowed"}
     end
@@ -381,7 +386,7 @@ defmodule SovraWeb.AuthControllerTest do
       conn =
         conn
         |> put_req_header("content-type", "application/json")
-        |> post("/api/v1/auth/refresh")
+        |> post("/dashboard/auth/refresh")
 
       # Doesn't 403 from the origin plug; gets a normal auth failure instead
       # (no refresh cookie present).

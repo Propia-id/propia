@@ -1,0 +1,192 @@
+{
+  "info": {
+    "_postman_id": "sovra-api-key-collection",
+    "name": "Sovra — API Key endpoints",
+    "description": "Server-to-server endpoints authenticated by a workspace API key.\n\nAll requests require:\n\n```\nAuthorization: Bearer {{apiKey}}\n```\n\nThe key must be a workspace API key issued from the dashboard or via `POST /dashboard/workspaces/{workspace_id}/api_keys` (prefix `sovra_sk_`). Set `baseUrl` and `apiKey` in the collection variables (or override per environment).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{apiKey}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000",
+      "type": "string"
+    },
+    {
+      "key": "apiKey",
+      "value": "sovra_sk_replace_me",
+      "type": "string"
+    },
+    {
+      "key": "credentialId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "verificationId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "schemaId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Issuer",
+      "description": "Server-to-server issuer lifecycle ops scoped to the authenticated workspace.",
+      "item": [
+        {
+          "name": "Create credential offer",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/issuer/credential-offer",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "issuer", "credential-offer"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schema_id\": \"{{schemaId}}\",\n  \"claims\": {\n    \"given_name\": \"Ada\",\n    \"family_name\": \"Lovelace\"\n  }\n}",
+              "options": {
+                "raw": { "language": "json" }
+              }
+            },
+            "description": "Create an issuer-initiated credential offer. Requires `schema_id`; `claims` are pre-bound to the offer and copied into the issued credential when the holder redeems it.\n\nRate limit: 120 req/min per API key."
+          }
+        },
+        {
+          "name": "List issued credentials",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/issuer/credentials",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "issuer", "credentials"]
+            },
+            "description": "List all credentials issued by the authenticated workspace."
+          }
+        },
+        {
+          "name": "Get issued credential",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/issuer/credentials/{{credentialId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "issuer", "credentials", "{{credentialId}}"]
+            },
+            "description": "Return metadata for a credential. The same id covers the full lifecycle: while the holder hasn't claimed yet the response has `status: \"pending\"` (or `\"expired\"` if the offer window passed) with a null credential payload; after issuance, status reflects the live revocation state."
+          }
+        },
+        {
+          "name": "Update credential status",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/issuer/credentials/{{credentialId}}/status/revoked",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "issuer", "credentials", "{{credentialId}}", "status", "revoked"],
+              "variable": [
+                {
+                  "key": "status",
+                  "value": "revoked",
+                  "description": "Target status: `revoked` (permanent), `suspended` (reversible), or `issued` (un-suspend)."
+                }
+              ]
+            },
+            "description": "Idempotent status transition. Allowed values: `revoked`, `suspended`, `issued`. On the API-key pipeline the workspace's API key is sufficient."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Verifier",
+      "description": "OID4VP verification sessions scoped to the authenticated workspace.",
+      "item": [
+        {
+          "name": "Create verification session",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/verifier/verifications",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "verifier", "verifications"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dcql_query\": {\n    \"credentials\": [\n      {\n        \"id\": \"my_credential\",\n        \"format\": \"vc+sd-jwt\",\n        \"meta\": { \"vct_values\": [\"https://example.org/credentials/identity\"] },\n        \"claims\": [\n          { \"path\": [\"given_name\"] },\n          { \"path\": [\"family_name\"] }\n        ]\n      }\n    ]\n  }\n}",
+              "options": {
+                "raw": { "language": "json" }
+              }
+            },
+            "description": "Start an OID4VP verification session. `dcql_query` follows the OID4VP DCQL spec — list the credentials and claims you want the wallet to disclose."
+          }
+        },
+        {
+          "name": "List verification sessions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/verifier/verifications?status=&limit=50&offset=0",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "verifier", "verifications"],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "",
+                  "description": "Optional filter (e.g. `pending`, `completed`, `failed`).",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "Default 50, max 200."
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "List sessions owned by the authenticated workspace, newest first."
+          }
+        },
+        {
+          "name": "Get verification session",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/verifier/verifications/{{verificationId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "verifier", "verifications", "{{verificationId}}"]
+            },
+            "description": "Fetch the current state of a verification session owned by the authenticated workspace."
+          }
+        }
+      ]
+    }
+  ]
+}

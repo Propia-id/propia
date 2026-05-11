@@ -211,7 +211,7 @@ defmodule SovraWeb.Workspaces.WorkspaceController do
     http_only: true,
     secure: Application.compile_env(:sovra, :env) == :prod,
     same_site: "Strict",
-    path: "/api/v1",
+    path: "/dashboard",
     max_age: 3600
   ]
 

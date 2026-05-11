@@ -4,7 +4,7 @@ defmodule SovraWeb.Guardian.AuthController do
 
   tags(["Holder"])
 
-  operation(:auth,
+  operation(:login,
     summary: "Authenticate holder",
     description:
       "Two authentication flows: (1) Send `oauth_token` for native mobile flow — verifies the ID token and returns a session. (2) Send `sovraAddress` for browser flow — returns a Google OAuth authorization URL.",
@@ -97,7 +97,7 @@ defmodule SovraWeb.Guardian.AuthController do
   )
 
   # Native mobile flow: verify ID token directly, issue session
-  def auth(conn, %{"oauth_token" => oauth_token}) do
+  def login(conn, %{"oauth_token" => oauth_token}) do
     case Sovra.Guardian.authenticate_with_token(oauth_token) do
       {:ok, %{session_token: session_token, expires_at: expires_at}} ->
         json(conn, %{sessionToken: session_token, expiresAt: expires_at})
@@ -114,7 +114,7 @@ defmodule SovraWeb.Guardian.AuthController do
   end
 
   # Browser-based flow: redirect to Google OAuth
-  def auth(conn, %{"sovraAddress" => sovra_address}) do
+  def login(conn, %{"sovraAddress" => sovra_address}) do
     case Sovra.Guardian.get_auth_url(sovra_address) do
       {:ok, url} ->
         json(conn, %{authorizationUrl: url})
@@ -127,7 +127,7 @@ defmodule SovraWeb.Guardian.AuthController do
     end
   end
 
-  def auth(conn, _params) do
+  def login(conn, _params) do
     conn |> put_status(400) |> json(%{error: "missing_required_fields"})
   end
 

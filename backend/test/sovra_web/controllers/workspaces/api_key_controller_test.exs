@@ -36,7 +36,7 @@ defmodule SovraWeb.Workspaces.ApiKeyControllerTest do
     create_resp =
       conn
       |> authed(token)
-      |> post("/api/v1/workspaces/#{ws.id}/api_keys", %{"name" => "Prod"})
+      |> post("/dashboard/workspaces/#{ws.id}/api_keys", %{"name" => "Prod"})
       |> json_response(201)
 
     assert String.starts_with?(create_resp["api_key"], "sovra_sk_")
@@ -46,7 +46,7 @@ defmodule SovraWeb.Workspaces.ApiKeyControllerTest do
     list_resp =
       conn
       |> authed(token)
-      |> get("/api/v1/workspaces/#{ws.id}/api_keys")
+      |> get("/dashboard/workspaces/#{ws.id}/api_keys")
       |> json_response(200)
 
     [listed] = list_resp["api_keys"]
@@ -57,7 +57,7 @@ defmodule SovraWeb.Workspaces.ApiKeyControllerTest do
     revoke_resp =
       conn
       |> authed(token)
-      |> post("/api/v1/workspaces/#{ws.id}/api_keys/#{key_id}/revoke")
+      |> post("/dashboard/workspaces/#{ws.id}/api_keys/#{key_id}/revoke")
       |> json_response(200)
 
     assert revoke_resp["revoked_at"]
@@ -77,7 +77,7 @@ defmodule SovraWeb.Workspaces.ApiKeyControllerTest do
     conn =
       conn
       |> authed(member_token)
-      |> post("/api/v1/workspaces/#{ws.id}/api_keys", %{"name" => "Try"})
+      |> post("/dashboard/workspaces/#{ws.id}/api_keys", %{"name" => "Try"})
 
     assert json_response(conn, 403) == %{"error" => "workspace_admin_required"}
   end
@@ -90,7 +90,7 @@ defmodule SovraWeb.Workspaces.ApiKeyControllerTest do
     resp =
       conn
       |> authed(token)
-      |> post("/api/v1/workspaces/#{ws.id}/api_keys", %{"name" => "Tmp"})
+      |> post("/dashboard/workspaces/#{ws.id}/api_keys", %{"name" => "Tmp"})
       |> json_response(201)
 
     plaintext = resp["api_key"]
@@ -98,7 +98,7 @@ defmodule SovraWeb.Workspaces.ApiKeyControllerTest do
 
     conn
     |> authed(token)
-    |> post("/api/v1/workspaces/#{ws.id}/api_keys/#{key_id}/revoke")
+    |> post("/dashboard/workspaces/#{ws.id}/api_keys/#{key_id}/revoke")
 
     reject_conn =
       build_conn()

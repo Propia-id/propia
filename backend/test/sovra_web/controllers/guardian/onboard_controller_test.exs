@@ -5,10 +5,10 @@ defmodule SovraWeb.Guardian.OnboardControllerTest do
 
   import Sovra.GuardianHelpers
 
-  describe "POST /api/v1/holder/onboard" do
+  describe "POST /wallet/auth/onboard" do
     test "creates holder and returns recovery public key", %{conn: conn} do
       conn =
-        post(conn, "/api/v1/holder/onboard", %{
+        post(conn, "/wallet/auth/onboard", %{
           "sovraAddress" => test_address("onboard_test"),
           "oauthToken" => MockAuthProvider.valid_token()
         })
@@ -19,13 +19,13 @@ defmodule SovraWeb.Guardian.OnboardControllerTest do
     end
 
     test "returns 409 for duplicate address", %{conn: conn} do
-      post(conn, "/api/v1/holder/onboard", %{
+      post(conn, "/wallet/auth/onboard", %{
         "sovraAddress" => test_address("dup_test"),
         "oauthToken" => MockAuthProvider.valid_token()
       })
 
       conn =
-        post(conn, "/api/v1/holder/onboard", %{
+        post(conn, "/wallet/auth/onboard", %{
           "sovraAddress" => test_address("dup_test"),
           "oauthToken" => MockAuthProvider.valid_token_2()
         })
@@ -37,13 +37,13 @@ defmodule SovraWeb.Guardian.OnboardControllerTest do
       addr_a = test_address("ctrl_device_a")
       addr_b = test_address("ctrl_device_b")
 
-      post(conn, "/api/v1/holder/onboard", %{
+      post(conn, "/wallet/auth/onboard", %{
         "sovraAddress" => addr_a,
         "oauthToken" => MockAuthProvider.valid_token()
       })
 
       conn =
-        post(conn, "/api/v1/holder/onboard", %{
+        post(conn, "/wallet/auth/onboard", %{
           "sovraAddress" => addr_b,
           "oauthToken" => MockAuthProvider.valid_token()
         })
@@ -56,7 +56,7 @@ defmodule SovraWeb.Guardian.OnboardControllerTest do
 
     test "returns 401 for invalid token", %{conn: conn} do
       conn =
-        post(conn, "/api/v1/holder/onboard", %{
+        post(conn, "/wallet/auth/onboard", %{
           "sovraAddress" => test_address("invalid_token"),
           "oauthToken" => "bad-token"
         })
@@ -65,7 +65,7 @@ defmodule SovraWeb.Guardian.OnboardControllerTest do
     end
 
     test "returns 400 for missing fields", %{conn: conn} do
-      conn = post(conn, "/api/v1/holder/onboard", %{})
+      conn = post(conn, "/wallet/auth/onboard", %{})
 
       assert %{"error" => "missing_required_fields"} = json_response(conn, 400)
     end

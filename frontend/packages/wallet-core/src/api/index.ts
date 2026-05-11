@@ -78,7 +78,7 @@ export class ApiClient {
 
     // Attach session token to authenticated requests
     this.backend.interceptors.request.use((req) => {
-      if (this.sessionToken && (req.url?.startsWith("/api/v1/holder/") || req.url?.startsWith("/api/v1/recovery/"))) {
+      if (this.sessionToken && (req.url?.startsWith("/wallet/auth/") || req.url?.startsWith("/wallet/recovery/"))) {
         req.headers.Authorization = `Bearer ${this.sessionToken}`;
       }
       return req;
@@ -112,7 +112,7 @@ export class ApiClient {
 
   async holderOnboard(sovraAddress: string, oauthToken: string): Promise<OnboardResponse> {
     const { data } = await this.backend.post<OnboardResponse>(
-      "/api/v1/holder/onboard",
+      "/wallet/auth/onboard",
       { sovraAddress, oauthToken },
     );
     return data;
@@ -120,7 +120,7 @@ export class ApiClient {
 
   async holderAuth(oauthToken: string): Promise<AuthResponse> {
     const { data } = await this.backend.post<AuthResponse>(
-      "/api/v1/holder/auth",
+      "/wallet/auth/login",
       { oauth_token: oauthToken },
     );
     return data;
@@ -130,7 +130,7 @@ export class ApiClient {
 
   async recoverySign(hash: Uint8Array): Promise<SignResponse> {
     const { data } = await this.backend.post<SignResponse>(
-      "/api/v1/recovery/sign",
+      "/wallet/recovery/sign",
       { hash: bytesToHex(hash) },
     );
     return data;
@@ -142,7 +142,7 @@ export class ApiClient {
     keyToReplace: number;
   }): Promise<RecoverySignatureResponse> {
     const { data } = await this.backend.post<RecoverySignatureResponse>(
-      "/api/v1/recovery/initiate",
+      "/wallet/recovery/initiate",
       { newKeyX: params.newKeyX, newKeyY: params.newKeyY, keyToReplace: params.keyToReplace },
     );
     return data;
@@ -150,7 +150,7 @@ export class ApiClient {
 
   async recoveryFinalize(): Promise<RecoverySignatureResponse> {
     const { data } = await this.backend.post<RecoverySignatureResponse>(
-      "/api/v1/recovery/finalize",
+      "/wallet/recovery/finalize",
       {},
     );
     return data;
@@ -158,7 +158,7 @@ export class ApiClient {
 
   async rotateRecoveryKey(): Promise<RotateRecoveryKeyResponse> {
     const { data } = await this.backend.post<RotateRecoveryKeyResponse>(
-      "/api/v1/recovery/rotate-key",
+      "/wallet/recovery/rotate-key",
       {},
     );
     return data;

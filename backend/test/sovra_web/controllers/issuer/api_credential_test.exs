@@ -8,7 +8,7 @@ defmodule SovraWeb.Issuer.ApiCredentialTest do
       PUT /api/v1/issuer/credentials/:id/status/:status
 
   Same controller actions back the dashboard mount under
-  `/api/v1/issuer/admin/credentials`; that path is exercised in
+  `/dashboard/issuer/credentials`; that path is exercised in
   `admin_credential_status_test.exs`.
   """
   use SovraWeb.ConnCase, async: false

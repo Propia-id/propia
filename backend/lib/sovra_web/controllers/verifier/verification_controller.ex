@@ -28,7 +28,7 @@ defmodule SovraWeb.Verifier.VerificationController do
       authorization_request_uri_ref: %OpenApiSpex.Schema{
         type: :string,
         description:
-          "Pass-by-reference URI \u2014 short, points at /api/v1/verify/request/:id which serves the full request object as JSON. Use when DCQL queries grow large enough to make the QR dense."
+          "Pass-by-reference URI \u2014 short, points at /wallet/verifier/request/:id which serves the full request object as JSON. Use when DCQL queries grow large enough to make the QR dense."
       },
       status: %OpenApiSpex.Schema{type: :string},
       expires_at: %OpenApiSpex.Schema{type: :string, format: :"date-time"}

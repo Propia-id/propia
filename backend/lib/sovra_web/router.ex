@@ -56,15 +56,45 @@ defmodule SovraWeb.Router do
     plug SovraWeb.Plugs.RateLimitPlug, max_requests: 120, window_ms: 60_000
   end
 
-  # OpenAPI spec & Swagger UI
-  scope "/api" do
+  pipeline :put_dashboard_api_spec do
+    plug OpenApiSpex.Plug.PutApiSpec, module: SovraWeb.DashboardApiSpec
+  end
+
+  pipeline :put_wallet_api_spec do
+    plug OpenApiSpex.Plug.PutApiSpec, module: SovraWeb.WalletApiSpec
+  end
+
+  pipeline :put_integration_api_spec do
+    plug OpenApiSpex.Plug.PutApiSpec, module: SovraWeb.ApiSpec
+  end
+
+  # OpenAPI specs (one per audience)
+  scope "/openapi" do
+    pipe_through [:api, :put_dashboard_api_spec]
+    get "/dashboard", OpenApiSpex.Plug.RenderSpec, []
+  end
+
+  scope "/openapi" do
+    pipe_through [:api, :put_wallet_api_spec]
+    get "/wallet", OpenApiSpex.Plug.RenderSpec, []
+  end
+
+  scope "/openapi" do
+    pipe_through [:api, :put_integration_api_spec]
+    get "/api", OpenApiSpex.Plug.RenderSpec, []
+  end
+
+  # Legacy /api/openapi → integrator spec (301)
+  scope "/api", SovraWeb do
     pipe_through :api
-    get "/openapi", OpenApiSpex.Plug.RenderSpec, []
+    get "/openapi", LegacyOpenApiController, :redirect_to_api_spec
   end
 
   if Application.compile_env(:sovra, :dev_routes) do
     scope "/dev" do
-      get "/swaggerui", OpenApiSpex.Plug.SwaggerUI, path: "/api/openapi"
+      get "/swaggerui/dashboard", OpenApiSpex.Plug.SwaggerUI, path: "/openapi/dashboard"
+      get "/swaggerui/wallet", OpenApiSpex.Plug.SwaggerUI, path: "/openapi/wallet"
+      get "/swaggerui/api", OpenApiSpex.Plug.SwaggerUI, path: "/openapi/api"
       forward "/mailbox", Plug.Swoosh.MailboxPreview
     end
   end
@@ -94,34 +124,10 @@ defmodule SovraWeb.Router do
         :show_by_id
   end
 
-  # Issuer API (OID4VCI holder flow — public by design)
-  scope "/api/v1/issuer", SovraWeb.Issuer do
-    pipe_through :api
+  # ── /dashboard — staff session-authenticated + bootstrap ──────────────
 
-    post "/authorize", CredentialController, :authorize
-    post "/credential", CredentialController, :issue
-    get "/metadata/:workspace_did", MetadataController, :show_by_id
-
-    get "/credential-manifests", ManifestController, :index
-    get "/credential-manifests/:schema_id", ManifestController, :show
-  end
-
-  # Credential offer (API-key-gated, server-to-server issuer-initiated flow)
-  scope "/api/v1/issuer", SovraWeb.Issuer do
-    pipe_through [:api, :api_key, :offer_rate_limited]
-
-    post "/credential-offer", OfferController, :create
-  end
-
-  # Token endpoint with rate limiting
-  scope "/api/v1/issuer", SovraWeb.Issuer do
-    pipe_through [:api, :token_rate_limited]
-
-    post "/token", CredentialController, :token
-  end
-
-  # Public auth endpoints (rate limited + Origin allow-list on mutations)
-  scope "/api/v1/auth", SovraWeb do
+  # Bootstrap (session-minting). Rate-limited + Origin allow-list.
+  scope "/dashboard/auth", SovraWeb do
     pipe_through [:api, :auth_rate_limited, :auth_origin_check]
 
     post "/register", AuthController, :register
@@ -132,8 +138,8 @@ defmodule SovraWeb.Router do
     post "/password/reset", AuthController, :password_reset_confirm
   end
 
-  # Issuer admin API (authenticated)
-  scope "/api/v1/issuer/admin", SovraWeb.Issuer do
+  # Issuer admin
+  scope "/dashboard/issuer", SovraWeb.Issuer do
     pipe_through [:api, :user_session]
 
     get "/profile", AdminController, :get_issuer
@@ -152,7 +158,7 @@ defmodule SovraWeb.Router do
 
   # Verification listings on the dashboard (JWT session) — reuses the
   # workspace-scoped controller actions also exposed under /api/v1/verifier/.
-  scope "/api/v1/issuer/admin", SovraWeb.Verifier do
+  scope "/dashboard/issuer", SovraWeb.Verifier do
     pipe_through [:api, :user_session]
 
     get "/verifications", VerificationController, :index
@@ -160,33 +166,22 @@ defmodule SovraWeb.Router do
   end
 
   # Admin-only credential status changes (workspace admin required)
-  scope "/api/v1/issuer/admin", SovraWeb.Issuer do
+  scope "/dashboard/issuer", SovraWeb.Issuer do
     pipe_through [:api, :user_session, :require_workspace_admin]
 
     put "/credentials/:id/status/:status", AdminController, :update_credential_status
   end
 
-  # Issuer credential API (workspace API key — server-to-server lifecycle ops).
-  # Same controller actions as the dashboard mount above; both pipelines assign
-  # `current_workspace_id`, so AdminController is auth-agnostic here.
-  scope "/api/v1/issuer", SovraWeb.Issuer do
-    pipe_through [:api, :api_key]
-
-    get "/credentials", AdminController, :list_issued_credentials
-    get "/credentials/:id", AdminController, :show_issued_credential
-    put "/credentials/:id/status/:status", AdminController, :update_credential_status
-  end
-
-  # Super-admin API (admin role required)
-  scope "/api/v1/issuer/admin", SovraWeb.Issuer do
+  # Super-admin (admin role required)
+  scope "/dashboard/issuer", SovraWeb.Issuer do
     pipe_through [:api, :user_session, :require_admin]
 
     get "/issuers", AdminController, :list_issuers
     post "/issuers", AdminController, :create_issuer_account
   end
 
-  # Organizations API (authenticated; any member can read their orgs)
-  scope "/api/v1/organizations", SovraWeb.Organizations do
+  # Organizations
+  scope "/dashboard/organizations", SovraWeb.Organizations do
     pipe_through [:api, :user_session]
 
     post "/", OrganizationController, :create
@@ -194,23 +189,21 @@ defmodule SovraWeb.Router do
     get "/:org_id", OrganizationController, :show
   end
 
-  # Organization admin operations (owner or admin)
-  scope "/api/v1/organizations", SovraWeb.Organizations do
+  scope "/dashboard/organizations", SovraWeb.Organizations do
     pipe_through [:api, :user_session, :require_org_admin]
 
     patch "/:org_id", OrganizationController, :update
     get "/:org_id/members", OrganizationController, :list_members
   end
 
-  # Organization owner-only operations
-  scope "/api/v1/organizations", SovraWeb.Organizations do
+  scope "/dashboard/organizations", SovraWeb.Organizations do
     pipe_through [:api, :user_session, :require_org_owner]
 
     post "/:org_id/deactivate", OrganizationController, :deactivate
   end
 
   # Org-scoped workspace collection ops (admin/owner only)
-  scope "/api/v1/organizations/:org_id/workspaces", SovraWeb.Workspaces do
+  scope "/dashboard/organizations/:org_id/workspaces", SovraWeb.Workspaces do
     pipe_through [:api, :user_session, :require_org_admin]
 
     get "/", WorkspaceController, :list
@@ -221,8 +214,8 @@ defmodule SovraWeb.Router do
          :retry_provisioning
   end
 
-  # Workspace API — any authenticated user (reads for members)
-  scope "/api/v1/workspaces", SovraWeb.Workspaces do
+  # Workspace reads (any member)
+  scope "/dashboard/workspaces", SovraWeb.Workspaces do
     pipe_through [:api, :user_session]
 
     get "/", WorkspaceController, :index
@@ -231,7 +224,7 @@ defmodule SovraWeb.Router do
   end
 
   # Workspace admin operations (workspace admin required)
-  scope "/api/v1/workspaces", SovraWeb.Workspaces do
+  scope "/dashboard/workspaces", SovraWeb.Workspaces do
     pipe_through [:api, :user_session, :require_workspace_admin]
 
     patch "/:workspace_id", WorkspaceController, :update
@@ -250,7 +243,82 @@ defmodule SovraWeb.Router do
     post "/:workspace_id/api_keys/:id/revoke", ApiKeyController, :revoke
   end
 
-  # Verifier API (workspace API key — server-to-server, used to start OID4VP sessions)
+  # ── /wallet — wallet-facing protocol + holder auth + recovery ─────────
+
+  # OID4VCI holder flow (public — protocol-authenticated)
+  scope "/wallet/issuer", SovraWeb.Issuer do
+    pipe_through :api
+
+    post "/authorize", CredentialController, :authorize
+    post "/credential", CredentialController, :issue
+    get "/metadata/:workspace_did", MetadataController, :show_by_id
+
+    get "/credential-manifests", ManifestController, :index
+    get "/credential-manifests/:schema_id", ManifestController, :show
+  end
+
+  # Token endpoint with rate limiting
+  scope "/wallet/issuer", SovraWeb.Issuer do
+    pipe_through [:api, :token_rate_limited]
+
+    post "/token", CredentialController, :token
+  end
+
+  # OID4VP — wallet-facing verification endpoints
+  scope "/wallet/verifier", SovraWeb.Verify do
+    pipe_through :api
+
+    post "/presentation", PresentationController, :verify
+    get "/did/:did", PresentationController, :resolve_did
+  end
+
+  # Wallet direct_post submission and request retrieval (rate-limited)
+  scope "/wallet/verifier", SovraWeb.Verify do
+    pipe_through [:api, :offer_rate_limited]
+
+    post "/direct_post/:session_id", DirectPostController, :submit
+    get "/request/:session_id", RequestController, :show
+  end
+
+  # Holder onboarding & login (public)
+  scope "/wallet/auth", SovraWeb.Guardian do
+    pipe_through :api
+
+    post "/onboard", OnboardController, :onboard
+    post "/login", AuthController, :login
+    post "/callback", AuthController, :callback
+  end
+
+  # Recovery operations (require fresh holder session — token issued within
+  # the last 5 minutes)
+  scope "/wallet/recovery", SovraWeb.Guardian do
+    pipe_through [:api, :fresh_guardian_session]
+
+    post "/rotate-key", RotateController, :rotate
+    post "/initiate", RecoveryController, :initiate_recovery
+    post "/finalize", RecoveryController, :finalize
+  end
+
+  # ── /api/v1 — server-to-server (workspace API key) ────────────────────
+
+  # Credential offer (API-key-gated, issuer-initiated)
+  scope "/api/v1/issuer", SovraWeb.Issuer do
+    pipe_through [:api, :api_key, :offer_rate_limited]
+
+    post "/credential-offer", OfferController, :create
+  end
+
+  # Credential lifecycle (workspace API key)
+  scope "/api/v1/issuer", SovraWeb.Issuer do
+    pipe_through [:api, :api_key]
+
+    get "/credentials", AdminController, :list_issued_credentials
+    get "/credentials/:id", AdminController, :show_issued_credential
+    put "/credentials/:id/status/:status", AdminController, :update_credential_status
+  end
+
+  # Verifier API (workspace API key — server-to-server, used to start OID4VP
+  # sessions)
   scope "/api/v1/verifier", SovraWeb.Verifier do
     pipe_through [:api, :api_key]
 
@@ -259,45 +327,11 @@ defmodule SovraWeb.Router do
     get "/verifications/:id", VerificationController, :show
   end
 
-  # Verification API
-  scope "/api/v1/verify", SovraWeb.Verify do
-    pipe_through :api
-
-    post "/presentation", PresentationController, :verify
-    get "/did/:did", PresentationController, :resolve_did
-  end
-
-  # Wallet direct_post submission (public, rate-limited)
-  scope "/api/v1/verify", SovraWeb.Verify do
-    pipe_through [:api, :offer_rate_limited]
-
-    post "/direct_post/:session_id", DirectPostController, :submit
-    get "/request/:session_id", RequestController, :show
-  end
-
-  # Status list API (public, cacheable, rate-limited because each cold request
-  # fans out to the on-chain registry and triggers a P-256 signature)
+  # Status list API (public, cacheable). Path is IMMUTABLE — already-issued
+  # VCs embed this URL inside their `status` claim.
   scope "/api/v1/status", SovraWeb.Verify do
-    pipe_through [:api, :offer_rate_limited]
+    pipe_through :api
 
     get "/:issuer_did/:purpose", StatusListController, :show
-  end
-
-  # Holder onboarding & auth (public)
-  scope "/api/v1/holder", SovraWeb.Guardian do
-    pipe_through :api
-
-    post "/onboard", OnboardController, :onboard
-    post "/auth", AuthController, :auth
-    post "/auth/callback", AuthController, :callback
-  end
-
-  # Recovery operations (require fresh auth — token issued within last 5 minutes)
-  scope "/api/v1/recovery", SovraWeb.Guardian do
-    pipe_through [:api, :fresh_guardian_session]
-
-    post "/rotate-key", RotateController, :rotate
-    post "/initiate", RecoveryController, :initiate_recovery
-    post "/finalize", RecoveryController, :finalize
   end
 end

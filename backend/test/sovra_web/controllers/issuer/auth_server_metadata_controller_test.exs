@@ -47,7 +47,7 @@ defmodule SovraWeb.Issuer.AuthServerMetadataControllerTest do
 
       assert json = json_response(resp, 200)
       assert json["issuer"] == "#{base_url}/#{workspace.did}"
-      assert json["token_endpoint"] == "#{base_url}/api/v1/issuer/token"
+      assert json["token_endpoint"] == "#{base_url}/wallet/issuer/token"
 
       assert json["grant_types_supported"] == [
                "urn:ietf:params:oauth:grant-type:pre-authorized_code"
