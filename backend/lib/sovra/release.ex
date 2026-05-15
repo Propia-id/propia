@@ -19,5 +19,6 @@ defmodule Sovra.Release do
   defp load_app do
     Application.ensure_all_started(:ssl)
     Application.ensure_loaded(@app)
+    Application.ensure_all_started(:req)
   end
 end

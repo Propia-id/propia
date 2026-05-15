@@ -32,10 +32,12 @@ defmodule Sovra.Crypto.VaultHmacStore do
            json: body,
            headers: auth_headers(token)
          ) do
-      {:ok, %{status: 200, body: %{"data" => %{"hmac" => "vault:v1:" <> b64}}}} ->
-        case Base.decode64(b64) do
-          {:ok, sig} -> {:ok, sig}
-          :error -> {:error, :invalid_signature}
+      {:ok, %{status: 200, body: %{"data" => %{"hmac" => "vault:v" <> rest}}}} ->
+        with [_version, b64] <- String.split(rest, ":", parts: 2),
+             {:ok, sig} <- Base.decode64(b64) do
+          {:ok, sig}
+        else
+          _ -> {:error, :invalid_signature}
         end
 
       {:ok, %{status: status, body: body}} ->

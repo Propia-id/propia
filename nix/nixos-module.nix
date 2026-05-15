@@ -153,6 +153,7 @@ in
         PHX_HOST = cfg.domain;
         PORT = toString cfg.port;
         ISSUER_BASE_URL = "https://${cfg.domain}";
+        ISSUER_FRONTEND_URL = "https://${cfg.domain}";
       } // lib.optionalAttrs cfg.localVault {
         VAULT_ADDR = "http://127.0.0.1:8200";
       };

@@ -334,6 +334,8 @@ Set automatically by the NixOS module (not in env file):
 | `PHX_HOST` | Public domain name (from `services.sovra.domain`) |
 | `PHX_SERVER` | Always `true` |
 | `PORT` | Phoenix listen port (default 4000) |
+| `ISSUER_BASE_URL` | Public issuer URL (`https://<domain>`) |
+| `ISSUER_FRONTEND_URL` | Frontend URL for CORS + origin allow-list (`https://<domain>`) |
 | `VAULT_ADDR` | OpenBao address (default `http://127.0.0.1:8200` when `localVault = true`) |
 
 Optional (on-chain features -- omit `ADMIN_PRIVATE_KEY` to skip all):

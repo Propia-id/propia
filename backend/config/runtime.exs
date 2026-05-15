@@ -33,10 +33,12 @@ if frontend_url = System.get_env("ISSUER_FRONTEND_URL") do
   config :cors_plug, origin: [frontend_url], credentials: true, max_age: 86_400
 end
 
-# Vault/OpenBao config — available in all environments when VAULT_ADDR is set
-if System.get_env("VAULT_ADDR") do
+# Vault/OpenBao config — gated on VAULT_TOKEN (the secret) so any environment
+# with a token gets configured. URL defaults to local OpenBao, matching the
+# NixOS module's localVault setup; override with VAULT_ADDR for remote vaults.
+if System.get_env("VAULT_TOKEN") do
   config :sovra, :vault,
-    url: System.fetch_env!("VAULT_ADDR"),
+    url: System.get_env("VAULT_ADDR", "http://127.0.0.1:8200"),
     token: System.fetch_env!("VAULT_TOKEN"),
     transit_mount: System.get_env("VAULT_TRANSIT_MOUNT", "transit")
 end
