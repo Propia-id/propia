@@ -36,6 +36,17 @@ config :sovra,
   google_client_secret: "test-client-secret",
   google_redirect_uri: "http://localhost:4002/wallet/auth/callback"
 
+# Vault — Req.Test plug so VaultTokenRenewer's HTTP calls can be stubbed.
+# Token-renewal intervals are tiny so failure/retry timing can be asserted.
+config :sovra, :vault,
+  url: "http://vault.test",
+  token: "test-token",
+  vault_req_opts: [plug: {Req.Test, :sovra_vault}],
+  token_renewal_interval_ms: 5_000,
+  token_renewal_retry_interval_ms: 50,
+  token_renewal_degraded_interval_ms: 300,
+  token_renewal_max_consecutive_failures: 3
+
 # Oban — manual mode so jobs don't run unless asserted on
 config :sovra, Oban, testing: :manual
 
