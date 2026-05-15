@@ -132,7 +132,7 @@ defmodule SovraWeb.Verify.DirectPostControllerTest do
       "sd_hash" => ctx.sd_hash
     }
 
-    ctx.sd_jwt <> build_kb(ctx.holder_keys, payload)
+    Jason.encode!(%{"diploma" => ctx.sd_jwt <> build_kb(ctx.holder_keys, payload)})
   end
 
   describe "POST /wallet/verifier/direct_post/:session_id" do
@@ -181,6 +181,65 @@ defmodule SovraWeb.Verify.DirectPostControllerTest do
         worker: Sovra.Webhooks.DeliveryJob,
         args: %{"event" => "presentation.failed"}
       )
+    end
+
+    test "200 with a vp_token missing the DCQL credential id records a failure", %{conn: conn} do
+      ctx = setup_pending_session()
+
+      Application.put_env(:sovra, {StubResolver, :keys}, [
+        %{kty: "EC", crv: "P-256", x: ctx.holder_keys.x, y: ctx.holder_keys.y}
+      ])
+
+      payload = %{
+        "iss" => ctx.holder_did,
+        "aud" => "verifier:#{ctx.verifier_ws.id}",
+        "nonce" => ctx.session.nonce,
+        "iat" => System.system_time(:second),
+        "sd_hash" => ctx.sd_hash
+      }
+
+      # Wrong DCQL key — the session asks for "diploma".
+      vp = Jason.encode!(%{"other_id" => ctx.sd_jwt <> build_kb(ctx.holder_keys, payload)})
+
+      _resp =
+        conn
+        |> post("/wallet/verifier/direct_post/#{ctx.session.id}", %{
+          "vp_token" => vp,
+          "state" => ctx.session.state
+        })
+        |> json_response(200)
+
+      {:ok, refreshed} = Verification.get_session(ctx.session.id)
+      assert refreshed.status == "failed"
+      assert refreshed.error == "malformed_vp_token"
+    end
+
+    test "200 (no-op) when resubmitting against an already-terminal session", %{conn: conn} do
+      ctx = setup_pending_session()
+
+      # First submission: malformed → session goes to "failed".
+      conn
+      |> post("/wallet/verifier/direct_post/#{ctx.session.id}", %{
+        "vp_token" => "not-a-valid-vp-token",
+        "state" => ctx.session.state
+      })
+      |> json_response(200)
+
+      {:ok, %{status: "failed", error: original_error}} =
+        Verification.get_session(ctx.session.id)
+
+      # Second submission against the same (now terminal) session must not
+      # 500 and must not overwrite the original outcome.
+      conn
+      |> post("/wallet/verifier/direct_post/#{ctx.session.id}", %{
+        "vp_token" => valid_vp_token(ctx),
+        "state" => ctx.session.state
+      })
+      |> json_response(200)
+
+      {:ok, refreshed} = Verification.get_session(ctx.session.id)
+      assert refreshed.status == "failed"
+      assert refreshed.error == original_error
     end
 
     test "404 when session id doesn't match the state", %{conn: conn} do

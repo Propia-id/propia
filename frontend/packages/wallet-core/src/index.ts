@@ -17,6 +17,7 @@ export type {
   RecoverySignatureResponse,
   TokenResponse,
   IssuerMetadata,
+  AuthServerMetadata,
 } from "./api/index";
 
 // State stores

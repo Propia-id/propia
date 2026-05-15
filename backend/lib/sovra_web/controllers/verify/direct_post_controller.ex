@@ -45,8 +45,20 @@ defmodule SovraWeb.Verify.DirectPostController do
       {:ok, vp_token, state} ->
         with {:ok, session} <- Verification.get_session_by_state(state),
              true <- session.id == session_id do
-          {:ok, _} = Verification.submit_presentation(state, vp_token)
-          json(conn, %{})
+          # Always 200 once the session matched: any pipeline failure is
+          # reported via webhook, and a resubmission against an already-
+          # terminal session is silently ignored — the original outcome
+          # already shipped.
+          case Verification.submit_presentation(state, vp_token) do
+            {:ok, _session} ->
+              json(conn, %{})
+
+            {:error, :session_not_pending} ->
+              json(conn, %{})
+
+            {:error, :session_not_found} ->
+              conn |> put_status(404) |> json(%{error: "session_not_found"})
+          end
         else
           {:error, :session_not_found} ->
             conn |> put_status(404) |> json(%{error: "session_not_found"})

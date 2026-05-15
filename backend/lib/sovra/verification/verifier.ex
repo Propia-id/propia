@@ -47,7 +47,8 @@ defmodule Sovra.Verification.Verifier do
   end
 
   defp run_pipeline(session, vp_token, opts) do
-    with {:ok, parts} <- parse_vp_token(vp_token, session),
+    with {:ok, sd_jwt_vp} <- unwrap_dcql_response(vp_token, session),
+         {:ok, parts} <- parse_vp_token(sd_jwt_vp, session),
          {:ok, sd_payload, issuer_ws} <- verify_issuer_signature(parts, session),
          {:ok, holder_did} <- extract_holder_did(sd_payload, session),
          {:ok, holder_keys} <- resolve_holder_keys(holder_did, session, opts),
@@ -67,6 +68,20 @@ defmodule Sovra.Verification.Verifier do
   end
 
   # ── Pipeline steps ─────────────────────────────────────
+
+  # OID4VP 1.0 §7.2: when the request used DCQL, `vp_token` is a JSON-encoded
+  # object whose keys are DCQL credential ids and whose values are the
+  # corresponding presentations. Pull the entry that matches the credential
+  # the verifier asked for; reject anything that doesn't match that shape.
+  defp unwrap_dcql_response(vp_token, session) do
+    with {:ok, decoded} <- Jason.decode(vp_token),
+         %{"credentials" => [%{"id" => id} | _]} <- session.dcql_query,
+         %{^id => sd_jwt_vp} when is_binary(sd_jwt_vp) and sd_jwt_vp != "" <- decoded do
+      {:ok, sd_jwt_vp}
+    else
+      _ -> fail(session, "malformed_vp_token", nil)
+    end
+  end
 
   defp parse_vp_token(vp_token, session) do
     case SDJWT.parse(vp_token) do

@@ -71,4 +71,29 @@ defmodule SovraWeb.Issuer.AuthServerMetadataControllerTest do
       assert json_response(resp, 404)
     end
   end
+
+  describe "GET /:workspace_did/.well-known/oauth-authorization-server (path-concat form)" do
+    test "returns AS metadata scoped to the workspace DID", %{conn: conn} do
+      workspace = create_workspace()
+
+      base_url = Sovra.Issuer.ClaimUtils.base_url()
+      resp = conn |> get("/#{workspace.did}/.well-known/oauth-authorization-server")
+
+      assert json = json_response(resp, 200)
+      assert json["issuer"] == "#{base_url}/#{workspace.did}"
+      assert json["token_endpoint"] == "#{base_url}/wallet/issuer/token"
+
+      assert json["grant_types_supported"] == [
+               "urn:ietf:params:oauth:grant-type:pre-authorized_code"
+             ]
+
+      assert json["pre-authorized_grant_anonymous_access_supported"] == true
+    end
+
+    test "404 when the workspace DID is unknown", %{conn: conn} do
+      resp = conn |> get("/did:sovra:nonexistent/.well-known/oauth-authorization-server")
+
+      assert %{"error" => "issuer_not_found"} = json_response(resp, 404)
+    end
+  end
 end

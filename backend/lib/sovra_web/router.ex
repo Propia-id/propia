@@ -107,11 +107,13 @@ defmodule SovraWeb.Router do
 
   # Issuer metadata (well-known)
   #
-  # The two well-known documents follow different URL-construction rules:
-  #   - Issuer metadata (OID4VCI 1.0 §11.2): the path component of the
-  #     Credential Issuer Identifier comes *before* /.well-known/...
-  #   - AS metadata (RFC 8414 §3): /.well-known/... is inserted *between*
-  #     the host and the path component.
+  # Issuer metadata (OID4VCI 1.0 §11.2) uses path concatenation: the path
+  # component of the Credential Issuer Identifier comes *before* /.well-known/...
+  #
+  # AS metadata: when the issuer identifier has a path component, OID4VCI 1.0
+  # §11.2.3 requires *both* discovery forms — RFC 8414 §3 insertion (well-known
+  # between host and path) AND path concatenation (well-known appended after
+  # the path). Wallets may use either, so we serve both.
   scope "/", SovraWeb.Issuer do
     pipe_through :api
 
@@ -120,6 +122,10 @@ defmodule SovraWeb.Router do
         :show_by_id
 
     get "/.well-known/oauth-authorization-server/:workspace_did",
+        AuthServerMetadataController,
+        :show_by_id
+
+    get "/:workspace_did/.well-known/oauth-authorization-server",
         AuthServerMetadataController,
         :show_by_id
   end

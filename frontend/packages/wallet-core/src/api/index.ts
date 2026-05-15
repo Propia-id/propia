@@ -37,7 +37,7 @@ export interface TokenResponse {
 export interface IssuerMetadata {
   credential_issuer: string;
   credential_endpoint: string;
-  token_endpoint: string;
+  authorization_servers?: string[];
   credential_configurations_supported: Record<
     string,
     {
@@ -50,6 +50,13 @@ export interface IssuerMetadata {
     }
   >;
   display?: Array<{ name: string; locale?: string }>;
+}
+
+export interface AuthServerMetadata {
+  issuer: string;
+  token_endpoint: string;
+  grant_types_supported?: string[];
+  token_endpoint_auth_methods_supported?: string[];
 }
 
 export interface JsonRpcResponse<T = unknown> {
@@ -169,6 +176,17 @@ export class ApiClient {
   async fetchIssuerMetadata(issuerUrl: string): Promise<IssuerMetadata> {
     const { data } = await axios.get<IssuerMetadata>(
       `${issuerUrl}/.well-known/openid-credential-issuer`,
+    );
+    return data;
+  }
+
+  // OID4VCI 1.0 §11.2.3 path-concatenation form. The Credential Issuer is
+  // required to also serve the RFC 8414 insertion form, but the wallet picks
+  // one — concat keeps the URL rooted at the AS identifier and matches how
+  // we discover issuer metadata.
+  async fetchAuthServerMetadata(asUrl: string): Promise<AuthServerMetadata> {
+    const { data } = await axios.get<AuthServerMetadata>(
+      `${asUrl}/.well-known/oauth-authorization-server`,
     );
     return data;
   }

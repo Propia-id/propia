@@ -109,8 +109,8 @@ defmodule Sovra.Verification.VerifierTest do
     signing_input <> "." <> sig_b64
   end
 
-  defp build_vp_token(sd_jwt_with_disclosures, kb_jwt) do
-    sd_jwt_with_disclosures <> kb_jwt
+  defp build_vp_token(sd_jwt_with_disclosures, kb_jwt, dcql_id \\ "diploma") do
+    Jason.encode!(%{dcql_id => sd_jwt_with_disclosures <> kb_jwt})
   end
 
   defp dcql_query do
@@ -231,7 +231,9 @@ defmodule Sovra.Verification.VerifierTest do
       tampered = Enum.join([h, p, bogus_sig], ".")
 
       assert {:ok, session} =
-               Verification.submit_presentation(ctx.session.state, ctx.sd_jwt <> tampered,
+               Verification.submit_presentation(
+                 ctx.session.state,
+                 build_vp_token(ctx.sd_jwt, tampered),
                  did_resolver: StubResolver
                )
 
@@ -301,7 +303,7 @@ defmodule Sovra.Verification.VerifierTest do
       tampered_sd_jwt = Enum.join([tampered_jwt | rest], "~")
 
       kb = build_kb_jwt(ctx.holder_keys, default_kb_payload(ctx))
-      vp = tampered_sd_jwt <> kb
+      vp = build_vp_token(tampered_sd_jwt, kb)
 
       assert {:ok, session} = Verification.submit_presentation(ctx.session.state, vp)
       assert session.status == "failed"
@@ -358,7 +360,7 @@ defmodule Sovra.Verification.VerifierTest do
       }
 
       kb = build_kb_jwt(holder_keys, kb_payload)
-      vp = sd_jwt <> kb
+      vp = build_vp_token(sd_jwt, kb)
 
       StubResolver.configure(
         {:ok, [%{kty: "EC", crv: "P-256", x: holder_keys.x, y: holder_keys.y}]}
@@ -395,7 +397,7 @@ defmodule Sovra.Verification.VerifierTest do
       }
 
       kb = build_kb_jwt(ctx.holder_keys, kb_payload)
-      vp = ctx.sd_jwt <> kb
+      vp = build_vp_token(ctx.sd_jwt, kb, "x")
 
       configure_resolver_with_holder_key(ctx)
 

@@ -92,25 +92,33 @@ export class IssuanceProtocol {
       offer.credential_issuer,
     );
 
-    // 2. Exchange pre-authorized code for access token
+    // 2. Discover the Authorization Server's token endpoint via AS metadata.
+    // Per OID4VCI 1.0, token_endpoint lives on the AS metadata document, not
+    // on the issuer document. If authorization_servers is absent, the
+    // credential issuer doubles as its own AS.
+    const asUrl =
+      metadata.authorization_servers?.[0] ?? offer.credential_issuer;
+    const asMetadata = await this.api.fetchAuthServerMetadata(asUrl);
+
+    // 3. Exchange pre-authorized code for access token
     const grant =
       offer.grants[
         "urn:ietf:params:oauth:grant-type:pre-authorized_code"
       ];
     const tokenResponse = await this.api.exchangeToken(
-      metadata.token_endpoint,
+      asMetadata.token_endpoint,
       grant["pre-authorized_code"],
       txCode,
     );
 
-    // 3. Build proof-of-possession JWT
+    // 4. Build proof-of-possession JWT
     const proofJwt = await this.buildProofJwt(
       identity,
       offer.credential_issuer,
       tokenResponse.c_nonce,
     );
 
-    // 4. Request credential
+    // 5. Request credential
     const credConfigId = offer.credential_configuration_ids[0];
     const sdJwtString = await this.api.requestCredential(
       metadata.credential_endpoint,
@@ -119,12 +127,12 @@ export class IssuanceProtocol {
       credConfigId,
     );
 
-    // 5. Extract issuer info from metadata
+    // 6. Extract issuer info from metadata
     const issuerName =
       metadata.display?.[0]?.name ?? offer.credential_issuer;
     const issuerDid = `did:sovra:${new URL(offer.credential_issuer).hostname}`;
 
-    // 6. Store credential
+    // 7. Store credential
     return this.credentialManager.storeCredential(sdJwtString, {
       issuerDid,
       issuerName,
