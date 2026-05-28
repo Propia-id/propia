@@ -85,3 +85,18 @@
 1. Create wallet: set up PIN, optionally enable biometrics, generate holder DID.
 2. Receive credentials: scan QR, auto-detect protocol, accept credential, enter PIN if required.
 3. Present credentials: scan verifier QR, select credentials, choose fields for selective disclosure, send presentation.
+
+## Plans
+
+- **Stripe**: Stripe is the payment processor for plans.
+- **One plan per workspace**: every workspace has exactly one active plan at any time.
+- **Default plan**: when a workspace has no associated plan, it starts on the `free` plan.
+
+## Product Experience (section 09)
+
+Sections 01–08 above describe the **platform contract** — what any implementer must do to be Sovra-compatible. Section 09 (`spec/09-product-experience/`) describes the **Sovra reference operator UI** layered on top of that contract. The two layers are kept separate by design:
+
+- **Why a separate section** -- Implementers who want to build their own operator UI (different visual builders, alternative wizard flows, different billing page) only need to honor sections 01–08. They are not required to mirror section 09.
+- **Mode toggle** -- The Sovra UI offers a per-user **Normal** / **Developer** toggle. Normal mode hides all JSON / payload / output-descriptor / protocol-level detail and forces credential creation through the 5-step wizard. Developer mode reveals JSON previews on every relevant surface (schema builder, design builder, credential detail, verification detail) and adds a "Wizard or JSON" dialog before credential creation.
+- **Wizard ordering** -- The Sovra wizard enforces the natural product ordering: schema → design → credential. Step 1 selects (or creates) a schema, step 2 selects (or creates) a design bound to that schema, step 3 fills credential data via a table or CSV, step 4 previews each card, step 5 issues and shows per-credential distribution artifacts.
+- **Cross-reference discipline** -- Every file in section 09 begins with a blockquote pointing to its platform-contract counterpart. If a section-09 requirement appears to conflict with a section 01–08 requirement, the platform contract wins.

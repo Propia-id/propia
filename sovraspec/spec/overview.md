@@ -26,3 +26,9 @@ An event system that notifies workspaces and the central platform of significant
 
 ### Security
 Authentication via JWT, API keys, and credential-based login. Cryptographic key management in a dedicated KMS with per-workspace key rings. OAuth2/OIDC authorization server with support for pre-authorized code grants, authorization codes with PKCE, and PAR. Nonce-based replay protection.
+
+### Plans, Billing & Subscriptions
+Tiered plans (Free, Limited, Enterprise) with resource limits enforced across all creation endpoints. Each workspace has exactly one subscription (1:1). Stripe integration for paid plans in development environments; non-development environments default to Enterprise plan with unlimited resources and skip Stripe entirely. Usage tracking, billing analytics, and invoice management.
+
+### Product Experience (Sovra reference UI)
+The canonical operator experience layered on top of the platform contract. Defines a per-user Normal / Developer mode toggle that gates JSON visibility and credential-creation paths; visual builders for schemas and designs; a five-step credential issuance wizard (with a Developer-mode JSON-direct alternative); operator-facing screens for credential lifecycle, verification, webhook configuration, and billing. Every requirement in this section references its underlying platform contract — sections 01–08 remain product-agnostic; section 09 is Sovra-specific.

@@ -36,3 +36,16 @@
 - [ ] OID4VP Draft 24 alignment
 - [ ] DIF Presentation Exchange v3 support
 - [ ] Trust framework integration (trust lists, trusted issuer registries)
+
+## Product Experience (section 09)
+- [ ] Per-user mode preference that follows the user across workspaces
+- [ ] Mode-aware onboarding tour (different paths for Normal vs Developer)
+- [ ] Schema templates (start from a pre-filled diploma, ID card, ticket, etc.)
+- [ ] Design templates (visual presets per industry) and design duplication
+- [ ] Resume issuance wizard from local draft at step 3 (table data)
+- [ ] CSV template auto-mapping when column names match schema fields
+- [ ] Bulk distribution by email (issue + send invitation in one step)
+- [ ] Verification templates (reusable presentation requests) and result export
+- [ ] Delivery-log viewer with manual replay of failed webhook deliveries
+- [ ] Self-service downgrade flow with confirmation
+- [ ] Per-resource usage alerts (email at 80% / 100% of plan limit)

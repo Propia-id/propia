@@ -14,6 +14,7 @@ The platform covers the full digital identity lifecycle:
 - **Wallet** -- Holders receive, store, manage, and present their credentials from a secure digital wallet.
 - **Credential lifecycle** -- Credentials move through defined states (active, suspended, revoked, expired) with full audit history and public status publication.
 - **Event system** -- All significant actions produce webhook events with dual delivery (first to the workspace, then to the central platform with the workspace's response).
+- **Product experience (Sovra reference UI)** -- The canonical operator-facing UI layered on top of the platform contract: a Normal / Developer mode toggle that gates JSON visibility, visual builders for schemas and designs, a five-step issuance wizard plus a Developer-mode JSON-direct path, and operator-facing screens for credential lifecycle, verification, webhook configuration, and billing.
 
 ## Approach
 
@@ -22,3 +23,4 @@ The platform covers the full digital identity lifecycle:
 - **Multi-format credentials**: Support W3C VC (JSON/JWT), mDoc (CBOR), and SD-JWT formats.
 - **Interoperability**: Any company must be able to implement this specification using whatever architecture, language, or infrastructure they prefer. No proprietary dependencies.
 - **Security by design**: Cryptographic key management in dedicated KMS, PIN and biometric protection in the wallet, HMAC-signed webhooks, nonce-based replay protection, and OAuth2/OIDC authorization flows.
+- **Plans**: workspaces are governed by plans, paid via Stripe. A workspace without an associated plan defaults to the free plan.
