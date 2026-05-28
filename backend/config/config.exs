@@ -24,6 +24,12 @@ config :sovra,
     issuer_registry_address: nil
   ]
 
+config :sovra, :quarkid_resolver,
+  base_url: "https://node.sovra.io/resolve/",
+  request_timeout_ms: 5_000,
+  doc_cache_ttl_s: 300,
+  negative_cache_ttl_s: 30
+
 # Configure the endpoint
 config :sovra, SovraWeb.Endpoint,
   url: [host: "localhost"],

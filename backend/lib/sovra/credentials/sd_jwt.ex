@@ -11,7 +11,7 @@ defmodule Sovra.Credentials.SDJWT do
   resolves disclosures against the SD-JWT's `_sd` digest array.
   """
 
-  alias Sovra.Crypto.P256
+  alias Sovra.Crypto.{Ed25519, P256}
 
   @doc """
   Splits a vp_token string into its SD-JWT, disclosures, and KB-JWT parts.
@@ -84,9 +84,10 @@ defmodule Sovra.Credentials.SDJWT do
   end
 
   @doc """
-  Verifies a KB-JWT's ES256 signature against a list of candidate keys.
-  Returns `{:ok, %{header, payload}}` if the signature verifies under any
-  key in the list, `{:error, :invalid_kb_signature}` otherwise.
+  Verifies a KB-JWT signature against a list of candidate keys, dispatching on
+  the JWT header's `alg` (`ES256` → P-256, `EdDSA` → Ed25519). Returns
+  `{:ok, %{header, payload}}` if the signature verifies under any key whose
+  curve matches `alg`, `{:error, :invalid_kb_signature}` otherwise.
 
   The KB-JWT's own `header.jwk` is **not** trusted — callers supply the
   authoritative key set (typically resolved from the holder's DID).
@@ -95,21 +96,32 @@ defmodule Sovra.Credentials.SDJWT do
       when is_binary(kb_jwt) and is_list(valid_keys) and valid_keys != [] do
     with {:ok, %{header: header, payload: payload, signing_input: input, sig_bytes: sig}} <-
            decode_jwt(kb_jwt),
-         true <- header["alg"] == "ES256",
-         <<r::binary-32, s::binary-32>> <- sig do
-      hash = :crypto.hash(:sha256, input)
-
-      if Enum.any?(valid_keys, fn %{x: x, y: y} -> P256.verify(hash, %{r: r, s: s}, {x, y}) end) do
-        {:ok, %{header: header, payload: payload}}
-      else
-        {:error, :invalid_kb_signature}
-      end
+         true <- verify_kb_with_alg(header["alg"], input, sig, valid_keys) do
+      {:ok, %{header: header, payload: payload}}
     else
       _ -> {:error, :invalid_kb_signature}
     end
   end
 
   def verify_kb_signature(_, _), do: {:error, :invalid_kb_signature}
+
+  defp verify_kb_with_alg("ES256", input, <<r::binary-32, s::binary-32>>, keys) do
+    hash = :crypto.hash(:sha256, input)
+
+    Enum.any?(keys, fn
+      %{crv: "P-256", x: x, y: y} -> P256.verify(hash, %{r: r, s: s}, {x, y})
+      _ -> false
+    end)
+  end
+
+  defp verify_kb_with_alg("EdDSA", input, sig, keys) when byte_size(sig) == 64 do
+    Enum.any?(keys, fn
+      %{crv: "Ed25519", x: x} -> Ed25519.verify(input, sig, x)
+      _ -> false
+    end)
+  end
+
+  defp verify_kb_with_alg(_, _, _, _), do: false
 
   @doc """
   Computes the value the KB-JWT's `sd_hash` claim must equal:

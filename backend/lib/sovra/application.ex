@@ -19,6 +19,7 @@ defmodule Sovra.Application do
         {Task.Supervisor, name: Sovra.TaskSupervisor},
         {Oban, Application.fetch_env!(:sovra, Oban)},
         Sovra.Auth.TokenDenylist,
+        Sovra.DID.DocumentCache,
         SovraWeb.Endpoint
       ]
       |> maybe_add_key_store()

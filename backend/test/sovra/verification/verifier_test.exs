@@ -543,4 +543,147 @@ defmodule Sovra.Verification.VerifierTest do
                submit(ctx, default_kb_payload(ctx), revocation_registry: StubRegistryOk)
     end
   end
+
+  describe "submit_presentation/3 — EdDSA (did:quarkid:sovra) holder" do
+    defp generate_ed25519_holder_keys do
+      {pub, priv} = :crypto.generate_key(:eddsa, :ed25519)
+      %{priv: priv, pub: pub}
+    end
+
+    defp build_kb_jwt_eddsa(holder_keys, payload) do
+      header = %{
+        "alg" => "EdDSA",
+        "typ" => "kb+jwt",
+        "jwk" => %{
+          "kty" => "OKP",
+          "crv" => "Ed25519",
+          "x" => Base.url_encode64(holder_keys.pub, padding: false)
+        }
+      }
+
+      header_b64 = Base.url_encode64(Jason.encode!(header), padding: false)
+      payload_b64 = Base.url_encode64(Jason.encode!(payload), padding: false)
+      signing_input = header_b64 <> "." <> payload_b64
+
+      sig = :crypto.sign(:eddsa, :none, signing_input, [holder_keys.priv, :ed25519])
+      sig_b64 = Base.url_encode64(sig, padding: false)
+
+      signing_input <> "." <> sig_b64
+    end
+
+    defp setup_quarkid_session do
+      issuer_ws = create_workspace("Issuer")
+      verifier_ws = create_workspace("Verifier")
+      holder_keys = generate_ed25519_holder_keys()
+
+      holder_did =
+        "did:quarkid:sovra:Ei" <> Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)
+
+      {:ok, sd_jwt} =
+        Sovra.Issuer.SDJWT.build(
+          issuer_ws,
+          create_schema(issuer_ws.id),
+          %{"studentName" => "Alice", "degree" => "BSc"},
+          holder_did
+        )
+
+      {:ok, %{session: session}} = Verification.create_session(verifier_ws.id, dcql_query())
+      {issuer_jwt, disclosures} = parts_of(sd_jwt)
+      sd_hash = Sovra.Credentials.SDJWT.compute_sd_hash(issuer_jwt, disclosures)
+
+      %{
+        issuer_ws: issuer_ws,
+        verifier_ws: verifier_ws,
+        holder_keys: holder_keys,
+        holder_did: holder_did,
+        sd_jwt: sd_jwt,
+        session: session,
+        sd_hash: sd_hash
+      }
+    end
+
+    test "EdDSA-signed KB-JWT with Ed25519 holder key resolves and completes" do
+      ctx = setup_quarkid_session()
+
+      StubResolver.configure({:ok, [%{kty: "OKP", crv: "Ed25519", x: ctx.holder_keys.pub}]})
+
+      kb_payload = %{
+        "iss" => ctx.holder_did,
+        "aud" => "verifier:#{ctx.verifier_ws.id}",
+        "nonce" => ctx.session.nonce,
+        "iat" => System.system_time(:second),
+        "sd_hash" => ctx.sd_hash
+      }
+
+      kb = build_kb_jwt_eddsa(ctx.holder_keys, kb_payload)
+      vp = ctx.sd_jwt <> kb
+
+      assert {:ok, session} =
+               Verification.submit_presentation(ctx.session.state, vp,
+                 revocation_registry: StubRegistryOk,
+                 did_resolver: StubResolver
+               )
+
+      assert session.status == "completed"
+      assert session.holder_did == ctx.holder_did
+    end
+
+    test "tampered EdDSA KB-JWT signature -> holder_key_mismatch" do
+      ctx = setup_quarkid_session()
+
+      StubResolver.configure({:ok, [%{kty: "OKP", crv: "Ed25519", x: ctx.holder_keys.pub}]})
+
+      kb_payload = %{
+        "iss" => ctx.holder_did,
+        "aud" => "verifier:#{ctx.verifier_ws.id}",
+        "nonce" => ctx.session.nonce,
+        "iat" => System.system_time(:second),
+        "sd_hash" => ctx.sd_hash
+      }
+
+      kb = build_kb_jwt_eddsa(ctx.holder_keys, kb_payload)
+      [h, p, _sig] = String.split(kb, ".")
+      bogus_sig = Base.url_encode64(:crypto.strong_rand_bytes(64), padding: false)
+      tampered = Enum.join([h, p, bogus_sig], ".")
+      vp = ctx.sd_jwt <> tampered
+
+      assert {:ok, session} =
+               Verification.submit_presentation(ctx.session.state, vp,
+                 revocation_registry: StubRegistryOk,
+                 did_resolver: StubResolver
+               )
+
+      assert session.status == "failed"
+      assert session.error == "holder_key_mismatch"
+    end
+
+    test "EdDSA KB-JWT against a P-256-only key list -> holder_key_mismatch" do
+      ctx = setup_quarkid_session()
+
+      # Resolver returns a P-256 key, but the KB-JWT is EdDSA. No key whose crv
+      # matches the alg → verification fails.
+      {:ok, %{public_key_x: x, public_key_y: y}} = Sovra.Crypto.P256.generate_key_pair()
+      StubResolver.configure({:ok, [%{kty: "EC", crv: "P-256", x: x, y: y}]})
+
+      kb_payload = %{
+        "iss" => ctx.holder_did,
+        "aud" => "verifier:#{ctx.verifier_ws.id}",
+        "nonce" => ctx.session.nonce,
+        "iat" => System.system_time(:second),
+        "sd_hash" => ctx.sd_hash
+      }
+
+      kb = build_kb_jwt_eddsa(ctx.holder_keys, kb_payload)
+      vp = ctx.sd_jwt <> kb
+
+      assert {:ok, session} =
+               Verification.submit_presentation(ctx.session.state, vp,
+                 revocation_registry: StubRegistryOk,
+                 did_resolver: StubResolver
+               )
+
+      assert session.status == "failed"
+      assert session.error == "holder_key_mismatch"
+    end
+  end
 end

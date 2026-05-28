@@ -11,6 +11,12 @@ defmodule Sovra.DID.ResolverTest do
       assert {:error, :invalid_did} = Resolver.resolve("did:sovra:not-an-eoa")
     end
 
+    test "delegates did:quarkid:sovra: to QuarkidSovraMethod" do
+      # QuarkidSovraMethod fails on syntactically invalid suffix without
+      # any HTTP call — enough to confirm dispatch reaches it.
+      assert {:error, :invalid_did} = Resolver.resolve("did:quarkid:sovra:has spaces")
+    end
+
     test "rejects unsupported methods" do
       assert {:error, :unsupported_did_method} = Resolver.resolve("did:web:example.com")
       assert {:error, :unsupported_did_method} = Resolver.resolve("did:key:abc")
