@@ -1,5 +1,6 @@
 import type { SecureStorage } from "../platform/index";
 import type { StoredCredential, CredentialStore } from "../state/index";
+import { credentialKey } from "../state/index";
 import { sha256, base64urlDecode, base64urlEncode } from "../utils/index";
 
 // ─── Types ────────────────────────────────────────────
@@ -24,13 +25,32 @@ export interface IssuerInfo {
 
 // ─── Credential Manager ──────────────────────────────
 
-const CREDENTIAL_PREFIX = "sovra.credential.";
-
 export class CredentialManager {
+  /**
+   * Active wallet namespace — the lowercased wallet address. Credentials are
+   * scoped to it so one holder never sees another's. Set on sign-in (and
+   * cleared to null on sign-out) via the app's session wiring.
+   */
+  private namespace: string | null = null;
+
   constructor(
     private storage: SecureStorage,
     private credentialStore: ReturnType<typeof import("../state/index").createCredentialStore>,
   ) {}
+
+  /** Scope all subsequent credential operations to `address` (null = none). */
+  setActiveWallet(address: string | null): void {
+    this.namespace = address ? address.toLowerCase() : null;
+  }
+
+  private requireNamespace(): string {
+    if (!this.namespace) {
+      throw new Error(
+        "CredentialManager: no active wallet — call setActiveWallet() after sign-in",
+      );
+    }
+    return this.namespace;
+  }
 
   /** Parse an SD-JWT string into its components and reconstruct all claims. */
   parseSDJwt(sdJwtString: string): ParsedCredential {
@@ -79,6 +99,7 @@ export class CredentialManager {
     sdJwtString: string,
     issuerInfo: IssuerInfo,
   ): Promise<StoredCredential> {
+    const ns = this.requireNamespace();
     const parsed = this.parseSDJwt(sdJwtString);
 
     const bytes = new Uint8Array(16);
@@ -101,13 +122,11 @@ export class CredentialManager {
       claims: parsed.claims,
     };
 
-    // Store raw SD-JWT in secure storage
-    await this.storage.set(`${CREDENTIAL_PREFIX}${id}`, sdJwtString);
-
-    // Add to in-memory store and persist index
+    // Add to in-memory store and persist under the active wallet's namespace.
+    // persistToStorage writes the index + each raw SD-JWT (including this one).
     const store = this.credentialStore.getState();
     store.addCredential(credential);
-    await store.persistToStorage(this.storage);
+    await store.persistToStorage(this.storage, ns);
 
     return credential;
   }
@@ -146,16 +165,25 @@ export class CredentialManager {
     return sha256(new TextEncoder().encode(hashInput));
   }
 
-  /** Delete a credential from storage. */
+  /** Delete a credential from the active wallet's storage. */
   async deleteCredential(id: string): Promise<void> {
-    await this.storage.delete(`${CREDENTIAL_PREFIX}${id}`);
+    const ns = this.requireNamespace();
+    await this.storage.delete(credentialKey(ns, id));
     const store = this.credentialStore.getState();
     store.removeCredential(id);
-    await store.persistToStorage(this.storage);
+    await store.persistToStorage(this.storage, ns);
   }
 
-  /** Load all credentials from storage into the store. */
+  /**
+   * Load the active wallet's credentials into the store. With no active
+   * wallet set (signed out / session restoring), clears the in-memory list.
+   */
   async loadAll(): Promise<void> {
-    await this.credentialStore.getState().loadFromStorage(this.storage);
+    const store = this.credentialStore.getState();
+    if (!this.namespace) {
+      store.reset();
+      return;
+    }
+    await store.loadFromStorage(this.storage, this.namespace);
   }
 }

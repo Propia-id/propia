@@ -1,4 +1,4 @@
-import { hexToBytes, concatBytes, bytesToHex } from "@sovra/wallet-core/utils";
+import { hexToBytes, concatBytes, bytesToHex } from "@sovrahq/holder-core/utils";
 import { ErrorCode } from "./types";
 import { VerificationError } from "./errors";
 import { ethCall, RpcError, functionSelector, encodeAddress, decodeBool } from "./rpc";

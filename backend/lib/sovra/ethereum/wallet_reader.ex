@@ -65,6 +65,107 @@ defmodule Sovra.Ethereum.WalletReader do
     end
   end
 
+  # AlignedAccount.KeyType enum: 0 = ECDSA, 1 = P256, 2 = WebAuthnP256.
+  @webauthn_p256 2
+
+  @doc """
+  Read the holder's currently-authorized WebAuthn P-256 keys from an
+  `AlignedAccount` contract (the Aligned-backed replacement for
+  `read_passkey/1`).
+
+  Enumerates the account's user keys (`getUserKeysCount` → `getKeyHashAt` →
+  `getUserKeyByHash`) and keeps only `WebAuthnP256` keys whose `validAt`
+  timelock has elapsed — so a pending guardian-recovery key that isn't yet
+  signable on-chain is never returned as a valid identity. Returns the raw
+  32-byte `{x, y}` coordinates of each.
+  """
+  @spec read_aligned_keys(String.t()) :: {:ok, [{binary, binary}]} | {:error, term()}
+  def read_aligned_keys(wallet_address) do
+    with {:ok, count} <- read_user_keys_count(wallet_address) do
+      now = System.os_time(:second)
+
+      keys =
+        0..(count - 1)//1
+        |> Enum.reduce([], fn i, acc ->
+          with {:ok, key_hash} <- read_key_hash_at(wallet_address, i),
+               {:ok, {@webauthn_p256, valid_at, {x, y}}} <-
+                 read_user_key_by_hash(wallet_address, key_hash),
+               true <- valid_at <= now do
+            [{x, y} | acc]
+          else
+            _ -> acc
+          end
+        end)
+        |> Enum.reverse()
+
+      if keys == [], do: {:error, :no_active_keys}, else: {:ok, keys}
+    end
+  end
+
+  @doc """
+  Decode the ABI return of `AlignedAccount.getUserKeyByHash(bytes32)` — a
+  `Key { uint8 keyType; uint48 validAt; bytes publicKey }` struct where
+  `publicKey = abi.encode(bytes32 x, bytes32 y)` (64 bytes for P-256). Pure;
+  exposed for testing.
+  """
+  @spec decode_aligned_key(binary) ::
+          {:ok, {non_neg_integer, non_neg_integer, {binary, binary}}} | {:error, :malformed_key}
+  def decode_aligned_key(raw) when is_binary(raw) do
+    case raw do
+      <<_offset::256, key_type::256, valid_at::256, _pk_off::256, 64::256, x::binary-32,
+        y::binary-32, _::binary>> ->
+        {:ok, {key_type, valid_at, {x, y}}}
+
+      _ ->
+        {:error, :malformed_key}
+    end
+  end
+
+  defp read_user_keys_count(wallet_address) do
+    case Client.call(%{data: selector("getUserKeysCount()")}, to: wallet_address) do
+      {:ok, "0x" <> hex} ->
+        case Integer.parse(hex, 16) do
+          {n, _} -> {:ok, n}
+          :error -> {:error, :malformed_response}
+        end
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  defp read_key_hash_at(wallet_address, index) do
+    data = selector("getKeyHashAt(uint256)") <> <<index::256>>
+
+    case Client.call(%{data: data}, to: wallet_address) do
+      {:ok, "0x" <> hex} ->
+        case Base.decode16(hex, case: :mixed) do
+          {:ok, <<key_hash::binary-32>>} -> {:ok, key_hash}
+          _ -> {:error, :malformed_response}
+        end
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  defp read_user_key_by_hash(wallet_address, <<key_hash::binary-32>>) do
+    data = selector("getUserKeyByHash(bytes32)") <> key_hash
+
+    case Client.call(%{data: data}, to: wallet_address) do
+      {:ok, "0x" <> hex} ->
+        case Base.decode16(hex, case: :mixed) do
+          {:ok, raw} -> decode_aligned_key(raw)
+          _ -> {:error, :malformed_response}
+        end
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  defp selector(signature), do: ExKeccak.hash_256(signature) |> binary_part(0, 4)
+
   defp read_bytes32(wallet_address, signature) do
     selector = ExKeccak.hash_256(signature) |> binary_part(0, 4)
 

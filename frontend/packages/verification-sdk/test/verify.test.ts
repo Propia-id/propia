@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { bytesToHex, keccak256, hexToBytes } from "@sovra/wallet-core/utils";
+import { bytesToHex, keccak256, hexToBytes } from "@sovrahq/holder-core/utils";
 import { verify } from "../src/verify";
 import { ErrorCode } from "../src/types";
 import { VerificationCache } from "../src/cache";
@@ -7,12 +7,23 @@ import { generateKeys, buildPresentation, type FixtureKeys } from "./fixtures";
 
 // ─── RPC Mock Helpers ────────────────────────────────
 
+interface MockOpts {
+  deactivatedIssuer?: boolean;
+  untrusted?: boolean;
+  /** Holder AlignedAccount exposes zero keys. */
+  holderNoKeys?: boolean;
+  /** Holder's only key has validAt in the future (timelock not elapsed). */
+  holderFutureValidAt?: boolean;
+  /** Holder's only key is not a WebAuthnP256 key. */
+  holderWrongKeyType?: boolean;
+}
+
 function buildMockRpcResponses(
   keys: FixtureKeys,
   issuerAddress: string,
   holderAddress: string,
   vct: string,
-  opts: { deactivatedIssuer?: boolean; deactivatedHolder?: boolean; untrusted?: boolean } = {},
+  opts: MockOpts = {},
 ) {
   const slot = (hex: string) => hex.padStart(64, "0");
 
@@ -42,23 +53,29 @@ function buildMockRpcResponses(
   // isTrusted() return
   const trustedResult = "0x" + slot(opts.untrusted ? "0" : "1");
 
-  // Wallet contract view function returns
-  const passkeyXResult = "0x" + bytesToHex(keys.passkey.x, false);
-  const passkeyYResult = "0x" + bytesToHex(keys.passkey.y, false);
-  const recoveryKeyXResult = "0x" + bytesToHex(keys.recovery.x, false);
-  const recoveryKeyYResult = "0x" + bytesToHex(keys.recovery.y, false);
-  const didDeactivatedResult = "0x" + slot(opts.deactivatedHolder ? "1" : "0");
-  const didVersionIdResult = "0x" + slot("1");
+  // Holder AlignedAccount view returns.
+  const keysCountResult = "0x" + slot(opts.holderNoKeys ? "0" : "1");
+  const keyHashResult = "0x" + "11".repeat(32);
+  // Key { uint8 keyType; uint48 validAt; bytes publicKey (== abi.encode(x, y)) }
+  // 2 = WebAuthnP256; validAt "1" is in the past, "ffffffffff" far in the future.
+  const keyType = slot(opts.holderWrongKeyType ? "1" : "2");
+  const validAt = slot(opts.holderFutureValidAt ? "ffffffffff" : "1");
+  const keyStructResult =
+    "0x" +
+    slot("20") + // struct offset
+    keyType +
+    validAt +
+    slot("60") + // publicKey offset
+    slot("40") + // publicKey length = 64
+    bytesToHex(keys.passkey.x, false) +
+    bytesToHex(keys.passkey.y, false);
 
   return {
     resolveResult,
     trustedResult,
-    passkeyXResult,
-    passkeyYResult,
-    recoveryKeyXResult,
-    recoveryKeyYResult,
-    didDeactivatedResult,
-    didVersionIdResult,
+    keysCountResult,
+    keyHashResult,
+    keyStructResult,
   };
 }
 
@@ -67,7 +84,7 @@ function createFetchMock(
   issuerAddress: string,
   holderAddress: string,
   vct: string,
-  opts: { deactivatedIssuer?: boolean; deactivatedHolder?: boolean; untrusted?: boolean } = {},
+  opts: MockOpts = {},
 ) {
   const responses = buildMockRpcResponses(keys, issuerAddress, holderAddress, vct, opts);
 
@@ -84,20 +101,19 @@ function createFetchMock(
     } else if (to === "0xissuerregistry") {
       result = responses.trustedResult;
     } else {
-      // Wallet contract — match by function selector
+      // Holder AlignedAccount — match by function selector.
       const selector = calldata.slice(0, 10); // 0x + 8 hex chars
-      const selectors: Record<string, string> = {};
-
-      // Compute selectors for each view function
       const fns = [
-        "passkeyX()", "passkeyY()", "recoveryKeyX()", "recoveryKeyY()",
-        "didDeactivated()", "didVersionId()",
+        "getUserKeysCount()",
+        "getKeyHashAt(uint256)",
+        "getUserKeyByHash(bytes32)",
       ];
       const results = [
-        responses.passkeyXResult, responses.passkeyYResult,
-        responses.recoveryKeyXResult, responses.recoveryKeyYResult,
-        responses.didDeactivatedResult, responses.didVersionIdResult,
+        responses.keysCountResult,
+        responses.keyHashResult,
+        responses.keyStructResult,
       ];
+      const selectors: Record<string, string> = {};
       for (let i = 0; i < fns.length; i++) {
         const sel = "0x" + bytesToHex(
           keccak256(new TextEncoder().encode(fns[i])).slice(0, 4),
@@ -263,7 +279,7 @@ describe("verify", () => {
     expect(result.errorCode).toBe(ErrorCode.ISSUER_DEACTIVATED);
   });
 
-  it("returns HOLDER_DEACTIVATED for deactivated holder", async () => {
+  it("returns HOLDER_NOT_FOUND when the holder AlignedAccount has no keys", async () => {
     const fixture = buildPresentation(keys, {
       issuerAddress,
       holderAddress,
@@ -271,13 +287,47 @@ describe("verify", () => {
     });
 
     globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct, {
-      deactivatedHolder: true,
+      holderNoKeys: true,
     }) as typeof fetch;
 
     const result = await verify(fixture.presentation, baseOptions, testCache);
 
     expect(result.valid).toBe(false);
-    expect(result.errorCode).toBe(ErrorCode.HOLDER_DEACTIVATED);
+    expect(result.errorCode).toBe(ErrorCode.HOLDER_NOT_FOUND);
+  });
+
+  it("returns HOLDER_NOT_FOUND when the holder's only key is not yet valid (validAt in future)", async () => {
+    const fixture = buildPresentation(keys, {
+      issuerAddress,
+      holderAddress,
+      vct,
+    });
+
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct, {
+      holderFutureValidAt: true,
+    }) as typeof fetch;
+
+    const result = await verify(fixture.presentation, baseOptions, testCache);
+
+    expect(result.valid).toBe(false);
+    expect(result.errorCode).toBe(ErrorCode.HOLDER_NOT_FOUND);
+  });
+
+  it("returns HOLDER_NOT_FOUND when the holder's only key is not WebAuthnP256", async () => {
+    const fixture = buildPresentation(keys, {
+      issuerAddress,
+      holderAddress,
+      vct,
+    });
+
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct, {
+      holderWrongKeyType: true,
+    }) as typeof fetch;
+
+    const result = await verify(fixture.presentation, baseOptions, testCache);
+
+    expect(result.valid).toBe(false);
+    expect(result.errorCode).toBe(ErrorCode.HOLDER_NOT_FOUND);
   });
 
   it("verifies in offline mode — skips on-chain calls, returns trustNotVerified", async () => {
@@ -393,5 +443,97 @@ describe("verify", () => {
 
     expect(result.valid).toBe(false);
     expect(result.errorCode).toBe(ErrorCode.KB_PASSKEY_SIG_INVALID);
+  });
+
+  // ─── WebAuthn (passkey) KB-JWT ─────────────────────────
+
+  it("verifies a valid WebAuthn presentation end-to-end", async () => {
+    const fixture = buildPresentation(keys, {
+      issuerAddress,
+      holderAddress,
+      vct,
+      kbAlg: "WebAuthn",
+    });
+
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+
+    const result = await verify(fixture.presentation, baseOptions, testCache);
+
+    expect(result.valid).toBe(true);
+    expect(result.holder).toBe(`did:sovra:${holderAddress}`);
+    expect(result.claims!.given_name).toBe("Maria");
+  });
+
+  it("returns KB_PASSKEY_SIG_INVALID for a WebAuthn assertion whose challenge does not bind to the KB-JWT", async () => {
+    // Signature is valid over the assertion, but the embedded challenge is not
+    // base64url(sha256(signingInput)) — i.e. a replayed/foreign assertion.
+    const fixture = buildPresentation(keys, {
+      issuerAddress,
+      holderAddress,
+      vct,
+      kbAlg: "WebAuthn",
+      webauthnOverrides: { challenge: "A".repeat(43) },
+    });
+
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+
+    const result = await verify(fixture.presentation, baseOptions, testCache);
+
+    expect(result.valid).toBe(false);
+    expect(result.errorCode).toBe(ErrorCode.KB_PASSKEY_SIG_INVALID);
+  });
+
+  it("returns KB_PASSKEY_SIG_INVALID for a WebAuthn presentation with wrong on-chain passkey", async () => {
+    const wrongPasskey = generateKeys();
+    const modifiedKeys = { ...keys, passkey: wrongPasskey.passkey };
+    const fixture = buildPresentation(keys, {
+      issuerAddress,
+      holderAddress,
+      vct,
+      kbAlg: "WebAuthn",
+    });
+
+    globalThis.fetch = createFetchMock(modifiedKeys, issuerAddress, holderAddress, vct) as typeof fetch;
+
+    const result = await verify(fixture.presentation, baseOptions, testCache);
+
+    expect(result.valid).toBe(false);
+    expect(result.errorCode).toBe(ErrorCode.KB_PASSKEY_SIG_INVALID);
+  });
+
+  it("returns KB_PASSKEY_SIG_INVALID for a WebAuthn assertion without the user-verified flag", async () => {
+    const fixture = buildPresentation(keys, {
+      issuerAddress,
+      holderAddress,
+      vct,
+      kbAlg: "WebAuthn",
+      webauthnOverrides: { flags: 0x01 }, // UP only, UV not set
+    });
+
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+
+    const result = await verify(fixture.presentation, baseOptions, testCache);
+
+    expect(result.valid).toBe(false);
+    expect(result.errorCode).toBe(ErrorCode.KB_PASSKEY_SIG_INVALID);
+  });
+
+  it("verifies a WebAuthn presentation in offline mode (skips signature, flags trustNotVerified)", async () => {
+    const fixture = buildPresentation(keys, {
+      issuerAddress,
+      holderAddress,
+      vct,
+      kbAlg: "WebAuthn",
+    });
+
+    globalThis.fetch = vi.fn(() => {
+      throw new Error("fetch should not be called in offline mode");
+    }) as typeof fetch;
+
+    const result = await verify(fixture.presentation, { ...baseOptions, offlineMode: true }, testCache);
+
+    expect(result.valid).toBe(true);
+    expect(result.trustNotVerified).toBe(true);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 });

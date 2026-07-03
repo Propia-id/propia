@@ -1,9 +1,9 @@
-import { sha256, base64urlEncode, keccak256, bytesToHex } from "@sovra/wallet-core/utils";
+import { sha256, base64urlEncode, keccak256, bytesToHex } from "@sovrahq/holder-core/utils";
 import type { VerifyOptions, VerificationResult } from "./types";
 import { ErrorCode } from "./types";
 import { parsePresentation } from "./parse";
 import { VerificationError, validateEthAddress } from "./errors";
-import { verifyES256 } from "./signature";
+import { verifyES256, verifyWebAuthn } from "./signature";
 import { verifyDisclosures } from "./disclosure";
 import { resolveIssuerDID, checkIssuerTrust } from "./resolve-issuer";
 import { resolveHolderKeys, extractHolderAddress } from "./resolve-holder";
@@ -26,7 +26,7 @@ export const _defaultCache = new VerificationCache();
  * 7. Check credential expiry
  * 8. Check revocation (TBD)
  * 9. Resolve holder DID → passkey + recovery public keys
- * 10. Verify KB-JWT passkey signature (ES256)
+ * 10. Verify KB-JWT holder proof (WebAuthn passkey assertion or raw ES256)
  * 11. Validate KB-JWT claims (aud, nonce, iat, sd_hash)
  * 12. Return result
  */
@@ -40,7 +40,7 @@ export async function verify(
   try {
     // Step 1-2: Parse presentation
     const presentation = parsePresentation(sdJwt);
-    const { issuerPayload, issuerJwtRaw, kbJwtRaw, kbPayload, disclosures } = presentation;
+    const { issuerPayload, issuerJwtRaw, kbJwtRaw, kbHeader, kbPayload, disclosures } = presentation;
 
     const { iss, vct, iat, exp, sdArray, sdAlg, cnf, sub } = validateIssuerPayload(issuerPayload);
 
@@ -211,8 +211,17 @@ export async function verify(
         cache.setHolderKeys(holderAddress, holderKeys);
       }
 
-      // Step 10: Verify KB-JWT passkey signature
-      if (!verifyES256(kbJwtRaw, holderKeys.passkeyX, holderKeys.passkeyY)) {
+      // Step 10: Verify the KB-JWT holder proof against the on-chain passkeys.
+      // An AlignedAccount can hold multiple active WebAuthnP256 keys; the proof
+      // is valid if it verifies against any one of them. WebAuthn passkey
+      // assertions (current wallet) and raw ES256 (legacy) are both supported;
+      // the alg was allow-listed during parsing.
+      const kbSigValid = holderKeys.passkeys.some((key) =>
+        kbHeader.alg === "WebAuthn"
+          ? verifyWebAuthn(kbJwtRaw, key.x, key.y)
+          : verifyES256(kbJwtRaw, key.x, key.y),
+      );
+      if (!kbSigValid) {
         throw new VerificationError("KB-JWT signature verification failed", ErrorCode.KB_PASSKEY_SIG_INVALID);
       }
     } else if (cnf?.kid) {

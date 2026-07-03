@@ -26,11 +26,7 @@ describe("VerificationCache", () => {
   it("evicts oldest holder key entry when cache exceeds max size", () => {
     const cache = new VerificationCache();
     const dummyKey = {
-      passkeyX: new Uint8Array(32),
-      passkeyY: new Uint8Array(32),
-      recoveryKeyX: new Uint8Array(32),
-      recoveryKeyY: new Uint8Array(32),
-      versionId: 1,
+      passkeys: [{ x: new Uint8Array(32), y: new Uint8Array(32) }],
     };
 
     for (let i = 0; i < 200; i++) {

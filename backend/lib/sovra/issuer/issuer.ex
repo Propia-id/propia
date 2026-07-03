@@ -19,6 +19,7 @@ defmodule Sovra.Issuer do
 
   alias Sovra.Crypto.HmacKeyStore
   alias Sovra.Crypto.P256
+  alias Sovra.Crypto.WebAuthn
   alias Sovra.Ethereum.{IssuerRegistry, RevocationRegistry}
   alias Sovra.Repo
   alias Sovra.Workspaces
@@ -640,24 +641,41 @@ defmodule Sovra.Issuer do
          {:ok, header} <- Jason.decode(header_json),
          {:ok, payload} <- Jason.decode(payload_json),
          true <- header["typ"] == "openid4vci-proof+jwt",
-         true <- header["alg"] == "ES256",
          true <- payload["nonce"] == nonce,
          holder_did when is_binary(holder_did) <- payload["iss"],
          {:ok, {pub_x, pub_y}} <- extract_jwk_coordinates(header["jwk"]),
-         {:ok, sig_bytes} <- Base.url_decode64(sig_b64, padding: false),
-         <<r_bytes::binary-32, s_bytes::binary-32>> <- sig_bytes do
-      signing_input = header_b64 <> "." <> payload_b64
-      hash = :crypto.hash(:sha256, signing_input)
-
-      if P256.verify(hash, %{r: r_bytes, s: s_bytes}, {pub_x, pub_y}) do
-        {:ok, %{holder_did: holder_did}}
-      else
-        {:error, :invalid_proof}
-      end
+         signing_input = header_b64 <> "." <> payload_b64,
+         true <- verify_proof_sig(header["alg"], signing_input, sig_b64, {pub_x, pub_y}) do
+      {:ok, %{holder_did: holder_did}}
     else
       _ -> {:error, :invalid_proof}
     end
   end
+
+  # Holder proof-of-possession signature. The key is the self-asserted header
+  # `jwk` (OID4VCI binds the credential to it). ES256 is a plain JWS; WebAuthn
+  # is an Aligned passkey assertion over sha256(signing_input) — same format the
+  # presentation KB-JWT uses (see Sovra.Credentials.SDJWT).
+  defp verify_proof_sig("ES256", signing_input, sig_b64, {pub_x, pub_y}) do
+    case Base.url_decode64(sig_b64, padding: false) do
+      {:ok, <<r::binary-32, s::binary-32>>} ->
+        P256.verify(:crypto.hash(:sha256, signing_input), %{r: r, s: s}, {pub_x, pub_y})
+
+      _ ->
+        false
+    end
+  end
+
+  defp verify_proof_sig("WebAuthn", signing_input, sig_b64, {pub_x, pub_y}) do
+    with {:ok, sig_bytes} <- Base.url_decode64(sig_b64, padding: false),
+         {:ok, assertion} <- WebAuthn.parse_assertion(sig_bytes) do
+      WebAuthn.valid?(:crypto.hash(:sha256, signing_input), assertion, {pub_x, pub_y})
+    else
+      _ -> false
+    end
+  end
+
+  defp verify_proof_sig(_, _, _, _), do: false
 
   defp extract_jwk_coordinates(%{"x" => x_b64, "y" => y_b64}) do
     with {:ok, x} <- Base.url_decode64(x_b64, padding: false),

@@ -78,10 +78,12 @@ export interface IssuerKeyData {
   versionId: number;
 }
 
+export interface HolderPasskey {
+  x: Uint8Array;
+  y: Uint8Array;
+}
+
 export interface HolderKeyData {
-  passkeyX: Uint8Array;
-  passkeyY: Uint8Array;
-  recoveryKeyX: Uint8Array;
-  recoveryKeyY: Uint8Array;
-  versionId: number;
+  /** Active WebAuthnP256 passkeys read from the holder's on-chain AlignedAccount. */
+  passkeys: HolderPasskey[];
 }

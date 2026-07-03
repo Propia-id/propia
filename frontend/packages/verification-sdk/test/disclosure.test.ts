@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sha256, base64urlEncode } from "@sovra/wallet-core/utils";
+import { sha256, base64urlEncode } from "@sovrahq/holder-core/utils";
 import { verifyDisclosures } from "../src/disclosure";
 import { VerificationError } from "../src/parse";
 import { ErrorCode } from "../src/types";

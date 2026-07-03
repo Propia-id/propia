@@ -1,32 +1,6 @@
 import axios, { type AxiosInstance, type AxiosRequestConfig } from "axios";
-import { bytesToHex } from "../utils/index";
 
 // ─── Types ────────────────────────────────────────────
-
-export interface OnboardResponse {
-  recoveryPublicKey?: { x: string; y: string };
-  sovraAddress?: string;
-  sessionToken: string;
-}
-
-export interface SignResponse {
-  signature: { r: string; s: string };
-}
-
-export interface RecoverySignatureResponse {
-  signature: { r: string; s: string };
-  messageHash: string;
-}
-
-export interface RotateRecoveryKeyResponse {
-  newRecoveryPublicKey: { x: string; y: string };
-  rotationSignature: { r: string; s: string };
-}
-
-export interface AuthResponse {
-  sessionToken: string;
-  expiresAt: number;
-}
 
 export interface TokenResponse {
   access_token: string;
@@ -113,62 +87,6 @@ export class ApiClient {
 
   setOnSessionExpired(handler: () => Promise<void>): void {
     this.onSessionExpired = handler;
-  }
-
-  // ─── Holder Onboarding & Auth ───────────────────────
-
-  async holderOnboard(sovraAddress: string, oauthToken: string): Promise<OnboardResponse> {
-    const { data } = await this.backend.post<OnboardResponse>(
-      "/wallet/auth/onboard",
-      { sovraAddress, oauthToken },
-    );
-    return data;
-  }
-
-  async holderAuth(oauthToken: string): Promise<AuthResponse> {
-    const { data } = await this.backend.post<AuthResponse>(
-      "/wallet/auth/login",
-      { oauth_token: oauthToken },
-    );
-    return data;
-  }
-
-  // ─── Recovery Operations ──────────────────────────
-
-  async recoverySign(hash: Uint8Array): Promise<SignResponse> {
-    const { data } = await this.backend.post<SignResponse>(
-      "/wallet/recovery/sign",
-      { hash: bytesToHex(hash) },
-    );
-    return data;
-  }
-
-  async recoveryInitiate(params: {
-    newKeyX: string;
-    newKeyY: string;
-    keyToReplace: number;
-  }): Promise<RecoverySignatureResponse> {
-    const { data } = await this.backend.post<RecoverySignatureResponse>(
-      "/wallet/recovery/initiate",
-      { newKeyX: params.newKeyX, newKeyY: params.newKeyY, keyToReplace: params.keyToReplace },
-    );
-    return data;
-  }
-
-  async recoveryFinalize(): Promise<RecoverySignatureResponse> {
-    const { data } = await this.backend.post<RecoverySignatureResponse>(
-      "/wallet/recovery/finalize",
-      {},
-    );
-    return data;
-  }
-
-  async rotateRecoveryKey(): Promise<RotateRecoveryKeyResponse> {
-    const { data } = await this.backend.post<RotateRecoveryKeyResponse>(
-      "/wallet/recovery/rotate-key",
-      {},
-    );
-    return data;
   }
 
   // ─── OID4VCI ──────────────────────────────────────

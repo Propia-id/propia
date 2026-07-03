@@ -3,7 +3,7 @@ import {
   hexToBytes,
   bytesToHex,
   concatBytes,
-} from "@sovra/wallet-core/utils";
+} from "@sovrahq/holder-core/utils";
 
 // ─── eth_call ────────────────────────────────────────
 

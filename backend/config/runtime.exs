@@ -54,6 +54,15 @@ if System.get_env("ADMIN_PRIVATE_KEY") do
     revocation_registry_address: System.get_env("REVOCATION_REGISTRY_ADDRESS")
 end
 
+# Holder identity source for DID resolution. "aligned" reads the holder's
+# WebAuthn key from the AlignedAccount contract (point L2_RPC_URL/CHAIN_ID at
+# the chain where it's deployed, e.g. Base Sepolia); anything else uses the
+# legacy SovraWalletV1 passkey. Defaults to legacy so existing holders keep
+# verifying until the cutover is deliberately enabled.
+config :sovra, :did,
+  identity_source:
+    if(System.get_env("SOVRA_IDENTITY_SOURCE") == "aligned", do: :aligned, else: :legacy)
+
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||

@@ -348,6 +348,61 @@ defmodule Sovra.IssuerTest do
       )
     end
 
+    test "accepts a WebAuthn passkey proof and binds holder DID", %{token_data: token_data} do
+      {:ok, %{private_key: priv, public_key_x: x, public_key_y: y}} = P256.generate_key_pair()
+      holder_did = "did:sovra:0xalignedholder"
+
+      header = %{
+        "typ" => "openid4vci-proof+jwt",
+        "alg" => "WebAuthn",
+        "jwk" => %{
+          "kty" => "EC",
+          "crv" => "P-256",
+          "x" => Base.url_encode64(x, padding: false),
+          "y" => Base.url_encode64(y, padding: false)
+        }
+      }
+
+      payload = %{"iss" => holder_did, "nonce" => token_data.c_nonce}
+      header_b64 = Base.url_encode64(Jason.encode!(header), padding: false)
+      payload_b64 = Base.url_encode64(Jason.encode!(payload), padding: false)
+      signing_input = "#{header_b64}.#{payload_b64}"
+
+      # The passkey signs sha256(signing_input) as its WebAuthn challenge.
+      digest = :crypto.hash(:sha256, signing_input)
+      challenge_b64 = Base.url_encode64(digest, padding: false)
+
+      cdj =
+        ~s({"type":"webauthn.get","challenge":") <>
+          challenge_b64 <> ~s(","origin":"https://wallet.example"})
+
+      auth_data = :crypto.strong_rand_bytes(32) <> <<0x05>> <> <<0, 0, 0, 1>>
+      message_hash = :crypto.hash(:sha256, auth_data <> :crypto.hash(:sha256, cdj))
+      {:ok, %{r: r, s: s}} = P256.sign(message_hash, priv)
+
+      assertion =
+        Jason.encode!(%{
+          "r" => "0x" <> Base.encode16(P256.pad_or_trim(r, 32), case: :lower),
+          "s" => "0x" <> Base.encode16(P256.pad_or_trim(s, 32), case: :lower),
+          "challenge_index" => :binary.match(cdj, ~s("challenge":")) |> elem(0),
+          "type_index" => :binary.match(cdj, ~s("type":"webauthn.get")) |> elem(0),
+          "authenticator_data" => "0x" <> Base.encode16(auth_data, case: :lower),
+          "client_data_json" => cdj
+        })
+
+      jwt = "#{signing_input}.#{Base.url_encode64(assertion, padding: false)}"
+      proof = %{"proof_type" => "jwt", "jwt" => jwt}
+
+      assert {:ok, sd_jwt} =
+               Issuer.issue_credential(token_data.access_token, "TestCredential", proof)
+
+      [jwt_part | _] = String.split(sd_jwt, "~")
+      [_, cred_payload_b64 | _] = String.split(jwt_part, ".")
+      {:ok, cred_payload_json} = Base.url_decode64(cred_payload_b64, padding: false)
+      {:ok, cred_payload} = Jason.decode(cred_payload_json)
+      assert cred_payload["sub"] == holder_did
+    end
+
     test "issued credential reuses the offer id", %{token_data: token_data, offer_result: result} do
       {:ok, %{private_key: priv, public_key_x: x, public_key_y: y}} = P256.generate_key_pair()
 

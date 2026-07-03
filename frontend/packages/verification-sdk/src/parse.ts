@@ -1,4 +1,4 @@
-import { base64urlDecode } from "@sovra/wallet-core/utils";
+import { base64urlDecode } from "@sovrahq/holder-core/utils";
 import { ErrorCode, type ParsedPresentation, type ParsedDisclosure } from "./types";
 import { VerificationError } from "./errors";
 
@@ -63,6 +63,11 @@ export function parsePresentation(sdJwt: string): ParsedPresentation {
 
   if (kbHeader.typ !== "kb+jwt") {
     throw new VerificationError(`Expected KB-JWT typ kb+jwt, got ${kbHeader.typ}`, ErrorCode.PARSE_ERROR);
+  }
+  // Holder proof is either a raw ES256 signature (legacy) or a WebAuthn passkey
+  // assertion (current Aligned wallet). Reject anything else up front.
+  if (kbHeader.alg !== "ES256" && kbHeader.alg !== "WebAuthn") {
+    throw new VerificationError(`Unsupported KB-JWT alg: ${kbHeader.alg}`, ErrorCode.PARSE_ERROR);
   }
 
   // Decode disclosures

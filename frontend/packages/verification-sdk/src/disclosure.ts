@@ -1,4 +1,4 @@
-import { sha256, base64urlEncode } from "@sovra/wallet-core/utils";
+import { sha256, base64urlEncode } from "@sovrahq/holder-core/utils";
 import { ErrorCode, type ParsedDisclosure } from "./types";
 import { VerificationError } from "./errors";
 

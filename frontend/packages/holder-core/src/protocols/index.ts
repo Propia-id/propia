@@ -1,11 +1,29 @@
 import type { ApiClient, IssuerMetadata } from "../api/index";
 import type { CredentialManager } from "../credentials/index";
-import type { PasskeyProvider } from "../platform/index";
 import type { StoredCredential } from "../state/index";
 import {
   base64urlEncode,
   sha256,
 } from "../utils/index";
+
+// ─── Holder signing seam ──────────────────────────────
+
+/**
+ * Signs the holder proofs (OID4VCI proof-of-possession + OID4VP KB-JWT).
+ * The concrete implementation lives in the app — e.g. an Aligned-passkey
+ * signer — so holder-core stays agnostic of the wallet SDK.
+ */
+export interface HolderSigner {
+  /** The JWT `alg` header value this signer produces (e.g. "WebAuthn"). */
+  readonly alg: string;
+  /**
+   * Sign `hash` (the 32-byte SHA-256 of the JWT signing input) with the
+   * holder's key `credentialId`, returning the JWT's third (signature)
+   * segment, base64url-encoded. For WebAuthn that segment is
+   * `base64url(JSON{r,s,challenge_index,type_index,authenticator_data,client_data_json})`.
+   */
+  signToSegment(hash: Uint8Array, credentialId: string): Promise<string>;
+}
 
 // ─── OID4VCI Types ────────────────────────────────────
 
@@ -55,7 +73,7 @@ export class IssuanceProtocol {
   constructor(
     private api: ApiClient,
     private credentialManager: CredentialManager,
-    private passkeyProvider: PasskeyProvider,
+    private signer: HolderSigner,
     private getIdentity: () => {
       did: string;
       passkeyCredentialId: string;
@@ -155,7 +173,7 @@ export class IssuanceProtocol {
     const y = pubkey.length === 65 ? pubkey.slice(33, 65) : pubkey.slice(32, 64);
 
     const header = {
-      alg: "ES256",
+      alg: this.signer.alg,
       typ: "openid4vci-proof+jwt",
       jwk: {
         kty: "EC",
@@ -180,17 +198,13 @@ export class IssuanceProtocol {
     );
     const signingInput = `${headerB64}.${payloadB64}`;
 
-    // Hash the signing input (JWT uses SHA-256 for ES256)
+    // The signer signs sha256(signing_input) and returns the JWT's third
+    // segment (a WebAuthn assertion for the Aligned passkey).
     const hash = sha256(new TextEncoder().encode(signingInput));
-
-    // Sign with passkey
-    const passkeySig = await this.passkeyProvider.sign(
-      identity.passkeyCredentialId,
+    const sigB64 = await this.signer.signToSegment(
       hash,
+      identity.passkeyCredentialId,
     );
-
-    // Passkey-only 64-byte signature
-    const sigB64 = base64urlEncode(passkeySig.signature);
 
     return `${signingInput}.${sigB64}`;
   }
@@ -202,7 +216,7 @@ export class PresentationProtocol {
   constructor(
     private api: ApiClient,
     private credentialManager: CredentialManager,
-    private passkeyProvider: PasskeyProvider,
+    private signer: HolderSigner,
     private getIdentity: () => {
       did: string;
       passkeyCredentialId: string;
@@ -363,7 +377,7 @@ export class PresentationProtocol {
     const y = pubkey.length === 65 ? pubkey.slice(33, 65) : pubkey.slice(32, 64);
 
     const header = {
-      alg: "ES256",
+      alg: this.signer.alg,
       typ: "kb+jwt",
       jwk: {
         kty: "EC",
@@ -388,17 +402,13 @@ export class PresentationProtocol {
     );
     const signingInput = `${headerB64}.${payloadB64}`;
 
-    // Hash the signing input
+    // The signer signs sha256(signing_input) (its WebAuthn challenge) and
+    // returns the JWT's third segment.
     const hash = sha256(new TextEncoder().encode(signingInput));
-
-    // Sign with passkey (biometric prompt)
-    const passkeySig = await this.passkeyProvider.sign(
-      identity.passkeyCredentialId,
+    const sigB64 = await this.signer.signToSegment(
       hash,
+      identity.passkeyCredentialId,
     );
-
-    // Passkey-only 64-byte signature
-    const sigB64 = base64urlEncode(passkeySig.signature);
 
     return `${signingInput}.${sigB64}`;
   }

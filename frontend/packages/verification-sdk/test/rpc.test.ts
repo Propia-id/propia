@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bytesToHex, hexToBytes } from "@sovra/wallet-core/utils";
+import { bytesToHex, hexToBytes } from "@sovrahq/holder-core/utils";
 import {
   functionSelector,
   encodeAddress,

@@ -1,39 +1,45 @@
-import { keccak256, bytesToHex, hexToBytes } from "@sovra/wallet-core/utils";
-import { ErrorCode, type HolderKeyData } from "./types";
+import { ErrorCode, type HolderKeyData, type HolderPasskey } from "./types";
 import { VerificationError, validateEthAddress } from "./errors";
-import { ethCall, RpcError, decodeBytes32, decodeBool, decodeUint32 } from "./rpc";
+import {
+  ethCall,
+  RpcError,
+  encodeFunctionCall,
+  decodeBytes32,
+  decodeUint8,
+  decodeUint64,
+} from "./rpc";
+
+/** AlignedAccount Key.keyType enum value for WebAuthn P-256 keys. */
+const KEY_TYPE_WEBAUTHN_P256 = 2;
+
+/** Cap on keys enumerated, to bound RPC work against a hostile account. */
+const MAX_HOLDER_KEYS = 32;
 
 /**
- * Resolve holder keys from the on-chain wallet contract.
+ * Resolve the holder's active WebAuthn passkeys from their on-chain AlignedAccount.
  *
- * The holder's address is their EIP-7702 wallet contract.
- * We read the public key coordinates and DID state directly.
+ * The holder's DID address is an EOA delegated (EIP-7702) to Aligned's
+ * `AlignedAccount`. Keys are enumerated via `getUserKeysCount()` /
+ * `getKeyHashAt(uint256)` / `getUserKeyByHash(bytes32)`, then filtered to active
+ * WebAuthnP256 keys (`keyType == 2`, `validAt <= now`). Mirrors the backend
+ * reference resolver `Sovra.Ethereum.WalletReader.read_aligned_keys/1`.
+ *
+ * Returns every currently-usable passkey; the caller accepts a holder proof
+ * that verifies against any of them. Throws HOLDER_NOT_FOUND when the account
+ * has no code on this chain (e.g. not yet EIP-7702-delegated) or exposes no
+ * active WebAuthnP256 key.
  */
 export async function resolveHolderKeys(
   rpcUrl: string,
   holderAddress: string,
 ): Promise<HolderKeyData> {
-  // Build calldata for each view function (just the 4-byte selector, no params)
-  const selectors = {
-    passkeyX: selectorHex("passkeyX()"),
-    passkeyY: selectorHex("passkeyY()"),
-    recoveryKeyX: selectorHex("recoveryKeyX()"),
-    recoveryKeyY: selectorHex("recoveryKeyY()"),
-    didDeactivated: selectorHex("didDeactivated()"),
-    didVersionId: selectorHex("didVersionId()"),
-  };
-
-  // Execute all calls in parallel
-  let results: string[];
+  let countHex: string;
   try {
-    results = await Promise.all([
-      ethCall(rpcUrl, holderAddress, selectors.passkeyX),
-      ethCall(rpcUrl, holderAddress, selectors.passkeyY),
-      ethCall(rpcUrl, holderAddress, selectors.recoveryKeyX),
-      ethCall(rpcUrl, holderAddress, selectors.recoveryKeyY),
-      ethCall(rpcUrl, holderAddress, selectors.didDeactivated),
-      ethCall(rpcUrl, holderAddress, selectors.didVersionId),
-    ]);
+    countHex = await ethCall(
+      rpcUrl,
+      holderAddress,
+      encodeFunctionCall("getUserKeysCount()", []),
+    );
   } catch (e) {
     if (e instanceof RpcError) {
       throw new VerificationError(
@@ -44,29 +50,103 @@ export async function resolveHolderKeys(
     throw e;
   }
 
-  // Check for empty results (no contract at address)
-  if (results.some((r) => !r || r === "0x" || r.length < 66)) {
+  // No contract code at the address (e.g. account not delegated on this chain)
+  // returns empty "0x" calldata.
+  if (!countHex || countHex === "0x" || countHex.length < 66) {
     throw new VerificationError(
       `Holder DID not found: ${holderAddress}`,
       ErrorCode.HOLDER_NOT_FOUND,
     );
   }
 
-  const deactivated = decodeBool(results[4], 0);
-  if (deactivated) {
+  const count = Math.min(decodeUint64(countHex, 0), MAX_HOLDER_KEYS);
+  const nowSeconds = Math.floor(Date.now() / 1000);
+
+  const resolved = await Promise.all(
+    Array.from({ length: count }, (_, i) =>
+      resolveKeyAtIndex(rpcUrl, holderAddress, i, nowSeconds),
+    ),
+  );
+
+  const passkeys = resolved.filter((k): k is HolderPasskey => k !== null);
+
+  if (passkeys.length === 0) {
     throw new VerificationError(
-      `Holder DID deactivated: ${holderAddress}`,
-      ErrorCode.HOLDER_DEACTIVATED,
+      `Holder DID has no active passkey: ${holderAddress}`,
+      ErrorCode.HOLDER_NOT_FOUND,
     );
   }
 
+  return { passkeys };
+}
+
+async function resolveKeyAtIndex(
+  rpcUrl: string,
+  holderAddress: string,
+  index: number,
+  nowSeconds: number,
+): Promise<HolderPasskey | null> {
+  try {
+    const keyHashHex = await ethCall(
+      rpcUrl,
+      holderAddress,
+      encodeFunctionCall("getKeyHashAt(uint256)", [uint256Bytes(index)]),
+    );
+    if (!keyHashHex || keyHashHex.length < 66) return null;
+    const keyHash = decodeBytes32(keyHashHex, 0);
+
+    const keyHex = await ethCall(
+      rpcUrl,
+      holderAddress,
+      encodeFunctionCall("getUserKeyByHash(bytes32)", [keyHash]),
+    );
+    return decodeActiveWebAuthnKey(keyHex, nowSeconds);
+  } catch (e) {
+    if (e instanceof RpcError) return null;
+    throw e;
+  }
+}
+
+/**
+ * Decode `getUserKeyByHash` → `Key { uint8 keyType; uint48 validAt; bytes publicKey }`.
+ * Returns the {x,y} coordinates iff the key is an active WebAuthnP256 key, else null.
+ *
+ * ABI return layout (32-byte words):
+ *   0: struct offset (0x20)   1: keyType   2: validAt
+ *   3: publicKey offset (0x60)   4: publicKey length (== 64)   5: x   6: y
+ */
+function decodeActiveWebAuthnKey(
+  keyHex: string,
+  nowSeconds: number,
+): HolderPasskey | null {
+  const hex = keyHex.startsWith("0x") ? keyHex.slice(2) : keyHex;
+  // Need the full 7-word return (struct header + x + y).
+  if (hex.length < 7 * 64) return null;
+
+  const keyType = decodeUint8(keyHex, 1);
+  if (keyType !== KEY_TYPE_WEBAUTHN_P256) return null;
+
+  const validAt = decodeUint64(keyHex, 2);
+  if (validAt > nowSeconds) return null; // timelock not yet elapsed
+
+  const pkLen = decodeUint64(keyHex, 4);
+  if (pkLen !== 64) return null; // expect abi.encode(bytes32 x, bytes32 y)
+
   return {
-    passkeyX: decodeBytes32(results[0], 0),
-    passkeyY: decodeBytes32(results[1], 0),
-    recoveryKeyX: decodeBytes32(results[2], 0),
-    recoveryKeyY: decodeBytes32(results[3], 0),
-    versionId: decodeUint32(results[5], 0),
+    x: decodeBytes32(keyHex, 5),
+    y: decodeBytes32(keyHex, 6),
   };
+}
+
+/** Encode a non-negative integer as minimal big-endian bytes (at least 1 byte). */
+function uint256Bytes(n: number): Uint8Array {
+  const bytes: number[] = [];
+  let v = n;
+  do {
+    bytes.unshift(v & 0xff);
+    v = Math.floor(v / 256);
+  } while (v > 0);
+  return new Uint8Array(bytes);
 }
 
 /**
@@ -85,9 +165,4 @@ export function extractHolderAddress(cnfKid: string): string {
   const address = hashIndex >= 0 ? afterPrefix.slice(0, hashIndex) : afterPrefix;
   validateEthAddress(address, "cnf.kid");
   return address;
-}
-
-function selectorHex(sig: string): string {
-  const bytes = keccak256(new TextEncoder().encode(sig)).slice(0, 4);
-  return bytesToHex(bytes);
 }

@@ -121,18 +121,18 @@ contracts.test:
 # ── Frontend Packages ────────────────────────────────────────────────
 
 .PHONY: frontend.packages.check frontend.packages.test \
-        frontend.packages.wallet-core.check frontend.packages.wallet-core.test \
+        frontend.packages.holder-core.check frontend.packages.holder-core.test \
         frontend.packages.verification-sdk.check frontend.packages.verification-sdk.test
 
-frontend.packages.check: frontend.packages.wallet-core.check frontend.packages.verification-sdk.check
+frontend.packages.check: frontend.packages.holder-core.check frontend.packages.verification-sdk.check
 
-frontend.packages.test: frontend.packages.wallet-core.test frontend.packages.verification-sdk.test
+frontend.packages.test: frontend.packages.holder-core.test frontend.packages.verification-sdk.test
 
-frontend.packages.wallet-core.check:
-	$(NIX) "cd frontend && pnpm --filter @sovra/wallet-core typecheck"
+frontend.packages.holder-core.check:
+	$(NIX) "cd frontend && pnpm --filter @sovrahq/holder-core typecheck"
 
-frontend.packages.wallet-core.test:
-	$(NIX) "cd frontend && pnpm --filter @sovra/wallet-core test"
+frontend.packages.holder-core.test:
+	$(NIX) "cd frontend && pnpm --filter @sovrahq/holder-core test"
 
 frontend.packages.verification-sdk.check:
 	$(NIX) "cd frontend && pnpm --filter @sovra/verification-sdk typecheck"

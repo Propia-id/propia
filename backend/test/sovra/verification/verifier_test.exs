@@ -616,7 +616,7 @@ defmodule Sovra.Verification.VerifierTest do
       }
 
       kb = build_kb_jwt_eddsa(ctx.holder_keys, kb_payload)
-      vp = ctx.sd_jwt <> kb
+      vp = build_vp_token(ctx.sd_jwt, kb)
 
       assert {:ok, session} =
                Verification.submit_presentation(ctx.session.state, vp,
@@ -645,7 +645,7 @@ defmodule Sovra.Verification.VerifierTest do
       [h, p, _sig] = String.split(kb, ".")
       bogus_sig = Base.url_encode64(:crypto.strong_rand_bytes(64), padding: false)
       tampered = Enum.join([h, p, bogus_sig], ".")
-      vp = ctx.sd_jwt <> tampered
+      vp = build_vp_token(ctx.sd_jwt, tampered)
 
       assert {:ok, session} =
                Verification.submit_presentation(ctx.session.state, vp,
@@ -674,7 +674,7 @@ defmodule Sovra.Verification.VerifierTest do
       }
 
       kb = build_kb_jwt_eddsa(ctx.holder_keys, kb_payload)
-      vp = ctx.sd_jwt <> kb
+      vp = build_vp_token(ctx.sd_jwt, kb)
 
       assert {:ok, session} =
                Verification.submit_presentation(ctx.session.state, vp,

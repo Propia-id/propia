@@ -44,10 +44,9 @@ export class VerificationCache {
 
   setHolderKeys(address: string, data: HolderKeyData): void {
     this.evictIfNeeded(this.holderKeys);
-    this.holderKeys.set(address.toLowerCase(), {
-      data,
-      versionId: data.versionId,
-    });
+    // AlignedAccount keys have no single versionId; the entry is only ever read
+    // back within a single verify() call, so a fixed 0 is sufficient here.
+    this.holderKeys.set(address.toLowerCase(), { data, versionId: 0 });
   }
 
   getIssuerTrust(issuer: string, typeId: string): boolean | null {

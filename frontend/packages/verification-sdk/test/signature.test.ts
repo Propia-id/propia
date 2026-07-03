@@ -5,7 +5,7 @@ import {
   base64urlEncode,
   hexToBytes,
   concatBytes,
-} from "@sovra/wallet-core/utils";
+} from "@sovrahq/holder-core/utils";
 import { verifyES256 } from "../src/signature";
 import { generateP256KeyPair } from "./fixtures";
 

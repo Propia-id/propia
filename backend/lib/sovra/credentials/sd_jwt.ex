@@ -11,7 +11,7 @@ defmodule Sovra.Credentials.SDJWT do
   resolves disclosures against the SD-JWT's `_sd` digest array.
   """
 
-  alias Sovra.Crypto.{Ed25519, P256}
+  alias Sovra.Crypto.{Ed25519, P256, WebAuthn}
 
   @doc """
   Splits a vp_token string into its SD-JWT, disclosures, and KB-JWT parts.
@@ -85,9 +85,17 @@ defmodule Sovra.Credentials.SDJWT do
 
   @doc """
   Verifies a KB-JWT signature against a list of candidate keys, dispatching on
-  the JWT header's `alg` (`ES256` → P-256, `EdDSA` → Ed25519). Returns
-  `{:ok, %{header, payload}}` if the signature verifies under any key whose
-  curve matches `alg`, `{:error, :invalid_kb_signature}` otherwise.
+  the JWT header's `alg`:
+
+    * `ES256`    → raw P-256 JWS signature over `sha256(signing_input)`.
+    * `EdDSA`    → Ed25519 over the signing input.
+    * `WebAuthn` → holder binding by an Aligned passkey. The third JWT segment
+      is `base64url(JSON{r,s,challenge_index,type_index,authenticator_data,
+      client_data_json})` and the authenticator signs `sha256(signing_input)`
+      as its challenge (see `Sovra.Crypto.WebAuthn`).
+
+  Returns `{:ok, %{header, payload}}` if the signature verifies under any key
+  whose curve matches `alg`, `{:error, :invalid_kb_signature}` otherwise.
 
   The KB-JWT's own `header.jwk` is **not** trusted — callers supply the
   authoritative key set (typically resolved from the holder's DID).
@@ -119,6 +127,24 @@ defmodule Sovra.Credentials.SDJWT do
       %{crv: "Ed25519", x: x} -> Ed25519.verify(input, sig, x)
       _ -> false
     end)
+  end
+
+  defp verify_kb_with_alg("WebAuthn", input, sig_bytes, keys) do
+    # The third JWT segment (already base64url-decoded into `sig_bytes`) is the
+    # JSON passkey assertion. The authenticator's challenge is the same bytes
+    # the ES256 path signs: sha256 of the JWT signing input.
+    case WebAuthn.parse_assertion(sig_bytes) do
+      {:ok, assertion} ->
+        digest = :crypto.hash(:sha256, input)
+
+        Enum.any?(keys, fn
+          %{crv: "P-256", x: x, y: y} -> WebAuthn.valid?(digest, assertion, {x, y})
+          _ -> false
+        end)
+
+      :error ->
+        false
+    end
   end
 
   defp verify_kb_with_alg(_, _, _, _), do: false
