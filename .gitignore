@@ -25,6 +25,12 @@ out/
 cache/
 broadcast/
 
+# Secrets / signing keys
+*.keystore
+*.jks
+*.p12
+*.p8
+
 # General
 .env
 .env.*
