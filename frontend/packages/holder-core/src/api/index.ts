@@ -1,4 +1,4 @@
-import axios, { type AxiosInstance, type AxiosRequestConfig } from "axios";
+import axios, { type AxiosInstance } from "axios";
 
 // ─── Types ────────────────────────────────────────────
 
@@ -43,50 +43,14 @@ export interface JsonRpcResponse<T = unknown> {
 // ─── API Client ───────────────────────────────────────
 
 export interface ApiClientConfig {
-  backendUrl: string;
   l2RpcUrl: string;
 }
 
 export class ApiClient {
-  private backend: AxiosInstance;
   private l2: AxiosInstance;
-  private sessionToken: string | null = null;
-  private onSessionExpired?: () => Promise<void>;
 
   constructor(config: ApiClientConfig) {
-    this.backend = axios.create({ baseURL: config.backendUrl });
     this.l2 = axios.create({ baseURL: config.l2RpcUrl });
-
-    // Attach session token to authenticated requests
-    this.backend.interceptors.request.use((req) => {
-      if (this.sessionToken && (req.url?.startsWith("/wallet/auth/") || req.url?.startsWith("/wallet/recovery/"))) {
-        req.headers.Authorization = `Bearer ${this.sessionToken}`;
-      }
-      return req;
-    });
-
-    // Handle 401 (expired) and 403 session_not_fresh (step-up auth) responses
-    this.backend.interceptors.response.use(undefined, async (error) => {
-      const config = error.config as AxiosRequestConfig & { _retried?: boolean };
-      const status = error.response?.status;
-      const needsRefresh =
-        status === 401 || (status === 403 && error.response?.data?.error === "session_not_fresh");
-
-      if (needsRefresh && this.onSessionExpired && !config._retried) {
-        config._retried = true;
-        await this.onSessionExpired();
-        return this.backend.request(config);
-      }
-      throw error;
-    });
-  }
-
-  setSessionToken(token: string | null): void {
-    this.sessionToken = token;
-  }
-
-  setOnSessionExpired(handler: () => Promise<void>): void {
-    this.onSessionExpired = handler;
   }
 
   // ─── OID4VCI ──────────────────────────────────────
