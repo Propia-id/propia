@@ -21,3 +21,14 @@ defmodule SovraTest.Ethereum.AlwaysFailingDIDRegistry do
 
   def register_issuer_did(_eoa, _x, _y, _service_endpoint), do: {:error, :rpc_down}
 end
+
+defmodule SovraTest.Ethereum.AlreadyRegisteredDIDRegistry do
+  @moduledoc """
+  Test variant simulating an identity whose DID is already on-chain. Mirrors
+  what `Sovra.Ethereum.DIDRegistry` returns when `create` reverts with
+  `DIDAlreadyExists()`, so the provisioning job can be exercised against the
+  idempotent-success path.
+  """
+
+  def register_issuer_did(_eoa, _x, _y, _service_endpoint), do: {:ok, :already_registered}
+end

@@ -6,6 +6,14 @@ defmodule Sovra.Ethereum.Client do
 
   require Logger
 
+  # Receipt polling window. Defaults cover a public testnet (Sepolia blocks
+  # are ~12s, and a tx may take a few blocks to confirm): 45 polls × 2s ≈ 90s.
+  # Fast chains (local devnet) return on the first poll, so the wider window
+  # costs nothing on the happy path. Both are overridable via the :ethereum
+  # config (`:receipt_poll_attempts`, `:receipt_poll_interval_ms`).
+  @default_receipt_poll_attempts 45
+  @default_receipt_poll_interval_ms 2_000
+
   def send_transaction(tx_data, opts \\ []) do
     config = ethereum_config()
     private_key = Keyword.fetch!(config, :admin_private_key)
@@ -42,7 +50,13 @@ defmodule Sovra.Ethereum.Client do
 
   defp handle_send_result({:ok, tx_hash}) do
     Logger.info("Transaction sent: #{tx_hash}")
-    await_receipt(tx_hash)
+    config = ethereum_config()
+
+    await_receipt(
+      tx_hash,
+      Keyword.get(config, :receipt_poll_attempts, @default_receipt_poll_attempts),
+      Keyword.get(config, :receipt_poll_interval_ms, @default_receipt_poll_interval_ms)
+    )
   end
 
   defp handle_send_result({:error, reason} = error) do
@@ -50,7 +64,7 @@ defmodule Sovra.Ethereum.Client do
     error
   end
 
-  defp await_receipt(tx_hash, attempts \\ 10) do
+  defp await_receipt(tx_hash, attempts, interval_ms) do
     config = ethereum_config()
 
     case Ethers.get_transaction_receipt(tx_hash, rpc_opts: rpc_opts(config)) do
@@ -62,8 +76,8 @@ defmodule Sovra.Ethereum.Client do
         {:error, :transaction_reverted}
 
       {:error, :transaction_receipt_not_found} when attempts > 0 ->
-        Process.sleep(500)
-        await_receipt(tx_hash, attempts - 1)
+        Process.sleep(interval_ms)
+        await_receipt(tx_hash, attempts - 1, interval_ms)
 
       {:error, :transaction_receipt_not_found} ->
         Logger.error("Transaction receipt not found after retries: #{tx_hash}")

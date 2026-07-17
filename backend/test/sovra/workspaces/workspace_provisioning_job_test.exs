@@ -106,6 +106,28 @@ defmodule Sovra.Workspaces.WorkspaceProvisioningJobTest do
       assert done.provisioning_status == "done"
     end
 
+    test "treats an already-registered DID as success (idempotent re-provision)" do
+      ws = insert_pending_workspace()
+      previous = Application.get_env(:sovra, :did_registry)
+
+      try do
+        Application.put_env(
+          :sovra,
+          :did_registry,
+          SovraTest.Ethereum.AlreadyRegisteredDIDRegistry
+        )
+
+        assert :ok = perform_job(WorkspaceProvisioningJob, %{"workspace_id" => ws.id})
+      after
+        Application.put_env(:sovra, :did_registry, previous)
+      end
+
+      done = Repo.reload!(ws)
+      assert done.provisioning_status == "done"
+      assert done.provisioning_error == nil
+      assert %DateTime{} = done.provisioned_at
+    end
+
     test "cancels and writes failed state on the last attempt when chain fails" do
       ws = insert_pending_workspace()
       previous = Application.get_env(:sovra, :did_registry)
