@@ -7,6 +7,8 @@ defmodule Sovra.Crypto.P256 do
   @coord_size 32
   # P-256 curve order
   @n 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
+  # Low-S boundary: signatures with s > n/2 are the malleable high-S form.
+  @half_n div(@n, 2)
 
   @doc """
   Generates a new P-256 key pair.
@@ -39,12 +41,22 @@ defmodule Sovra.Crypto.P256 do
 
   @doc """
   Verifies a P-256 signature against a 32-byte hash and public key coordinates.
+
+  Rejects high-S (malleable) signatures: ECDSA admits both `(r, s)` and
+  `(r, n - s)` as valid for the same hash and key, so only the canonical
+  low-S form (`s <= n/2`) is accepted, matching the JOSE / SD-JWT VC
+  convention. This prevents the same logical presentation from passing
+  verification under two distinct byte-shapes.
   """
   def verify(<<hash::binary-size(32)>>, %{r: r, s: s}, {pub_x, pub_y})
       when byte_size(pub_x) == @coord_size and byte_size(pub_y) == @coord_size do
-    der = rs_to_der(r, s)
-    pub = <<4, pub_x::binary, pub_y::binary>>
-    :crypto.verify(:ecdsa, :sha256, {:digest, hash}, der, [pub, @curve])
+    if :binary.decode_unsigned(s) > @half_n do
+      false
+    else
+      der = rs_to_der(r, s)
+      pub = <<4, pub_x::binary, pub_y::binary>>
+      :crypto.verify(:ecdsa, :sha256, {:digest, hash}, der, [pub, @curve])
+    end
   end
 
   def verify(_hash, _signature, _public_key), do: false
@@ -79,9 +91,8 @@ defmodule Sovra.Crypto.P256 do
   # Ensure low-S: if s > n/2, replace with n - s
   defp normalize_s(s_bin) do
     s = :binary.decode_unsigned(s_bin)
-    half_n = div(@n, 2)
 
-    if s > half_n do
+    if s > @half_n do
       (@n - s) |> :binary.encode_unsigned() |> pad_or_trim(@coord_size)
     else
       s_bin

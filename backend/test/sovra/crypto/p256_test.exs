@@ -59,4 +59,36 @@ defmodule Sovra.Crypto.P256Test do
       assert {:error, :invalid_hash_size} = P256.sign(:crypto.strong_rand_bytes(64), priv)
     end
   end
+
+  describe "verify/3 signature malleability (low-S enforcement)" do
+    # P-256 curve order
+    @n 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
+
+    test "rejects the high-S form of an otherwise-valid signature" do
+      {:ok, %{private_key: priv, public_key_x: x, public_key_y: y}} = P256.generate_key_pair()
+      hash = :crypto.strong_rand_bytes(32)
+
+      # sign/2 already normalizes to low-S, so this is the canonical signature.
+      {:ok, %{r: r, s: s} = low_s_sig} = P256.sign(hash, priv)
+
+      # The canonical low-S form verifies.
+      assert P256.verify(hash, low_s_sig, {x, y})
+
+      # Flip to the malleable high-S form: s' = n - s. This is the *same*
+      # ECDSA signature mathematically, so a naive verify would accept it.
+      high_s = (@n - :binary.decode_unsigned(s)) |> :binary.encode_unsigned() |> pad32()
+      high_s_sig = %{r: r, s: high_s}
+
+      # Sanity: the mutation actually produced the high half (s' > n/2).
+      assert :binary.decode_unsigned(high_s) > div(@n, 2)
+
+      # verify/3 must reject it on the low-S guard, before the ECDSA check.
+      refute P256.verify(hash, high_s_sig, {x, y})
+    end
+  end
+
+  defp pad32(bin) when byte_size(bin) == 32, do: bin
+
+  defp pad32(bin) when byte_size(bin) < 32,
+    do: <<0::size((32 - byte_size(bin)) * 8), bin::binary>>
 end
