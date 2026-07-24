@@ -107,11 +107,6 @@ Add to `/etc/nixos/configuration.nix`:
     issuerPath = "/opt/sovra/issuer";
     envFile = "/etc/sovra/env";
     nginx.acmeEmail = "admin@yourdomain.com";
-
-    # KMS auto-unseal (OpenBao unseals automatically on restart)
-    kmsKeyId = "alias/openbao-unseal";  # or a key ID like "1234abcd-..."
-    kmsRegion = "us-east-1";
-    vaultEnvFile = "/etc/openbao/env";
   };
 
   # Tailscale for CI access
@@ -136,105 +131,30 @@ Add to `/etc/nixos/configuration.nix`:
 
 See [`nix/server-example.nix`](../nix/server-example.nix) for a complete reference.
 
-### 4. Set up AWS KMS for auto-unseal
+### 4. KMS signer service (SIGNER_URL / SIGNER_TOKEN)
 
-OpenBao uses an AWS KMS key to automatically unseal on startup, so no manual intervention is needed after restarts.
+Cryptographic signing of the P-256 workspace/issuer keys is delegated to AWS
+KMS through a dedicated **signer service** (`SERVICE=signer`, the same release
+run in a slim tree). The API host holds **no AWS credentials** — it makes an
+authenticated RPC to the signer over the network:
 
-**a. Create a KMS key:**
+- `SIGNER_URL` — the signer's base URL (e.g. `http://sovra-signer:4001`)
+- `SIGNER_TOKEN` — a shared bearer token, identical on the API host and the signer
 
-```bash
-aws kms create-key --description "OpenBao auto-unseal"
-# Note the KeyId from the output, e.g. "1234abcd-12ab-34cd-56ef-1234567890ab"
+The signer is the sole KMS caller. On AWS it obtains credentials from its EC2
+**instance role via IMDS** (no static keys); its IAM policy grants
+`kms:CreateKey` / `kms:Sign` / `kms:GetPublicKey` / `kms:ScheduleKeyDeletion` on
+the P-256 workspace keys and `kms:Sign` / `kms:GetPublicKey` on the secp256k1
+**relayer** key (on-chain signing, `RELAYER_KMS_KEY_ID`). Provisioning the
+signer host itself is handled by the infrastructure fleet (Terraform/Ansible)
+and is out of scope for this single-host guide — here you only need a reachable
+`SIGNER_URL` and a matching `SIGNER_TOKEN`.
 
-# Optionally create an alias for convenience
-aws kms create-alias --alias-name alias/openbao-unseal --target-key-id <key-id>
-```
+> The webhook HMAC secret is **not** in KMS: it must be revealed to the customer
+> once (to verify our signatures) and KMS HMAC keys are non-exportable, so it is
+> stored in the database and HMAC'd locally.
 
-**b. Create an IAM user with KMS permissions:**
-
-```bash
-aws iam create-user --user-name openbao-unseal
-
-cat > /tmp/openbao-kms-policy.json <<EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": ["kms:Encrypt", "kms:Decrypt", "kms:DescribeKey"],
-      "Resource": "arn:aws:kms:<region>:<account-id>:key/<key-id>"
-    }
-  ]
-}
-EOF
-
-aws iam put-user-policy \
-  --user-name openbao-unseal \
-  --policy-name openbao-kms \
-  --policy-document file:///tmp/openbao-kms-policy.json
-
-aws iam create-access-key --user-name openbao-unseal
-# Note the AccessKeyId and SecretAccessKey
-```
-
-**c. Create the OpenBao env file on the server:**
-
-```bash
-sudo mkdir -p /etc/openbao
-sudo tee /etc/openbao/env > /dev/null <<EOF
-AWS_ACCESS_KEY_ID=<access-key-id>
-AWS_SECRET_ACCESS_KEY=<secret-access-key>
-AWS_REGION=us-east-1
-EOF
-sudo chmod 600 /etc/openbao/env
-sudo chown openbao:openbao /etc/openbao/env
-```
-
-> **Threat model note:** OpenBao listens on `127.0.0.1` with TLS disabled. This is
-> acceptable because the listener is not network-exposed — any process that could
-> sniff loopback traffic already has privileges to read the token from the env file
-> directly. If OpenBao is ever exposed beyond localhost, TLS must be enabled.
-
-### 5. Initialize OpenBao
-
-After the first `nixos-rebuild switch`, OpenBao is running but needs one-time initialization:
-
-```bash
-export BAO_ADDR=http://127.0.0.1:8200
-
-# Initialize (save the root token and recovery key securely!)
-# With KMS auto-unseal, recovery keys are only for emergency operations
-# (e.g., generating a new root token), not for day-to-day unsealing.
-bao operator init -recovery-shares=1 -recovery-threshold=1
-
-# No manual unseal needed — KMS handles it automatically
-
-# Enable Transit engine
-export BAO_TOKEN=<root-token>
-bao secrets enable transit
-
-# Create a scoped policy for Sovra
-bao policy write sovra-transit - <<EOF
-path "transit/keys/*" {
-  capabilities = ["create", "read", "update", "delete", "list"]
-}
-path "transit/sign/*" {
-  capabilities = ["create", "update"]
-}
-path "transit/hmac/*" {
-  capabilities = ["create", "update"]
-}
-path "transit/export/*" {
-  capabilities = ["read"]
-}
-EOF
-
-# Create an app token (the backend auto-renews it before expiry)
-bao token create -policy=sovra-transit -period=96h
-# Save the token — it goes in /etc/sovra/env as VAULT_TOKEN
-```
-
-### 6. Create the env file
+### 5. Create the env file
 
 Create `/etc/sovra/env` with all required secrets:
 
@@ -244,10 +164,12 @@ sudo tee /etc/sovra/env > /dev/null <<EOF
 DATABASE_URL=ecto://sovra:sovra@localhost/sovra
 SECRET_KEY_BASE=$(openssl rand -base64 64 | tr -d '\n')
 GUARDIAN_SESSION_SECRET=$(openssl rand -base64 64 | tr -d '\n')
+STORED_KEYS_ENCRYPTION_KEY=$(openssl rand -base64 32)
 GOOGLE_CLIENT_ID=your-google-client-id
 GOOGLE_CLIENT_SECRET=your-google-client-secret
 GOOGLE_REDIRECT_URI=https://yourdomain.com/wallet/auth/callback
-VAULT_TOKEN=<token from OpenBao init>
+SIGNER_URL=http://sovra-signer:4001
+SIGNER_TOKEN=<shared bearer token, identical on the signer service>
 EOF
 sudo chmod 600 /etc/sovra/env
 sudo chown sovra:sovra /etc/sovra/env
@@ -259,11 +181,14 @@ Set a password for the PostgreSQL `sovra` user (NixOS creates it with peer auth 
 sudo -u postgres psql -c "ALTER USER sovra PASSWORD 'sovra';"
 ```
 
-Optionally, add on-chain config to `/etc/sovra/env` (the backend starts without these, but on-chain features won't work):
+Optionally, add on-chain config to `/etc/sovra/env` (the backend starts without these, but on-chain features won't work). The relayer that signs on-chain writes has two backends:
+
+- **Production (KMS):** omit `ADMIN_PRIVATE_KEY`; on-chain writes are signed by the signer service's secp256k1 relayer key (`RELAYER_KMS_KEY_ID`, set on the signer node). The API node only needs `SIGNER_URL`/`SIGNER_TOKEN` (already set above) plus the registry addresses.
+- **Local (in-process key):** set `ADMIN_PRIVATE_KEY` to sign locally — for dev or a single-host box without a signer.
 
 ```bash
 # Append to /etc/sovra/env
-ADMIN_PRIVATE_KEY=0x...
+# ADMIN_PRIVATE_KEY=0x...            # only for the local relayer backend; omit in prod (KMS)
 L2_RPC_URL=https://your-l2-rpc-endpoint
 DID_REGISTRY_ADDRESS=0x...
 ISSUER_REGISTRY_ADDRESS=0x...
@@ -276,7 +201,7 @@ nixos-rebuild switch --flake /etc/nixos#sovra-server
 
 This sets up PostgreSQL, Redis, Nginx (with Let's Encrypt TLS), the systemd service, and firewall rules.
 
-### 7. Connect Tailscale
+### 6. Connect Tailscale
 
 ```bash
 tailscale up
@@ -322,10 +247,12 @@ Required:
 | `DATABASE_URL` | Ecto database URL (e.g. `ecto://sovra:sovra@localhost/sovra`) |
 | `SECRET_KEY_BASE` | Cookie/session signing key (64+ chars) |
 | `GUARDIAN_SESSION_SECRET` | Session signing secret |
+| `STORED_KEYS_ENCRYPTION_KEY` | At-rest encryption key for webhook HMAC secrets (base64 of 32 bytes) |
 | `GOOGLE_CLIENT_ID` | Google OAuth client ID (wallet auth) |
 | `GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
 | `GOOGLE_REDIRECT_URI` | OAuth callback URL |
-| `VAULT_TOKEN` | OpenBao app token (from `bao token create`) |
+| `SIGNER_URL` | KMS signer service base URL (e.g. `http://sovra-signer:4001`) |
+| `SIGNER_TOKEN` | Shared bearer token for the signer RPC (matches the signer service) |
 
 Set automatically by the NixOS module (not in env file):
 
@@ -336,13 +263,12 @@ Set automatically by the NixOS module (not in env file):
 | `PORT` | Phoenix listen port (default 4000) |
 | `ISSUER_BASE_URL` | Public issuer URL (`https://<domain>`) |
 | `ISSUER_FRONTEND_URL` | Frontend URL for CORS + origin allow-list (`https://<domain>`) |
-| `VAULT_ADDR` | OpenBao address (default `http://127.0.0.1:8200` when `localVault = true`) |
 
-Optional (on-chain features -- omit `ADMIN_PRIVATE_KEY` to skip all):
+Optional (on-chain features -- set the registry addresses to enable; the relayer signs via KMS in prod or `ADMIN_PRIVATE_KEY` locally):
 
 | Variable | Description |
 |---|---|
-| `ADMIN_PRIVATE_KEY` | Ethereum admin key for contract interactions |
+| `ADMIN_PRIVATE_KEY` | Local relayer key for signing on-chain writes (dev/local only; omit in prod to use the KMS relayer) |
 | `L2_RPC_URL` | SovraChain RPC endpoint (default: `http://127.0.0.1:1729`) |
 | `DID_REGISTRY_ADDRESS` | Deployed DID registry contract address |
 | `ISSUER_REGISTRY_ADDRESS` | Deployed issuer registry contract address |

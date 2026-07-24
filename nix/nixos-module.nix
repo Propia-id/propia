@@ -17,10 +17,12 @@
 #   DATABASE_URL=ecto://sovra@localhost/sovra
 #   SECRET_KEY_BASE=<64+ char secret>
 #   GUARDIAN_SESSION_SECRET=<secret>
+#   STORED_KEYS_ENCRYPTION_KEY=<base64 of 32 bytes, e.g. openssl rand -base64 32>
 #   GOOGLE_CLIENT_ID=<id>
 #   GOOGLE_CLIENT_SECRET=<secret>
 #   GOOGLE_REDIRECT_URI=https://yourdomain.com/wallet/auth/callback
-#   VAULT_TOKEN=<OpenBao app token>
+#   SIGNER_URL=<KMS signer service URL, e.g. http://sovra-signer:4001>
+#   SIGNER_TOKEN=<shared bearer token for the signer RPC>
 
 { config, lib, pkgs, ... }:
 
@@ -49,9 +51,11 @@ in
       description = ''
         Path to environment file containing all runtime secrets and config.
         Must contain DATABASE_URL, SECRET_KEY_BASE, GUARDIAN_SESSION_SECRET,
-        GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI,
-        and VAULT_TOKEN. Optionally REVOCATION_REGISTRY_ADDRESS for
-        on-chain credential revocation.
+        STORED_KEYS_ENCRYPTION_KEY, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
+        GOOGLE_REDIRECT_URI, and SIGNER_URL + SIGNER_TOKEN (to reach the KMS
+        signer service).
+        Optionally REVOCATION_REGISTRY_ADDRESS for on-chain credential
+        revocation.
       '';
     };
 
@@ -79,31 +83,10 @@ in
       description = "Whether to run a local Redis instance.";
     };
 
-    localVault = lib.mkOption {
-      type = lib.types.bool;
-      default = true;
-      description = "Whether to run a local OpenBao instance for Transit key management.";
-    };
-
-    kmsKeyId = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-      description = "AWS KMS key ID for OpenBao auto-unseal. When set, OpenBao uses KMS instead of Shamir.";
-      example = "alias/openbao-unseal";
-    };
-
-    kmsRegion = lib.mkOption {
-      type = lib.types.str;
-      default = "us-east-1";
-      description = "AWS region for the KMS key used for auto-unseal.";
-    };
-
-    vaultEnvFile = lib.mkOption {
-      type = lib.types.nullOr lib.types.path;
-      default = null;
-      description = "Path to environment file for the OpenBao service (e.g., AWS credentials for KMS auto-unseal).";
-      example = "/etc/openbao/env";
-    };
+    # Cryptographic signing (P-256 workspace keys) is handled by AWS KMS via a
+    # dedicated signer service reached over the network — see SIGNER_URL /
+    # SIGNER_TOKEN in the env file. This module runs only the API tier; the
+    # signer service itself is provisioned separately (fleet infra).
 
     nginx = {
       enable = lib.mkOption {
@@ -141,11 +124,9 @@ in
       description = "Sovra Phoenix server";
       after = [ "network.target" ]
         ++ lib.optional cfg.localPostgres "postgresql.service"
-        ++ lib.optional cfg.localRedis "redis-sovra.service"
-        ++ lib.optional cfg.localVault "openbao.service";
+        ++ lib.optional cfg.localRedis "redis-sovra.service";
       wants = lib.optional cfg.localPostgres "postgresql.service"
-        ++ lib.optional cfg.localRedis "redis-sovra.service"
-        ++ lib.optional cfg.localVault "openbao.service";
+        ++ lib.optional cfg.localRedis "redis-sovra.service";
       wantedBy = [ "multi-user.target" ];
 
       environment = {
@@ -154,8 +135,6 @@ in
         PORT = toString cfg.port;
         ISSUER_BASE_URL = "https://${cfg.domain}";
         ISSUER_FRONTEND_URL = "https://${cfg.domain}";
-      } // lib.optionalAttrs cfg.localVault {
-        VAULT_ADDR = "http://127.0.0.1:8200";
       };
 
       serviceConfig = {
@@ -199,74 +178,6 @@ in
       enable = true;
       port = 6379;
       bind = "127.0.0.1";
-    };
-
-    # ── OpenBao (Transit key store) ────────────────────────────────────────
-    systemd.tmpfiles.rules = lib.mkIf cfg.localVault [
-      "d /var/lib/openbao/data 0700 openbao openbao -"
-    ];
-
-    systemd.services.openbao = lib.mkIf cfg.localVault {
-      description = "OpenBao Secret Management";
-      after = [ "network.target" ];
-      wantedBy = [ "multi-user.target" ];
-
-      serviceConfig = {
-        Type = "exec";
-        User = "openbao";
-        Group = "openbao";
-        StateDirectory = "openbao";
-        ExecStart = "${pkgs.openbao}/bin/bao server -config=/etc/openbao/config.hcl";
-        Restart = "on-failure";
-        RestartSec = 5;
-      } // lib.optionalAttrs (cfg.vaultEnvFile != null) {
-        EnvironmentFile = cfg.vaultEnvFile;
-      } // {
-        NoNewPrivileges = true;
-        ProtectSystem = "strict";
-        ProtectHome = true;
-        PrivateTmp = true;
-        PrivateDevices = true;
-        ReadWritePaths = [ "/var/lib/openbao" ];
-      };
-    };
-
-    users.users.openbao = lib.mkIf cfg.localVault {
-      isSystemUser = true;
-      group = "openbao";
-      home = "/var/lib/openbao";
-      createHome = true;
-    };
-    users.groups.openbao = lib.mkIf cfg.localVault {};
-
-    environment.systemPackages = lib.mkIf cfg.localVault [ pkgs.openbao ];
-
-    environment.etc."openbao/config.hcl" = lib.mkIf cfg.localVault {
-      text = ''
-        storage "raft" {
-          path = "/var/lib/openbao/data"
-          node_id = "sovra-1"
-        }
-
-        # TLS is disabled because the listener is bound to localhost only.
-        # Any process that could sniff loopback traffic already has
-        # privileges to read the token from the env file directly,
-        # so TLS would not add meaningful protection here.
-        listener "tcp" {
-          address     = "127.0.0.1:8200"
-          tls_disable = 1
-        }
-
-        api_addr     = "http://127.0.0.1:8200"
-        cluster_addr = "http://127.0.0.1:8201"
-
-        ${lib.optionalString (cfg.kmsKeyId != null) ''
-        seal "awskms" {
-          region     = "${cfg.kmsRegion}"
-          kms_key_id = "${cfg.kmsKeyId}"
-        }
-        ''}
-      '';
     };
 
     # ── Nginx reverse proxy ─────────────────────────────────────────────────

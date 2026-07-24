@@ -57,8 +57,15 @@ defmodule Sovra.MixProject do
       {:gettext, "~> 1.0"},
       {:jason, "~> 1.2"},
       {:jose, "~> 1.11"},
-      {:finch, "~> 0.19"},
+      {:finch, "~> 0.22"},
       {:req, "~> 0.5"},
+      # AWS KMS for the signer service (SERVICE=signer). `aws` = aws-elixir SDK
+      # (KMS Sign / GetPublicKey / CreateKey); its HTTP goes through a thin Req
+      # adapter (Sovra.AWS.ReqHTTPClient) over our existing Req — no hackney, no
+      # separately supervised Finch. `aws_credentials` resolves the EC2 instance
+      # role via IMDS on the signer box (env-only elsewhere, see runtime.exs).
+      {:aws, "~> 1.0.13"},
+      {:aws_credentials, "~> 1.0.5"},
       {:cbor, "~> 1.0"},
       {:ethers, "~> 0.6"},
       {:ethereumex, "~> 0.10"},

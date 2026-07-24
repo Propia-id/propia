@@ -1,14 +1,21 @@
 defmodule Sovra.Crypto.DatabaseHmacStore do
   @moduledoc """
-  Development/test HMAC store that keeps the plaintext in the existing
-  `stored_keys` table. Signing happens locally with `:crypto.mac/3`.
+  HMAC store backed by the `stored_keys` table; signs locally with
+  `:crypto.mac/3`.
 
-  Not for production use. Production should configure `VaultHmacStore`.
+  Used in every environment, including production: unlike the P-256 signing
+  keys, the webhook HMAC secret must be revealed to the customer once (so they
+  can verify our signatures on their side), and AWS KMS HMAC keys are
+  non-exportable — so this secret cannot live in KMS. It is stored encrypted
+  at rest by `Sovra.Crypto.StoredKeyCipher` (AES-256-GCM, key from the
+  environment); rows written before encryption existed are read as plaintext
+  and re-encrypted on rotation.
   """
 
   @behaviour Sovra.Crypto.HmacKeyStore
 
   alias Sovra.Crypto.StoredKey
+  alias Sovra.Crypto.StoredKeyCipher
   alias Sovra.Repo
 
   @impl true
@@ -19,7 +26,7 @@ defmodule Sovra.Crypto.DatabaseHmacStore do
     changeset =
       StoredKey.changeset(%{
         key_id: key_id,
-        private_key: plaintext,
+        private_key: StoredKeyCipher.encrypt(plaintext, key_id),
         holder_id: "workspace_webhook"
       })
 
@@ -35,8 +42,10 @@ defmodule Sovra.Crypto.DatabaseHmacStore do
       nil ->
         {:error, :not_found}
 
-      %StoredKey{private_key: secret} ->
-        {:ok, :crypto.mac(:hmac, :sha256, secret, IO.iodata_to_binary(payload))}
+      %StoredKey{private_key: stored} ->
+        with {:ok, secret} <- StoredKeyCipher.decrypt(stored, key_id) do
+          {:ok, :crypto.mac(:hmac, :sha256, secret, IO.iodata_to_binary(payload))}
+        end
     end
   end
 
@@ -50,7 +59,7 @@ defmodule Sovra.Crypto.DatabaseHmacStore do
         plaintext = random_plaintext()
 
         stored
-        |> Ecto.Changeset.change(private_key: plaintext)
+        |> Ecto.Changeset.change(private_key: StoredKeyCipher.encrypt(plaintext, key_id))
         |> Repo.update()
         |> case do
           {:ok, _} -> {:ok, %{plaintext: plaintext}}

@@ -894,10 +894,7 @@ defmodule Sovra.Issuer do
     end
   end
 
-  defp ethereum_configured? do
-    config = Application.get_env(:sovra, :ethereum, [])
-    config[:admin_private_key] != nil and config[:did_registry_address] != nil
-  end
+  defp ethereum_configured?, do: Sovra.Ethereum.Client.configured?()
 
   defp revocation_registry,
     do: Application.get_env(:sovra, :revocation_registry, RevocationRegistry)

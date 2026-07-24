@@ -1,7 +1,10 @@
 defmodule Sovra.Crypto.P256 do
   @moduledoc """
-  P-256 (secp256r1) key operations using Erlang :crypto.
+  P-256 (secp256r1) key operations using Erlang :crypto. DER signature parsing
+  and low-s normalization are shared with secp256k1 via `Sovra.Crypto.Ecdsa`.
   """
+
+  alias Sovra.Crypto.Ecdsa
 
   @curve :secp256r1
   @coord_size 32
@@ -35,8 +38,9 @@ defmodule Sovra.Crypto.P256 do
   Parses a DER-encoded ECDSA signature into normalized {r, s} components.
   """
   def parse_der_signature(der) when is_binary(der) do
-    %{r: r, s: s} = der_to_rs(der)
-    {:ok, %{r: r, s: normalize_s(s)}}
+    with {:ok, {r, s}} <- Ecdsa.parse_der_signature(der, @n) do
+      {:ok, %{r: r, s: s}}
+    end
   end
 
   @doc """
@@ -60,14 +64,6 @@ defmodule Sovra.Crypto.P256 do
   end
 
   def verify(_hash, _signature, _public_key), do: false
-
-  # DER decode: SEQUENCE { INTEGER r, INTEGER s }
-  defp der_to_rs(
-         <<0x30, _len, 0x02, r_len, r_raw::binary-size(r_len), 0x02, s_len,
-           s_raw::binary-size(s_len)>>
-       ) do
-    %{r: pad_or_trim(r_raw, @coord_size), s: pad_or_trim(s_raw, @coord_size)}
-  end
 
   defp rs_to_der(r, s) do
     r_int = encode_der_integer(r)
@@ -102,16 +98,5 @@ defmodule Sovra.Crypto.P256 do
   @doc """
   Pad to size (left with zeros) or trim leading zero bytes.
   """
-  def pad_or_trim(bin, size) when byte_size(bin) == size, do: bin
-
-  def pad_or_trim(bin, size) when byte_size(bin) > size do
-    # Strip leading zero bytes (DER integer may have 0x00 prefix)
-    <<_::binary-size(byte_size(bin) - size), trimmed::binary-size(size)>> = bin
-    trimmed
-  end
-
-  def pad_or_trim(bin, size) when byte_size(bin) < size do
-    padding = size - byte_size(bin)
-    <<0::size(padding * 8), bin::binary>>
-  end
+  defdelegate pad_or_trim(bin, size), to: Ecdsa
 end

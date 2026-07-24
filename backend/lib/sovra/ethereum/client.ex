@@ -16,23 +16,46 @@ defmodule Sovra.Ethereum.Client do
 
   def send_transaction(tx_data, opts \\ []) do
     config = ethereum_config()
-    private_key = Keyword.fetch!(config, :admin_private_key)
+    {signer, signer_opts} = relayer_signer(config)
 
-    {:ok, [from_address]} = Ethers.Signer.Local.accounts(private_key: private_key)
+    with {:ok, [from_address]} <- signer.accounts(signer_opts) do
+      send_opts =
+        [
+          to: opts[:to],
+          from: from_address,
+          signer: signer,
+          signer_opts: signer_opts,
+          rpc_opts: rpc_opts(config)
+        ]
+        |> Keyword.filter(fn {_k, v} -> v != nil end)
 
-    send_opts =
-      [
-        to: opts[:to],
-        from: from_address,
-        signer: Ethers.Signer.Local,
-        signer_opts: [private_key: private_key],
-        rpc_opts: rpc_opts(config)
-      ]
-      |> Keyword.filter(fn {_k, v} -> v != nil end)
+      tx_data
+      |> Ethers.send_transaction(send_opts)
+      |> handle_send_result()
+    end
+  end
 
-    tx_data
-    |> Ethers.send_transaction(send_opts)
-    |> handle_send_result()
+  @doc """
+  Whether on-chain operations are configured: a relayer signer (local admin key
+  or the KMS signer) plus a DID registry address.
+  """
+  def configured? do
+    config = ethereum_config()
+
+    has_relayer =
+      Keyword.get(config, :relayer_backend) == :kms or
+        Keyword.get(config, :admin_private_key) not in [nil, ""]
+
+    has_relayer and Keyword.get(config, :did_registry_address) not in [nil, ""]
+  end
+
+  # Local (in-process ADMIN_PRIVATE_KEY) for dev/test/local; KMS signer service
+  # (no key material on this node) in production.
+  defp relayer_signer(config) do
+    case Keyword.get(config, :relayer_backend, :local) do
+      :kms -> {Sovra.Ethereum.KmsSigner, []}
+      _ -> {Ethers.Signer.Local, [private_key: Keyword.fetch!(config, :admin_private_key)]}
+    end
   end
 
   def call(tx_data, opts \\ []) do

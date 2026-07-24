@@ -3,12 +3,12 @@ defmodule Sovra.Crypto.HmacKeyStore do
   Behaviour for HMAC-SHA256 secret storage backends.
 
   Implementations:
-  - `Sovra.Crypto.VaultHmacStore` — production. Secret lives in OpenBao Transit;
-    plaintext is exported exactly once at creation (and on rotation) so the
-    customer can configure their webhook receiver. HMAC is computed server-side
-    in Vault on every webhook fire — Sovra never holds the plaintext again.
-  - `Sovra.Crypto.DatabaseHmacStore` — dev/test. Stores plaintext in the
-    existing `stored_keys` table; signs locally with `:crypto.mac/3`.
+  - `Sovra.Crypto.DatabaseHmacStore` — all environments. The webhook secret is
+    revealed to the customer exactly once (at creation/rotation) so they can
+    verify our signatures, and AWS KMS HMAC keys are non-exportable — so unlike
+    the P-256 signing keys this secret cannot live in KMS. It is stored in the
+    `stored_keys` table (encrypted at rest by `Sovra.Crypto.StoredKeyCipher`)
+    and HMAC is computed locally with `:crypto.mac/3`.
   """
 
   @doc """

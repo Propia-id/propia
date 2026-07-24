@@ -1,5 +1,15 @@
 import Config
 
+# Env files commonly contain "VAR=" lines, and System.get_env returns "" for
+# those — which is truthy, so it would satisfy `|| raise` presence guards and
+# bypass `|| default` fallbacks. Treat empty as unset everywhere below.
+env = fn name ->
+  case System.get_env(name) do
+    "" -> nil
+    value -> value
+  end
+end
+
 # config/runtime.exs is executed for all environments, including
 # during releases. It is executed after compilation and before the
 # system starts, so it is typically used to load production configuration
@@ -33,25 +43,84 @@ if frontend_url = System.get_env("ISSUER_FRONTEND_URL") do
   config :cors_plug, origin: [frontend_url], credentials: true, max_age: 86_400
 end
 
-# Vault/OpenBao config — gated on VAULT_TOKEN (the secret) so any environment
-# with a token gets configured. URL defaults to local OpenBao, matching the
-# NixOS module's localVault setup; override with VAULT_ADDR for remote vaults.
-if System.get_env("VAULT_TOKEN") do
-  config :sovra, :vault,
-    url: System.get_env("VAULT_ADDR", "http://127.0.0.1:8200"),
-    token: System.fetch_env!("VAULT_TOKEN"),
-    transit_mount: System.get_env("VAULT_TRANSIT_MOUNT", "transit")
+# One release, two roles (see Sovra.Application). SERVICE=signer boots the KMS
+# signer service (no DB / endpoint); anything else is a full API node.
+service = System.get_env("SERVICE", "api")
+
+# KMS signer (API-side): the production key store (Sovra.Crypto.KmsKeyStore)
+# signs P-256 workspace keys by calling the dedicated signer service over
+# Tailscale. Both must be set; when unset (local dev/test) the software/database
+# key stores are used instead and no signer runs.
+signer_url = env.("SIGNER_URL")
+signer_token = env.("SIGNER_TOKEN")
+
+if signer_url && signer_token do
+  config :sovra, :signer, url: signer_url, token: signer_token
 end
 
-# Ethereum config — available in all environments at runtime
-if System.get_env("ADMIN_PRIVATE_KEY") do
-  config :sovra, :ethereum,
-    rpc_url: System.get_env("L2_RPC_URL", "http://127.0.0.1:1729"),
-    chain_id: String.to_integer(System.get_env("CHAIN_ID", "65536999")),
-    admin_private_key: System.fetch_env!("ADMIN_PRIVATE_KEY"),
-    did_registry_address: System.fetch_env!("DID_REGISTRY_ADDRESS"),
-    issuer_registry_address: System.fetch_env!("ISSUER_REGISTRY_ADDRESS"),
-    revocation_registry_address: System.get_env("REVOCATION_REGISTRY_ADDRESS")
+# KMS signer (service-side): only the SERVICE=signer box talks to AWS KMS. Its
+# credentials come from the EC2 instance role via IMDS (default provider chain);
+# every other role runs off-AWS (Scaleway) and must never poll the metadata
+# endpoint, so it is pinned to the env-var credential provider.
+if service == "signer" do
+  region = env.("AWS_REGION")
+
+  if config_env() == :prod do
+    region || raise "environment variable AWS_REGION is missing (SERVICE=signer)"
+    signer_token || raise "environment variable SIGNER_TOKEN is missing (SERVICE=signer)"
+  end
+
+  config :sovra, :signer_service,
+    port: String.to_integer(env.("SIGNER_PORT") || "4001"),
+    env: System.get_env("SOVRA_ENV") || to_string(config_env()),
+    region: region,
+    token: signer_token,
+    # secp256k1 relayer key (on-chain signing). Optional — a signer that only
+    # serves P-256 workspace keys leaves it unset.
+    relayer_kms_key_id: System.get_env("RELAYER_KMS_KEY_ID")
+else
+  config :aws_credentials, credential_providers: [:aws_credentials_env]
+end
+
+# Fail fast: an API node whose key store is KmsKeyStore (the prod default) is
+# useless without a reachable signer, so require both at boot rather than
+# discovering it on the first signature.
+if config_env() == :prod and service != "signer" and
+     Application.get_env(:sovra, :key_store) == Sovra.Crypto.KmsKeyStore do
+  signer_url || raise "environment variable SIGNER_URL is missing (required by KmsKeyStore)"
+  signer_token || raise "environment variable SIGNER_TOKEN is missing (required by KmsKeyStore)"
+end
+
+# Ethereum / on-chain relayer. Two signing backends:
+#   * :local — signs with ADMIN_PRIVATE_KEY in-process (dev/test/local).
+#   * :kms   — signs via the signer service's secp256k1 relayer key; no key
+#              material on the API node (production).
+# Local wins when ADMIN_PRIVATE_KEY is set; otherwise KMS is used once a signer
+# and a DID registry are configured. On-chain stays disabled if neither.
+admin_pk = System.get_env("ADMIN_PRIVATE_KEY")
+
+cond do
+  admin_pk not in [nil, ""] ->
+    config :sovra, :ethereum,
+      relayer_backend: :local,
+      rpc_url: System.get_env("L2_RPC_URL", "http://127.0.0.1:1729"),
+      chain_id: String.to_integer(env.("CHAIN_ID") || "65536999"),
+      admin_private_key: admin_pk,
+      did_registry_address: System.fetch_env!("DID_REGISTRY_ADDRESS"),
+      issuer_registry_address: System.fetch_env!("ISSUER_REGISTRY_ADDRESS"),
+      revocation_registry_address: System.get_env("REVOCATION_REGISTRY_ADDRESS")
+
+  signer_url not in [nil, ""] and System.get_env("DID_REGISTRY_ADDRESS") not in [nil, ""] ->
+    config :sovra, :ethereum,
+      relayer_backend: :kms,
+      rpc_url: System.get_env("L2_RPC_URL", "http://127.0.0.1:1729"),
+      chain_id: String.to_integer(env.("CHAIN_ID") || "65536999"),
+      did_registry_address: System.fetch_env!("DID_REGISTRY_ADDRESS"),
+      issuer_registry_address: System.fetch_env!("ISSUER_REGISTRY_ADDRESS"),
+      revocation_registry_address: System.get_env("REVOCATION_REGISTRY_ADDRESS")
+
+  true ->
+    :ok
 end
 
 # Holder identity source for DID resolution. "aligned" reads the holder's
@@ -63,7 +132,10 @@ config :sovra, :did,
   identity_source:
     if(System.get_env("SOVRA_IDENTITY_SOURCE") == "aligned", do: :aligned, else: :legacy)
 
-if config_env() == :prod do
+# API-node-only prod config. The SERVICE=signer role has no Repo, endpoint, or
+# Guardian/Google auth (see Sovra.Application), so it must boot without these
+# env vars; its own requirements are enforced in the signer branch above.
+if config_env() == :prod and service != "signer" do
   database_url =
     System.get_env("DATABASE_URL") ||
       raise """
@@ -92,6 +164,26 @@ if config_env() == :prod do
       environment variable SECRET_KEY_BASE is missing.
       You can generate one by calling: mix phx.gen.secret
       """
+
+  # At-rest encryption key for secrets in the stored_keys table (webhook HMAC
+  # secrets — see Sovra.Crypto.StoredKeyCipher).
+  stored_keys_encryption_key =
+    env.("STORED_KEYS_ENCRYPTION_KEY") ||
+      raise """
+      environment variable STORED_KEYS_ENCRYPTION_KEY is missing.
+      You can generate one by calling: openssl rand -base64 32
+      """
+
+  stored_keys_encryption_key =
+    case Base.decode64(stored_keys_encryption_key) do
+      {:ok, key} when byte_size(key) == 32 ->
+        key
+
+      _ ->
+        raise "STORED_KEYS_ENCRYPTION_KEY must be the base64 encoding of exactly 32 bytes"
+    end
+
+  config :sovra, :stored_keys_encryption_key, stored_keys_encryption_key
 
   host = System.get_env("PHX_HOST") || "example.com"
 

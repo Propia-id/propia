@@ -6,8 +6,8 @@
 #   1. NixOS installed
 #   2. Tailscale enabled for SSH access from CI
 #   3. An `admin` user with sudo access (created by nixos-infect)
-#   4. Env file at /etc/sovra/env with all required secrets
-#   5. OpenBao initialized and unsealed (see docs/deployment.md § "Initialize OpenBao")
+#   4. Env file at /etc/sovra/env with all required secrets (incl. SIGNER_URL /
+#      SIGNER_TOKEN pointing at the KMS signer service — see docs/deployment.md)
 #
 # Required GitHub Secrets:
 #   - TS_OAUTH_CLIENT_ID / TS_OAUTH_SECRET — Tailscale OAuth client credentials

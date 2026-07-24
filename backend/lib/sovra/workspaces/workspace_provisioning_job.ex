@@ -120,25 +120,18 @@ defmodule Sovra.Workspaces.WorkspaceProvisioningJob do
   end
 
   defp register_on_chain(%Workspace{} = ws) do
-    cfg = Application.get_env(:sovra, :ethereum, [])
-
-    cond do
-      Keyword.get(cfg, :admin_private_key) == nil ->
-        {:error, :ethereum_not_configured}
-
-      Keyword.get(cfg, :did_registry_address) == nil ->
-        {:error, :ethereum_not_configured}
-
-      true ->
-        case did_registry().register_issuer_did(
-               ws.eoa_address,
-               ws.signing_public_key_x,
-               ws.signing_public_key_y,
-               ClaimUtils.base_url()
-             ) do
-          {:ok, _tx_hash} -> :ok
-          {:error, reason} -> {:error, reason}
-        end
+    if Sovra.Ethereum.Client.configured?() do
+      case did_registry().register_issuer_did(
+             ws.eoa_address,
+             ws.signing_public_key_x,
+             ws.signing_public_key_y,
+             ClaimUtils.base_url()
+           ) do
+        {:ok, _tx_hash} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      {:error, :ethereum_not_configured}
     end
   end
 

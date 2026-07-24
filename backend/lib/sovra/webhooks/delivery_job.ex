@@ -2,8 +2,8 @@ defmodule Sovra.Webhooks.DeliveryJob do
   @moduledoc """
   Oban worker that delivers a signed webhook POST to a workspace's configured
   `webhook_url`. The HMAC signature is computed by `Sovra.Crypto.HmacKeyStore`
-  (in production, that's OpenBao Transit — the plaintext never lives in Sovra
-  memory).
+  (`DatabaseHmacStore` — the secret is stored so it can be revealed to the
+  customer once, since KMS HMAC keys are non-exportable).
 
   Retry semantics:
   - 2xx → success.

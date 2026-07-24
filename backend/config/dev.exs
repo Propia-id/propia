@@ -54,6 +54,10 @@ config :sovra,
   key_store: Sovra.Crypto.DatabaseKeyStore,
   hmac_key_store: Sovra.Crypto.DatabaseHmacStore
 
+# At-rest key for secrets in stored_keys (Sovra.Crypto.StoredKeyCipher).
+# Fixed insecure value for dev; prod requires STORED_KEYS_ENCRYPTION_KEY.
+config :sovra, :stored_keys_encryption_key, String.duplicate("insecure-dev-key", 2)
+
 # Google OAuth (dev) — set via environment variables
 config :sovra,
   google_client_id: System.get_env("GOOGLE_CLIENT_ID", "dev-client-id"),
@@ -70,6 +74,11 @@ config :sovra, :ethereum,
   did_registry_address: System.get_env("DID_REGISTRY_ADDRESS"),
   issuer_registry_address: System.get_env("ISSUER_REGISTRY_ADDRESS"),
   revocation_registry_address: System.get_env("REVOCATION_REGISTRY_ADDRESS")
+
+# aws_credentials starts as an application dependency (pulled in by :aws for the
+# signer). Dev runs off-AWS and uses the DatabaseKeyStore, so pin it to the
+# env-var provider — otherwise it polls the EC2 metadata endpoint on boot.
+config :aws_credentials, credential_providers: [:aws_credentials_env]
 
 # Do not include metadata nor timestamps in development logs
 config :logger, :default_formatter, format: "[$level] $message\n"

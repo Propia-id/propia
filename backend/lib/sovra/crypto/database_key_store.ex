@@ -1,7 +1,8 @@
 defmodule Sovra.Crypto.DatabaseKeyStore do
   @moduledoc """
   P256 key store backed by PostgreSQL. Keys are stored as plaintext.
-  For development only — use VaultKeyStore in production.
+  For development only — production uses `Sovra.Crypto.KmsKeyStore`
+  (AWS KMS via the signer service).
   """
 
   @behaviour Sovra.Crypto.KeyStore

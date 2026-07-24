@@ -28,7 +28,7 @@ Everything below unpacks that table.
 **W3C Verifiable Credentials, serialized as SD-JWT VC** — what Sovra ships.
 - JSON/JWT-based. The issuer signs a payload whose disclosable claims are salted hashes (`_sd` digests); the actual values travel as separate *disclosure* strings. The holder chooses which disclosures to reveal at presentation time — that is **selective disclosure**.
 - Holder binding: the credential carries the holder's public key in its `cnf` claim; every presentation must be freshly signed by that key (the **KB-JWT**). A stolen credential file is unusable.
-- Where in the codebase: issuance in `backend/lib/sovra/issuer/` (SD-JWT built in `sd_jwt.ex`, signed via OpenBao Transit), wallet-side parsing/storage in `frontend/packages/holder-core/src/credentials/`, verification in `backend/lib/sovra/credentials/sd_jwt.ex` and `frontend/packages/verification-sdk/`.
+- Where in the codebase: issuance in `backend/lib/sovra/issuer/` (SD-JWT built in `sd_jwt.ex`, signed via the AWS KMS signer service), wallet-side parsing/storage in `frontend/packages/holder-core/src/credentials/`, verification in `backend/lib/sovra/credentials/sd_jwt.ex` and `frontend/packages/verification-sdk/`.
 
 **mDoc / mDL (ISO/IEC 18013-5)** — planned, tracked in #97. **Zero code today.**
 - A *different* format: binary **CBOR** encoding, issuer-signed **MSO** (Mobile Security Object), its own selective-disclosure and device-binding mechanics. It is the standard for **mobile driving licences** and the eIDAS 2 / EUDI-wallet ecosystem.

@@ -36,16 +36,36 @@ config :sovra,
   google_client_secret: "test-client-secret",
   google_redirect_uri: "http://localhost:4002/wallet/auth/callback"
 
-# Vault — Req.Test plug so VaultTokenRenewer's HTTP calls can be stubbed.
-# Token-renewal intervals are tiny so failure/retry timing can be asserted.
-config :sovra, :vault,
-  url: "http://vault.test",
-  token: "test-token",
-  vault_req_opts: [plug: {Req.Test, :sovra_vault}],
-  token_renewal_interval_ms: 5_000,
-  token_renewal_retry_interval_ms: 50,
-  token_renewal_degraded_interval_ms: 300,
-  token_renewal_max_consecutive_failures: 3
+# At-rest key for secrets in stored_keys (Sovra.Crypto.StoredKeyCipher).
+config :sovra, :stored_keys_encryption_key, String.duplicate("insecure-dev-key", 2)
+
+# aws_credentials starts as an application dependency (pulled in by :aws). Tests
+# never touch AWS (the KMS backend is stubbed), so pin it to the env-var
+# provider — otherwise it polls the EC2 metadata endpoint on boot.
+config :aws_credentials, credential_providers: [:aws_credentials_env]
+
+# KMS signer — stub the AWS KMS backend (in-memory real P-256 keys) so
+# Sovra.Signer.Kms / Router tests exercise the DER/low-s/SPKI paths without AWS.
+config :sovra, :kms_backend, SovraTest.Crypto.StubKms
+
+# Sovra.AWS.KMS / ReqHTTPClient tests exercise the real wrapper; this plug
+# intercepts its HTTP so nothing reaches AWS.
+config :sovra, :aws_req_options, plug: {Req.Test, :aws_kms}
+
+# The relayer key is a fixed secp256k1 stub key (private = 0x11…11) so relayer
+# tests are deterministic; StubKms dispatches on the "k1-" prefix.
+config :sovra, :signer_service,
+  token: "test-signer-token",
+  env: "test",
+  region: "us-east-1",
+  relayer_kms_key_id: "stub-k1-" <> String.duplicate("11", 32)
+
+# Sovra.Crypto.KmsKeyStore reaches the signer over HTTP; a Req.Test plug lets
+# those calls be stubbed in the KmsKeyStore test.
+config :sovra, :signer,
+  url: "http://signer.test",
+  token: "test-signer-token",
+  req_options: [plug: {Req.Test, :sovra_signer}]
 
 # Oban — manual mode so jobs don't run unless asserted on
 config :sovra, Oban, testing: :manual
