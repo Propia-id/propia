@@ -189,11 +189,24 @@ if config_env() == :prod and service != "signer" do
 
   config :sovra, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
+  # Google OAuth (holder auth) — used only by the legacy identity source's
+  # login flow. In aligned mode (SOVRA_IDENTITY_SOURCE=aligned) holder identity
+  # comes from the AlignedAccount contract, so the Google credentials may be
+  # unset; GoogleAuthProvider reads them lazily per request.
+  google_env = fn name ->
+    env.(name) ||
+      if System.get_env("SOVRA_IDENTITY_SOURCE") == "aligned" do
+        nil
+      else
+        raise "environment variable #{name} is missing (required unless SOVRA_IDENTITY_SOURCE=aligned)"
+      end
+  end
+
   config :sovra,
     session_secret: System.fetch_env!("GUARDIAN_SESSION_SECRET"),
-    google_client_id: System.fetch_env!("GOOGLE_CLIENT_ID"),
-    google_client_secret: System.fetch_env!("GOOGLE_CLIENT_SECRET"),
-    google_redirect_uri: System.fetch_env!("GOOGLE_REDIRECT_URI")
+    google_client_id: google_env.("GOOGLE_CLIENT_ID"),
+    google_client_secret: google_env.("GOOGLE_CLIENT_SECRET"),
+    google_redirect_uri: google_env.("GOOGLE_REDIRECT_URI")
 
   config :sovra, SovraWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],

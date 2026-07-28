@@ -1,13 +1,20 @@
 # Deployment
 
+> **Note:** Production now runs on the multi-host **fleet** (Terraform + Ansible)
+> — see [`../infra/README.md`](../infra/README.md) and
+> [`../infra/CICD.md`](../infra/CICD.md). This document describes the older
+> **single-host NixOS** path, kept for a single-box or dev deploy. Its automated
+> CD workflow (`.github/workflows/cd.yml`) has been **retired**, so single-host
+> deploys are now manual (build artifacts → copy → `systemctl restart`).
+
 ## Overview
 
-Sovra deploys to a **NixOS** server. The first deploy sets up the server infrastructure (Nginx, PostgreSQL, Redis, systemd services). Subsequent deploys use the **CD workflow** to update application code via GitHub Actions.
+Sovra deploys to a **NixOS** server. The first deploy sets up the server infrastructure (Nginx, PostgreSQL, systemd services). Subsequent deploys update application code (backend release + issuer static files).
 
-| | First deploy | CD workflow |
+| | First deploy | Code deploy |
 |---|---|---|
 | **What** | NixOS config + server infrastructure | Backend release + issuer static files |
-| **How** | `nixos-rebuild switch` on server | rsync artifacts + `systemctl restart` |
+| **How** | `nixos-rebuild switch` on server | copy artifacts + `systemctl restart` |
 | **When** | Once (or when infra changes) | Every code deploy |
 
 ## Architecture
@@ -30,8 +37,7 @@ NixOS Server
   │   └── /live/*  → Phoenix WebSocket (proxy)
   │
   ├── sovra.service          ← Phoenix on port 4000
-  ├── PostgreSQL
-  └── Redis
+  └── PostgreSQL
 ```
 
 ## Server Setup
@@ -199,7 +205,7 @@ REVOCATION_REGISTRY_ADDRESS=0x...
 nixos-rebuild switch --flake /etc/nixos#sovra-server
 ```
 
-This sets up PostgreSQL, Redis, Nginx (with Let's Encrypt TLS), the systemd service, and firewall rules.
+This sets up PostgreSQL, Nginx (with Let's Encrypt TLS), the systemd service, and firewall rules.
 
 ### 6. Connect Tailscale
 
@@ -207,30 +213,31 @@ This sets up PostgreSQL, Redis, Nginx (with Let's Encrypt TLS), the systemd serv
 tailscale up
 ```
 
-Note the Tailscale hostname -- you'll need it for the `DEPLOY_HOST` GitHub secret.
+Note the Tailscale hostname (`$DEPLOY_HOST` below).
 
-## CD Workflow
+## Code deploy (manual)
 
-After the server is set up, all subsequent deploys happen via the **CD workflow** (`.github/workflows/cd.yml`), triggered manually from the GitHub Actions UI ("Run workflow" button).
+The automated CD workflow (`.github/workflows/cd.yml`) has been **retired** in favour of the fleet (`infra/`). For a single-host box, deploy application code manually from a machine with Nix + Tailscale SSH to the server (`$DEPLOY_HOST` = the server's Tailscale hostname):
 
-The workflow:
+```bash
+# Build the backend release + issuer static bundle
+nix build .#sovra-backend
+nix build .#sovra-issuer
 
-1. Builds backend (`nix build .#sovra-backend`) and issuer (`nix build .#sovra-issuer`)
-2. Connects to the server via Tailscale SSH
-3. Rsyncs artifacts to `/opt/sovra/backend/` and `/opt/sovra/issuer/`
-4. Restarts the `sovra` systemd service
+# Copy closures to the server and repoint the deploy symlinks
+nix copy --to "ssh://admin@$DEPLOY_HOST" .#sovra-backend .#sovra-issuer
+ssh "admin@$DEPLOY_HOST" \
+  "sudo ln -sfn $(nix path-info .#sovra-backend) /opt/sovra/backend && \
+   sudo ln -sfn $(nix path-info .#sovra-issuer) /opt/sovra/issuer"
 
-### Required GitHub Secrets
-
-| Secret | Description |
-|---|---|
-| `TS_OAUTH_CLIENT_ID` | Tailscale OAuth client ID (create at [admin.tailscale.com](https://login.tailscale.com/admin/settings/oauth), tag: `ci`). Stored as a **variable**, not a secret. |
-| `TS_OAUTH_SECRET` | Tailscale OAuth client secret |
-| `DEPLOY_HOST` | Tailscale hostname of the server |
+# Migrate + restart
+ssh "admin@$DEPLOY_HOST" 'set -a; source /etc/sovra/env; /opt/sovra/backend/bin/sovra eval Sovra.Release.migrate'
+ssh "admin@$DEPLOY_HOST" "sudo systemctl restart sovra"
+```
 
 ### When to re-run `nixos-rebuild`
 
-The CD workflow only updates application code. You need to SSH into the server and run `nixos-rebuild switch` if you change:
+Code deploys only update application code. You need to SSH into the server and run `nixos-rebuild switch` if you change:
 
 - The NixOS module (`nix/nixos-module.nix`) -- e.g. new env vars, nginx config, systemd settings
 - The server's `configuration.nix` -- e.g. new users, firewall rules, packages
@@ -307,8 +314,7 @@ Defined in [`nix/packages.nix`](../nix/packages.nix), exposed via [`flake.nix`](
 
 | File | Purpose |
 |---|---|
-| `.github/workflows/cd.yml` | CD workflow (workflow_dispatch) |
 | `nix/packages.nix` | Nix derivations for backend + issuer |
-| `nix/nixos-module.nix` | NixOS service module (systemd, nginx, postgres, redis) |
+| `nix/nixos-module.nix` | NixOS service module (systemd, nginx, postgres) |
 | `nix/server-example.nix` | Reference server configuration |
 | `flake.nix` | Flake outputs (packages, devShell, nixosModule) |

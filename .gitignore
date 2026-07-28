@@ -46,7 +46,5 @@ broadcast/
 .nix-hex/
 .pg-data/
 .pg-socket/
-.redis-dump.rdb
-.redis.log
 result
 result-*

@@ -77,12 +77,6 @@ in
       description = "Whether to run a local PostgreSQL instance.";
     };
 
-    localRedis = lib.mkOption {
-      type = lib.types.bool;
-      default = true;
-      description = "Whether to run a local Redis instance.";
-    };
-
     # Cryptographic signing (P-256 workspace keys) is handled by AWS KMS via a
     # dedicated signer service reached over the network — see SIGNER_URL /
     # SIGNER_TOKEN in the env file. This module runs only the API tier; the
@@ -123,10 +117,8 @@ in
     systemd.services.sovra = {
       description = "Sovra Phoenix server";
       after = [ "network.target" ]
-        ++ lib.optional cfg.localPostgres "postgresql.service"
-        ++ lib.optional cfg.localRedis "redis-sovra.service";
-      wants = lib.optional cfg.localPostgres "postgresql.service"
-        ++ lib.optional cfg.localRedis "redis-sovra.service";
+        ++ lib.optional cfg.localPostgres "postgresql.service";
+      wants = lib.optional cfg.localPostgres "postgresql.service";
       wantedBy = [ "multi-user.target" ];
 
       environment = {
@@ -171,13 +163,6 @@ in
         name = "sovra";
         ensureDBOwnership = true;
       }];
-    };
-
-    # ── Redis ───────────────────────────────────────────────────────────────
-    services.redis.servers.sovra = lib.mkIf cfg.localRedis {
-      enable = true;
-      port = 6379;
-      bind = "127.0.0.1";
     };
 
     # ── Nginx reverse proxy ─────────────────────────────────────────────────

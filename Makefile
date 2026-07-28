@@ -2,11 +2,11 @@ NIX := nix develop --command bash -c
 
 # ── Services ─────────────────────────────────────────────────────────
 
-.PHONY: services.start services.stop services.status pg.start pg.stop pg.status redis.start redis.stop
+.PHONY: services.start services.stop services.status pg.start pg.stop pg.status
 
-services.start: pg.start redis.start
+services.start: pg.start
 
-services.stop: pg.stop redis.stop
+services.stop: pg.stop
 
 services.status: pg.status
 
@@ -18,12 +18,6 @@ pg.stop:
 
 pg.status:
 	$(NIX) "pg_ctl status -D .pg-data || true"
-
-redis.start:
-	$(NIX) "redis-server --daemonize yes --dir $$PWD --dbfilename .redis-dump.rdb --logfile .redis.log"
-
-redis.stop:
-	$(NIX) "redis-cli shutdown nosave 2>/dev/null || true"
 
 # ── Top-level ────────────────────────────────────────────────────────
 # NOTE: `make setup` requires services running (`make services.start`)

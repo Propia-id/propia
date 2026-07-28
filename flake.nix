@@ -35,9 +35,6 @@
             # Database
             pkgs.postgresql_18
 
-            # Cache
-            pkgs.redis
-
             # Frontend
             pkgs.nodejs_24
             pkgs.pnpm
