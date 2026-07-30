@@ -81,11 +81,11 @@ config :sovra,
        :issuer_frontend_url,
        System.get_env("ISSUER_FRONTEND_URL", "http://localhost:5173")
 
-# CORS — explicit allow-list for cross-origin requests with credentials.
-# In dev we permit the issuer frontend origin and a couple of common alt ports;
-# prod is overridden via runtime.exs.
+# CORS — the allow-list is NOT configured here. SovraWeb.Plugs.Cors passes
+# `origin` per request from SovraWeb.AllowedOrigins, because anything set in
+# config is captured when the endpoint's pipeline is compiled and would ignore
+# the runtime ISSUER_FRONTEND_URL.
 config :cors_plug,
-  origin: [System.get_env("ISSUER_FRONTEND_URL", "http://localhost:5173")],
   credentials: true,
   max_age: 86_400
 

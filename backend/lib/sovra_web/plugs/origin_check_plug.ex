@@ -34,9 +34,5 @@ defmodule SovraWeb.Plugs.OriginCheckPlug do
     end
   end
 
-  defp allowed_origins do
-    base = Application.get_env(:sovra, :issuer_frontend_url, "")
-    extras = Application.get_env(:sovra, :additional_allowed_origins, [])
-    [base | extras] |> Enum.reject(&(&1 == ""))
-  end
+  defp allowed_origins, do: SovraWeb.AllowedOrigins.list()
 end

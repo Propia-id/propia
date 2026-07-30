@@ -29,6 +29,8 @@ defmodule SovraWeb.Endpoint do
 
   plug Plug.MethodOverride
   plug Plug.Head
-  plug CORSPlug
+  # Not `plug CORSPlug` — the allow-list has to be read at request time.
+  # See SovraWeb.Plugs.Cors.
+  plug SovraWeb.Plugs.Cors
   plug SovraWeb.Router
 end

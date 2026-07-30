@@ -37,10 +37,12 @@ if base_url = System.get_env("ISSUER_BASE_URL") do
   config :sovra, :issuer, base_url: base_url
 end
 
-# Issuer frontend URL — used for CORS allow-list and reset-password links.
+# Issuer frontend URL — drives the CORS allow-list and reset-password links.
+# Only :sovra config here: SovraWeb.Plugs.Cors reads it per request, whereas
+# `config :cors_plug, origin: ...` would be too late to matter (the endpoint
+# initialised CORSPlug at compile time).
 if frontend_url = System.get_env("ISSUER_FRONTEND_URL") do
   config :sovra, :issuer_frontend_url, frontend_url
-  config :cors_plug, origin: [frontend_url], credentials: true, max_age: 86_400
 end
 
 # One release, two roles (see Sovra.Application). SERVICE=signer boots the KMS
