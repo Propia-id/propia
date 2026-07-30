@@ -4,6 +4,10 @@ import "@openzeppelin/hardhat-upgrades";
 
 const explorerUrl = process.env.EXPLORER_URL;
 
+const deployerAccounts = process.env.DEPLOYER_PRIVATE_KEY
+  ? [process.env.DEPLOYER_PRIVATE_KEY]
+  : [];
+
 const config: HardhatUserConfig = {
   solidity: {
     version: "0.8.31",
@@ -19,32 +23,38 @@ const config: HardhatUserConfig = {
     sources: "./contracts",
     tests: "./test",
   },
+  // Network names are also the keys in chain/config.json, which assigns the
+  // on-chain roles for a deployment. Both remote networks read the same
+  // RPC_URL: you pass the endpoint of whichever chain you are deploying to.
   networks: {
-    localhost: {
+    anvil: {
       url: "http://127.0.0.1:8545",
     },
-    l2: {
-      url: process.env.ETHREX_L2_RPC || "http://127.0.0.1:1729",
-      accounts: process.env.DEPLOYER_PRIVATE_KEY
-        ? [process.env.DEPLOYER_PRIVATE_KEY]
-        : [],
+    sovrachain: {
+      url: process.env.RPC_URL || "http://127.0.0.1:1729",
+      accounts: deployerAccounts,
+    },
+    "sovrachain-sepolia": {
+      url: process.env.RPC_URL || "",
+      accounts: deployerAccounts,
     },
   },
+  // EXPLORER_URL / CHAIN_ID describe the one chain being verified against, so
+  // both networks are listed with the same env-driven explorer.
   ...(explorerUrl && {
     etherscan: {
       apiKey: {
-        l2: process.env.EXPLORER_API_KEY || "empty",
+        sovrachain: process.env.EXPLORER_API_KEY || "empty",
+        "sovrachain-sepolia": process.env.EXPLORER_API_KEY || "empty",
       },
-      customChains: [
-        {
-          network: "l2",
-          chainId: Number(process.env.CHAIN_ID || 0),
-          urls: {
-            apiURL: `${explorerUrl}/api`,
-            browserURL: explorerUrl,
-          },
+      customChains: ["sovrachain", "sovrachain-sepolia"].map((network) => ({
+        network,
+        chainId: Number(process.env.CHAIN_ID || 0),
+        urls: {
+          apiURL: `${explorerUrl}/api`,
+          browserURL: explorerUrl,
         },
-      ],
+      })),
     },
   }),
 };

@@ -4,6 +4,7 @@ import * as path from "path";
 
 interface DeploymentOutput {
   deployer: string;
+  beaconOwner: string;
   securityCouncil: string;
   contracts: {
     SovraWalletV1: { address: string };
@@ -45,14 +46,22 @@ async function main() {
   }
 
   const deployment: DeploymentOutput = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-  const { contracts, deployer, securityCouncil } = deployment;
+  const { contracts, beaconOwner, securityCouncil } = deployment;
+
+  // The beacon's owner comes from chain/config.json, not from the deploy key.
+  if (!beaconOwner) {
+    console.error(
+      `Error: ${filePath} has no "beaconOwner" — it predates chain/config.json. Re-run the deploy or add the field.`
+    );
+    process.exit(1);
+  }
 
   console.log("Verifying contracts from:", filePath);
 
   await verify(contracts.SovraWalletV1.address);
   await verify(contracts.SovraBeacon.address, [
     contracts.SovraWalletV1.address,
-    deployer,
+    beaconOwner,
     securityCouncil,
   ]);
   await verify(contracts.SovraDispatcher.address, [contracts.SovraBeacon.address]);

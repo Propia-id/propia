@@ -69,7 +69,7 @@ contracts.setup:
 	$(NIX) "cd contracts && npm ci"
 
 contracts.deploy:
-	$(NIX) "cd contracts && npx hardhat run scripts/deploy.ts"
+	$(NIX) "cd contracts && npx hardhat run scripts/deploy.ts --network anvil"
 
 frontend.setup:
 	$(NIX) "cd frontend && pnpm install --frozen-lockfile"
