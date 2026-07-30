@@ -45,4 +45,40 @@ defmodule Sovra.Signer.KmsTest do
   test "create_key rejects a non-string holder_id" do
     assert {:error, :invalid_holder_id} = Kms.create_key(123)
   end
+
+  test "create_key aliases the key under the app namespace" do
+    assert {:ok, %{key_id: key_id}} = Kms.create_key("workspace_42_signing")
+
+    assert_received {:stub_kms, :create_alias,
+                     {"alias/sovra/test/app/workspace_42_signing", ^key_id}}
+  end
+
+  test "create_key sanitizes the holder id in the alias" do
+    assert {:ok, %{key_id: key_id}} = Kms.create_key("w s:p.ace")
+    assert_received {:stub_kms, :create_alias, {"alias/sovra/test/app/w-s-p-ace", ^key_id}}
+  end
+
+  test "create_key falls back to the key id when the holder id is empty" do
+    assert {:ok, %{key_id: key_id}} = Kms.create_key("")
+    expected = "alias/sovra/test/app/" <> key_id
+    assert_received {:stub_kms, :create_alias, {^expected, ^key_id}}
+  end
+
+  test "create_key still succeeds when alias creation fails" do
+    Process.put(:stub_kms_fail_create_alias, :already_exists)
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:ok, %{key_id: _}} = Kms.create_key("w")
+      end)
+
+    assert log =~ "Failed to create alias"
+  end
+
+  test "create_key does not alias a key it discards" do
+    Process.put(:stub_kms_fail_get_public_key, :throttled)
+
+    assert {:error, :throttled} = Kms.create_key("w")
+    refute_received {:stub_kms, :create_alias, _}
+  end
 end

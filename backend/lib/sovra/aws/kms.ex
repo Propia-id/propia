@@ -82,6 +82,16 @@ defmodule Sovra.AWS.KMS do
     end
   end
 
+  @doc "Point `alias_name` (`alias/...`) at `key_id`."
+  @spec create_alias(String.t(), String.t()) :: :ok | {:error, term()}
+  def create_alias(alias_name, key_id) when is_binary(alias_name) and is_binary(key_id) do
+    with {:ok, client} <- client(),
+         {:ok, _body, _resp} <-
+           AWS.KMS.create_alias(client, %{"AliasName" => alias_name, "TargetKeyId" => key_id}) do
+      :ok
+    end
+  end
+
   @doc "Schedule `key_id` for deletion (default 7-day pending window)."
   @spec schedule_key_deletion(String.t(), pos_integer()) :: :ok | {:error, term()}
   def schedule_key_deletion(key_id, pending_days \\ @default_pending_deletion_days)

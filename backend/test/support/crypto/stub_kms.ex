@@ -45,6 +45,15 @@ defmodule SovraTest.Crypto.StubKms do
     end
   end
 
+  def create_alias(alias_name, key_id) do
+    send(self(), {:stub_kms, :create_alias, {alias_name, key_id}})
+
+    case Process.get(:stub_kms_fail_create_alias) do
+      nil -> :ok
+      reason -> {:error, reason}
+    end
+  end
+
   def schedule_key_deletion(key_id, _pending_days \\ 7) do
     send(self(), {:stub_kms, :schedule_key_deletion, key_id})
     :ok
