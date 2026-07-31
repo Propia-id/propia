@@ -167,9 +167,9 @@ export function parseChainConfig(raw: unknown, networkName: string): NetworkRole
   };
 }
 
-/// Repo-root chain/config.json, resolved from contracts/scripts/.
+/// contracts/chain/config.json, resolved from contracts/scripts/.
 export function defaultConfigPath(): string {
-  return path.join(__dirname, "..", "..", "chain", "config.json");
+  return path.join(__dirname, "..", "chain", "config.json");
 }
 
 export function loadChainConfig(
