@@ -13,6 +13,18 @@ defmodule Sovra.Organizations do
   alias Sovra.Organizations.{Organization, OrganizationMember}
   alias Sovra.Repo
 
+  @doc """
+  Whether the self-service organization-creation endpoint is open.
+
+  Off by default (`:organization_creation_enabled` in config.exs). Only the HTTP
+  action consults this — `create_organization/2` itself stays callable from
+  registration, seeds, and tests.
+  """
+  @spec creation_enabled?() :: boolean()
+  def creation_enabled? do
+    Application.get_env(:sovra, :organization_creation_enabled, false) == true
+  end
+
   def create_organization(user_id, attrs) do
     org_changeset = Organization.create_changeset(attrs)
 

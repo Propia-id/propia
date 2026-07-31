@@ -1,5 +1,6 @@
 defmodule SovraWeb.Organizations.OrganizationControllerTest do
-  use SovraWeb.ConnCase, async: true
+  # async: false — the creation-flag tests mutate application env.
+  use SovraWeb.ConnCase, async: false
 
   alias Sovra.Auth.UserSession
   alias Sovra.Organizations
@@ -15,7 +16,14 @@ defmodule SovraWeb.Organizations.OrganizationControllerTest do
     |> put_req_header("accept", "application/json")
   end
 
-  describe "POST /dashboard/organizations" do
+  describe "POST /dashboard/organizations (creation enabled)" do
+    setup do
+      previous = Application.get_env(:sovra, :organization_creation_enabled)
+      Application.put_env(:sovra, :organization_creation_enabled, true)
+      on_exit(fn -> Application.put_env(:sovra, :organization_creation_enabled, previous) end)
+      :ok
+    end
+
     test "creates an org and makes the caller owner", %{conn: conn} do
       user = create_user("owner")
 
@@ -56,6 +64,24 @@ defmodule SovraWeb.Organizations.OrganizationControllerTest do
 
       assert resp["error"] == "validation_error"
       assert resp["details"]
+    end
+  end
+
+  describe "POST /dashboard/organizations (creation disabled — the default)" do
+    test "returns 403 and creates nothing", %{conn: conn} do
+      refute Organizations.creation_enabled?()
+
+      user = create_user("owner")
+      before = length(Organizations.list_organizations_for_user(user.id))
+
+      resp =
+        conn
+        |> authed_conn(user)
+        |> post("/dashboard/organizations", %{name: "Acme"})
+        |> json_response(403)
+
+      assert resp["error"] == "organization_creation_disabled"
+      assert length(Organizations.list_organizations_for_user(user.id)) == before
     end
   end
 

@@ -38,7 +38,12 @@ defmodule SovraWeb.Organizations.OrganizationController do
 
   operation(:create,
     summary: "Create organization",
-    description: "Creates an organization. The authenticated user becomes its owner.",
+    description: """
+    Creates an organization. The authenticated user becomes its owner.
+
+    Disabled by default: answers 403 `organization_creation_disabled` unless the
+    deployment sets ORGANIZATION_CREATION_ENABLED=true.
+    """,
     request_body:
       {"Organization params", "application/json",
        %OpenApiSpex.Schema{
@@ -53,6 +58,7 @@ defmodule SovraWeb.Organizations.OrganizationController do
     responses: %{
       201 => {"Organization created", "application/json", @org_schema},
       401 => {"Missing session", "application/json", @error_schema},
+      403 => {"Organization creation disabled", "application/json", @error_schema},
       422 => {"Validation error", "application/json", @validation_error}
     }
   )
@@ -155,6 +161,14 @@ defmodule SovraWeb.Organizations.OrganizationController do
   )
 
   def create(conn, params) do
+    if Organizations.creation_enabled?() do
+      do_create(conn, params)
+    else
+      conn |> put_status(403) |> json(%{error: "organization_creation_disabled"})
+    end
+  end
+
+  defp do_create(conn, params) do
     user_id = conn.assigns.current_user.user_id
 
     attrs = %{

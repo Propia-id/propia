@@ -81,6 +81,12 @@ config :sovra,
        :issuer_frontend_url,
        System.get_env("ISSUER_FRONTEND_URL", "http://localhost:5173")
 
+# Self-service organization creation (`POST /dashboard/organizations`).
+# DISABLED by default until per-account quotas exist; registration already
+# provisions one organization plus a workspace.
+# ORGANIZATION_CREATION_ENABLED=true in runtime.exs re-opens it per deployment.
+config :sovra, :organization_creation_enabled, false
+
 # CORS — the allow-list is NOT configured here. SovraWeb.Plugs.Cors passes
 # `origin` per request from SovraWeb.AllowedOrigins, because anything set in
 # config is captured when the endpoint's pipeline is compiled and would ignore
