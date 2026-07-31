@@ -77,7 +77,7 @@ defmodule Sovra.AWS.KMSTest do
     assert_received {:kms_request, "TrentService.GetPublicKey", %{"KeyId" => "key-1"}}
   end
 
-  test "create_key sends spec/usage/tags and returns the key id" do
+  test "create_key sends spec/usage/multi-region/tags and returns the key id" do
     stub_kms(%{"KeyMetadata" => %{"KeyId" => "key-new"}})
 
     assert {:ok, %{key_id: "key-new"}} = KMS.create_key([{"sovra:kind", "workspace-signer"}])
@@ -87,6 +87,7 @@ defmodule Sovra.AWS.KMSTest do
     assert body == %{
              "KeySpec" => "ECC_NIST_P256",
              "KeyUsage" => "SIGN_VERIFY",
+             "MultiRegion" => true,
              "Tags" => [%{"TagKey" => "sovra:kind", "TagValue" => "workspace-signer"}]
            }
   end

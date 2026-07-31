@@ -62,6 +62,10 @@ defmodule Sovra.AWS.KMS do
   @doc """
   Create a new asymmetric P-256 sign/verify KMS key. `tags` is a list of
   `{key, value}` string pairs. Returns the created key's id.
+
+  Keys are created as multi-region primaries: MultiRegion is immutable after
+  creation, and replicating a signing key to another region (same key id and
+  material) is only possible if the primary was created this way.
   """
   @spec create_key([{String.t(), String.t()}]) ::
           {:ok, %{key_id: String.t()}} | {:error, term()}
@@ -69,6 +73,7 @@ defmodule Sovra.AWS.KMS do
     input = %{
       "KeySpec" => @key_spec,
       "KeyUsage" => @key_usage,
+      "MultiRegion" => true,
       "Tags" => Enum.map(tags, fn {k, v} -> %{"TagKey" => k, "TagValue" => v} end)
     }
 
