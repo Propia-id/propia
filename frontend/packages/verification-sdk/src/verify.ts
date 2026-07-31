@@ -207,7 +207,10 @@ export async function verify(
 
       let holderKeys = cache.getHolderKeys(holderAddress);
       if (!holderKeys) {
-        holderKeys = await resolveHolderKeys(options.l2RpcUrl, holderAddress);
+        holderKeys = await resolveHolderKeys(
+          options.holderRpcUrl ?? options.l2RpcUrl,
+          holderAddress,
+        );
         cache.setHolderKeys(holderAddress, holderKeys);
       }
 

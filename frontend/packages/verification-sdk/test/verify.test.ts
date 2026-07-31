@@ -536,4 +536,57 @@ describe("verify", () => {
     expect(result.trustNotVerified).toBe(true);
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
+
+  // ─── holderRpcUrl ──────────────────────────────────
+  //
+  // A holder's key material lives in their own AlignedAccount contract, so it can
+  // only be read on the chain where that account is delegated. When that is not
+  // the chain holding the registries, the two lookups must be split.
+
+  /** Record which endpoint each eth_call was sent to, keyed by target address. */
+  function createRoutingFetchMock() {
+    const inner = createFetchMock(keys, issuerAddress, holderAddress, vct);
+    const calls: { url: string; to: string }[] = [];
+    const mock = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, to: JSON.parse(init?.body as string).params[0].to.toLowerCase() });
+      return inner(url, init);
+    });
+    return { mock, calls };
+  }
+
+  it("reads holder keys from holderRpcUrl while registries stay on l2RpcUrl", async () => {
+    const fixture = buildPresentation(keys, { issuerAddress, holderAddress, vct });
+    const { mock, calls } = createRoutingFetchMock();
+    globalThis.fetch = mock as unknown as typeof fetch;
+
+    const result = await verify(
+      fixture.presentation,
+      { ...baseOptions, holderRpcUrl: "http://holder-chain:8545" },
+      testCache,
+    );
+
+    expect(result.valid).toBe(true);
+
+    const registryCalls = calls.filter(
+      (c) => c.to === "0xdidregistry" || c.to === "0xissuerregistry",
+    );
+    const holderCalls = calls.filter((c) => c.to === holderAddress.toLowerCase());
+
+    expect(registryCalls.length).toBeGreaterThan(0);
+    expect(holderCalls.length).toBeGreaterThan(0);
+    expect(registryCalls.every((c) => c.url === baseOptions.l2RpcUrl)).toBe(true);
+    expect(holderCalls.every((c) => c.url === "http://holder-chain:8545")).toBe(true);
+  });
+
+  it("defaults holder key reads to l2RpcUrl when holderRpcUrl is omitted", async () => {
+    const fixture = buildPresentation(keys, { issuerAddress, holderAddress, vct });
+    const { mock, calls } = createRoutingFetchMock();
+    globalThis.fetch = mock as unknown as typeof fetch;
+
+    const result = await verify(fixture.presentation, baseOptions, testCache);
+
+    expect(result.valid).toBe(true);
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((c) => c.url === baseOptions.l2RpcUrl)).toBe(true);
+  });
 });

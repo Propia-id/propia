@@ -29,10 +29,19 @@ export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
 export interface VerifyOptions {
   expectedNonce: string;
   expectedAudience: string;
+  /** Endpoint for the DID / issuer / revocation registries. */
   l2RpcUrl: string;
   didRegistryAddress: string;
   issuerRegistryAddress: string;
   revocationRegistryAddress?: string;
+  /**
+   * Endpoint for reading the holder's on-chain AlignedAccount keys. Defaults to
+   * `l2RpcUrl`. Set it only when holder smart accounts are delegated on a
+   * different chain than the registries: the holder's key material is read from
+   * the account contract itself, so it must be resolved on the chain where that
+   * account has code.
+   */
+  holderRpcUrl?: string;
   maxClockSkew?: number;
   checkRevocation?: boolean;
   offlineMode?: boolean;
