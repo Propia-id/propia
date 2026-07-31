@@ -578,6 +578,90 @@ describe("verify", () => {
     expect(holderCalls.every((c) => c.url === "http://holder-chain:8545")).toBe(true);
   });
 
+  // ─── iss as a Credential Issuer identifier ─────────
+  //
+  // SD-JWT VC requires `iss` to be the Credential Issuer identifier, which under
+  // OpenID4VCI is an HTTPS URL. The Sovra issuer emits
+  // `https://<host>/did:sovra:0x…` (Sovra.Issuer.SdJwt), so the bare-DID form is
+  // not what real credentials carry.
+
+  it("accepts iss as an https Credential Issuer identifier ending in the DID", async () => {
+    const fixture = buildPresentation(keys, {
+      issuerAddress,
+      holderAddress,
+      vct,
+      rawPayloadOverrides: {
+        iss: `https://test-api-sovra.flagonsa.com/did:sovra:${issuerAddress}`,
+      },
+    });
+
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+
+    const result = await verify(fixture.presentation, baseOptions, testCache);
+
+    expect(result.valid).toBe(true);
+    // The reported issuer is the identifier as presented, not a rewritten DID.
+    expect(result.issuer).toBe(
+      `https://test-api-sovra.flagonsa.com/did:sovra:${issuerAddress}`,
+    );
+  });
+
+  it("resolves the same on-chain issuer whether iss is a URL or a bare DID", async () => {
+    const asUrl = buildPresentation(keys, {
+      issuerAddress,
+      holderAddress,
+      vct,
+      rawPayloadOverrides: {
+        iss: `https://any-host.example/did:sovra:${issuerAddress}`,
+      },
+    });
+
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+
+    // A fresh cache each way, so neither run can be satisfied by the other's entry.
+    const urlResult = await verify(asUrl.presentation, baseOptions, new VerificationCache());
+    const bareResult = await verify(
+      buildPresentation(keys, { issuerAddress, holderAddress, vct }).presentation,
+      baseOptions,
+      new VerificationCache(),
+    );
+
+    expect(urlResult.valid).toBe(true);
+    expect(bareResult.valid).toBe(true);
+  });
+
+  it("rejects an iss whose last path segment is not a did:sovra address", async () => {
+    const fixture = buildPresentation(keys, {
+      issuerAddress,
+      holderAddress,
+      vct,
+      rawPayloadOverrides: { iss: "https://test-api-sovra.flagonsa.com/issuers/42" },
+    });
+
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+
+    const result = await verify(fixture.presentation, baseOptions, testCache);
+
+    expect(result.valid).toBe(false);
+    expect(result.errorCode).toBe(ErrorCode.PARSE_ERROR);
+  });
+
+  it("rejects an iss URL whose trailing DID has a malformed address", async () => {
+    const fixture = buildPresentation(keys, {
+      issuerAddress,
+      holderAddress,
+      vct,
+      rawPayloadOverrides: { iss: "https://example.com/did:sovra:0xnothex" },
+    });
+
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+
+    const result = await verify(fixture.presentation, baseOptions, testCache);
+
+    expect(result.valid).toBe(false);
+    expect(result.errorCode).toBe(ErrorCode.INVALID_ADDRESS);
+  });
+
   it("defaults holder key reads to l2RpcUrl when holderRpcUrl is omitted", async () => {
     const fixture = buildPresentation(keys, { issuerAddress, holderAddress, vct });
     const { mock, calls } = createRoutingFetchMock();
