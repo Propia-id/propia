@@ -10,6 +10,15 @@ defmodule SovraWeb.AuthController do
   alias Sovra.Auth.UserSession
   alias Sovra.Workspaces
 
+  # Registration provisions an organization (plus workspace, keys, DID and an
+  # on-chain issuer registration), so it gets its own kill switch alongside
+  # ORGANIZATION_CREATION_ENABLED on POST /dashboard/organizations. 403 (not
+  # 404): the route stays a documented part of the dashboard API, the
+  # capability is what's withdrawn. Gated here rather than in
+  # Accounts.register_user/1 — the admin issuer-account endpoint calls that
+  # same function and must keep working while self-service is closed.
+  plug :ensure_registration_enabled when action == :register
+
   tags(["Auth"])
 
   @auth_response %OpenApiSpex.Schema{
@@ -42,6 +51,14 @@ defmodule SovraWeb.AuthController do
     }
   }
 
+  @registration_disabled %OpenApiSpex.Schema{
+    type: :object,
+    properties: %{
+      error: %OpenApiSpex.Schema{type: :string, example: "registration_disabled"},
+      message: %OpenApiSpex.Schema{type: :string}
+    }
+  }
+
   @invalid_credentials %OpenApiSpex.Schema{
     type: :object,
     properties: %{error: %OpenApiSpex.Schema{type: :string, example: "invalid_credentials"}}
@@ -59,8 +76,14 @@ defmodule SovraWeb.AuthController do
 
   operation(:register,
     summary: "User registration",
-    description:
-      "Create a user with a default organization (as owner) and a default workspace. Sets HTTP-only access and refresh cookies.",
+    description: """
+    Create a user with a default organization (as owner) and a default workspace.
+    Sets HTTP-only access and refresh cookies.
+
+    Signing up provisions an organization, so deployments can close it:
+    answers 403 `registration_disabled` when REGISTRATION_ENABLED=false.
+    Existing users keep logging in either way.
+    """,
     request_body:
       {"Registration", "application/json",
        %OpenApiSpex.Schema{
@@ -75,6 +98,7 @@ defmodule SovraWeb.AuthController do
        }},
     responses: %{
       201 => {"Registration success", "application/json", @auth_response},
+      403 => {"Registration disabled", "application/json", @registration_disabled},
       422 => {"Validation error", "application/json", @validation_error}
     }
   )
@@ -158,6 +182,20 @@ defmodule SovraWeb.AuthController do
   # need a session JWT). Narrower than the previous "/api/v1" — API-key
   # endpoints never need the session cookie.
   @access_cookie_path "/dashboard"
+
+  defp ensure_registration_enabled(conn, _opts) do
+    if Application.get_env(:sovra, :registration_enabled, true) == true do
+      conn
+    else
+      conn
+      |> put_status(403)
+      |> json(%{
+        error: "registration_disabled",
+        message: "Sign-up is disabled. Contact your administrator for an account."
+      })
+      |> halt()
+    end
+  end
 
   def register(conn, params) do
     case Accounts.register_user(params) do

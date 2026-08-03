@@ -54,6 +54,15 @@ case env.("ORGANIZATION_CREATION_ENABLED") do
   _ -> :ok
 end
 
+# Self-service registration — the second org-creation path. ON by default
+# (config.exs) so dev/test can sign up; REGISTRATION_ENABLED=false closes new
+# accounts. Unset or any other value keeps the compile-time default.
+case env.("REGISTRATION_ENABLED") do
+  v when v in ~w(false 0) -> config :sovra, :registration_enabled, false
+  v when v in ~w(true 1) -> config :sovra, :registration_enabled, true
+  _ -> :ok
+end
+
 # One release, two roles (see Sovra.Application). SERVICE=signer boots the KMS
 # signer service (no DB / endpoint); anything else is a full API node.
 service = System.get_env("SERVICE", "api")

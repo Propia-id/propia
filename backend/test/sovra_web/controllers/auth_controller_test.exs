@@ -8,6 +8,7 @@ defmodule SovraWeb.AuthControllerTest do
   alias Sovra.Auth.MailerJob
   alias Sovra.Auth.PasswordReset
   alias Sovra.Auth.RefreshTokens
+  alias Sovra.Organizations.Organization
 
   describe "POST /dashboard/auth/register" do
     setup do
@@ -120,6 +121,65 @@ defmodule SovraWeb.AuthControllerTest do
       # duplicate-email path triggers regardless of case.
       resp = json_response(conn2, 422)
       assert resp["error"] == "registration_failed"
+    end
+  end
+
+  describe "POST /dashboard/auth/register with registration disabled" do
+    setup do
+      Hammer.delete_buckets("rate_limit:/dashboard/auth/register:127.0.0.1")
+
+      previous = Application.get_env(:sovra, :registration_enabled)
+      Application.put_env(:sovra, :registration_enabled, false)
+      on_exit(fn -> Application.put_env(:sovra, :registration_enabled, previous) end)
+      :ok
+    end
+
+    test "403 and provisions nothing", %{conn: conn} do
+      email = "closed-#{System.unique_integer([:positive])}@example.com"
+      orgs_before = Sovra.Repo.aggregate(Organization, :count)
+
+      conn =
+        conn
+        |> put_req_header("content-type", "application/json")
+        |> post("/dashboard/auth/register", %{
+          "email" => email,
+          "password" => "a-very-strong-password-123",
+          "full_name" => "Nope Nobody"
+        })
+
+      resp = json_response(conn, 403)
+      assert resp["error"] == "registration_disabled"
+
+      # The whole provisioning fan-out (org, workspace, keys, DID, on-chain
+      # issuer registration, welcome mail) hangs off register_user/1, so
+      # nothing downstream may run either.
+      refute Sovra.Repo.get_by(User, email: email)
+      assert Sovra.Repo.aggregate(Organization, :count) == orgs_before
+      refute conn.resp_cookies["session"]
+      refute conn.resp_cookies["refresh_token"]
+      refute_enqueued(worker: MailerJob, args: %{"kind" => "welcome"})
+    end
+
+    test "existing users can still log in", %{conn: conn} do
+      email = "existing-#{System.unique_integer([:positive])}@example.com"
+
+      {:ok, _user} =
+        User.registration_changeset(%{
+          email: email,
+          password: "a-very-strong-password-123",
+          full_name: "Ada Already"
+        })
+        |> Sovra.Repo.insert()
+
+      conn =
+        conn
+        |> put_req_header("content-type", "application/json")
+        |> post("/dashboard/auth/login", %{
+          "email" => email,
+          "password" => "a-very-strong-password-123"
+        })
+
+      assert json_response(conn, 200)["user"]["email"] == email
     end
   end
 
