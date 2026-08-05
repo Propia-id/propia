@@ -34,7 +34,7 @@ build: backend.build contracts.build frontend.issuer.build
 
 check: frontend.packages.check frontend.wallet.check frontend.verifier.check
 
-test: backend.test contracts.test frontend.packages.test
+test: backend.test contracts.test frontend.packages.test frontend.verifier.test
 
 # ── Dev ──────────────────────────────────────────────────────────────
 
@@ -159,11 +159,17 @@ wallet.build.ios:
 
 # ── Frontend Verifier ────────────────────────────────────────────────
 
-.PHONY: frontend.verifier.check verifier.build.android verifier.build.ios
+.PHONY: frontend.verifier.check frontend.verifier.test \
+	verifier.build.android verifier.build.ios
 
 frontend.verifier.check:
 	$(NIX) "cd frontend && pnpm --filter @sovra/verifier typecheck"
 
+frontend.verifier.test:
+	$(NIX) "cd frontend && pnpm --filter @sovra/verifier test"
+
+# Native builds must NOT run inside the nix shell: its clang rejects the
+# -index-store-path flag Xcode passes, failing every Pod compile.
 verifier.build.android:
 	cd frontend/verifier && pnpm run build:android
 

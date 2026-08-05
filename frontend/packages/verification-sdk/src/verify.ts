@@ -207,7 +207,10 @@ export async function verify(
 
       let holderKeys = cache.getHolderKeys(holderAddress);
       if (!holderKeys) {
-        holderKeys = await resolveHolderKeys(options.l2RpcUrl, holderAddress);
+        holderKeys = await resolveHolderKeys(
+          options.holderRpcUrl ?? options.l2RpcUrl,
+          holderAddress,
+        );
         cache.setHolderKeys(holderAddress, holderKeys);
       }
 
@@ -294,11 +297,33 @@ export async function verify(
   }
 }
 
-function extractDIDAddress(did: string): string {
-  if (!did.startsWith("did:sovra:")) {
-    throw new VerificationError(`Invalid DID format: ${did}`, ErrorCode.PARSE_ERROR);
+/**
+ * Extract the `did:sovra` address from an issuer or subject identifier.
+ *
+ * Accepts two shapes, because SD-JWT VC requires `iss` to be the *Credential
+ * Issuer identifier* rather than a bare DID, and under OpenID4VCI that identifier
+ * is an HTTPS URL. The Sovra issuer accordingly emits
+ * `https://<host>/did:sovra:0x…` (see `Sovra.Issuer.SdJwt`), while `sub` and
+ * `cnf.kid` stay bare DIDs:
+ *
+ *   did:sovra:0xABC…
+ *   https://api.example.com/did:sovra:0xABC…
+ *
+ * Only the trailing path segment is considered, and it must itself be a
+ * well-formed `did:sovra` address. The host is deliberately *not* trusted or
+ * checked: it contributes nothing to verification, since the issuer's signing key
+ * is resolved from the on-chain DID registry by address and the signature is
+ * checked against that key. A hostile prefix therefore gains an attacker nothing.
+ */
+function extractDIDAddress(identifier: string): string {
+  const lastSegment = identifier.slice(identifier.lastIndexOf("/") + 1);
+  if (!lastSegment.startsWith("did:sovra:")) {
+    throw new VerificationError(
+      `Invalid DID format: ${identifier}`,
+      ErrorCode.PARSE_ERROR,
+    );
   }
-  const address = did.slice("did:sovra:".length);
+  const address = lastSegment.slice("did:sovra:".length);
   validateEthAddress(address, "DID");
   return address;
 }
