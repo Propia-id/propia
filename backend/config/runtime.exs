@@ -45,6 +45,24 @@ if frontend_url = System.get_env("ISSUER_FRONTEND_URL") do
   config :sovra, :issuer_frontend_url, frontend_url
 end
 
+# Self-service organization creation. OFF by default (see config.exs). Unset or
+# any other value keeps the compile-time default, so a deployment must opt in
+# explicitly.
+case env.("ORGANIZATION_CREATION_ENABLED") do
+  v when v in ~w(true 1) -> config :sovra, :organization_creation_enabled, true
+  v when v in ~w(false 0) -> config :sovra, :organization_creation_enabled, false
+  _ -> :ok
+end
+
+# Self-service registration — the second org-creation path. ON by default
+# (config.exs) so dev/test can sign up; REGISTRATION_ENABLED=false closes new
+# accounts. Unset or any other value keeps the compile-time default.
+case env.("REGISTRATION_ENABLED") do
+  v when v in ~w(false 0) -> config :sovra, :registration_enabled, false
+  v when v in ~w(true 1) -> config :sovra, :registration_enabled, true
+  _ -> :ok
+end
+
 # One release, two roles (see Sovra.Application). SERVICE=signer boots the KMS
 # signer service (no DB / endpoint); anything else is a full API node.
 service = System.get_env("SERVICE", "api")

@@ -81,6 +81,22 @@ config :sovra,
        :issuer_frontend_url,
        System.get_env("ISSUER_FRONTEND_URL", "http://localhost:5173")
 
+# Self-service organization creation (`POST /dashboard/organizations`).
+# DISABLED by default until per-account quotas exist; registration already
+# provisions one organization plus a workspace.
+# ORGANIZATION_CREATION_ENABLED=true in runtime.exs re-opens it per deployment.
+config :sovra, :organization_creation_enabled, false
+
+# Self-service registration (`POST /dashboard/auth/register`), the other path
+# that creates an organization — it provisions user + org + owner membership +
+# workspace in one transaction, and the workspace then provisions keys, a DID
+# and an on-chain issuer registration. Enabled here so dev and the test suite
+# can sign up freely; REGISTRATION_ENABLED=false in runtime.exs is the kill
+# switch, and deployments set it explicitly (see api_deploy.yaml).
+# Only gates NEW accounts: existing users keep logging in either way, and the
+# admin issuer-account endpoint keeps creating them.
+config :sovra, :registration_enabled, true
+
 # CORS — the allow-list is NOT configured here. SovraWeb.Plugs.Cors passes
 # `origin` per request from SovraWeb.AllowedOrigins, because anything set in
 # config is captured when the endpoint's pipeline is compiled and would ignore
