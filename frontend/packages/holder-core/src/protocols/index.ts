@@ -312,6 +312,11 @@ export class PresentationProtocol {
    * POST a vp_token to the verifier's response_uri using the OID4VP
    * `direct_post` response mode. Throws if the request lacks the
    * required `responseUri` / `state` fields.
+   *
+   * Per OID4VP, a DCQL request expects the vp_token keyed by the query's
+   * credential ids, not the bare presentation. The envelope is added here
+   * rather than in `executePresentation` because the QR path (`/response-qr`,
+   * read by the standalone verifier app) needs the bare form.
    */
   async executeDirectPost(request: VPRequest, vpToken: string): Promise<void> {
     if (!request.responseUri || !request.state) {
@@ -319,7 +324,15 @@ export class PresentationProtocol {
         "direct_post requires response_uri and state in the request",
       );
     }
-    await this.api.directPost(request.responseUri, vpToken, request.state);
+    const credentialId = request.dcqlQuery.credentials[0]?.id;
+    if (!credentialId) {
+      throw new Error("direct_post requires a DCQL credential id to key the vp_token");
+    }
+    await this.api.directPost(
+      request.responseUri,
+      JSON.stringify({ [credentialId]: vpToken }),
+      request.state,
+    );
   }
 
   /** Execute the full OpenID4VP presentation flow and return the VP token. */
