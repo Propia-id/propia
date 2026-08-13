@@ -129,10 +129,10 @@ frontend.packages.holder-core.test:
 	$(NIX) "cd frontend && pnpm --filter @sovrahq/holder-core test"
 
 frontend.packages.verification-sdk.check:
-	$(NIX) "cd frontend && pnpm --filter @sovra/verification-sdk typecheck"
+	$(NIX) "cd frontend && pnpm --filter @sovrahq/verification-sdk typecheck"
 
 frontend.packages.verification-sdk.test:
-	$(NIX) "cd frontend && pnpm --filter @sovra/verification-sdk test"
+	$(NIX) "cd frontend && pnpm --filter @sovrahq/verification-sdk test"
 
 # ── Frontend Issuer ──────────────────────────────────────────────────
 

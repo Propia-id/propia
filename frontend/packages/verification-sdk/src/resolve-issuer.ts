@@ -1,6 +1,6 @@
 import { keccak256 } from "@sovrahq/holder-core/utils";
-import { ErrorCode, type IssuerKeyData } from "./types";
-import { VerificationError } from "./errors";
+import { ErrorCode, type IssuerKeyData } from "./types.js";
+import { VerificationError } from "./errors.js";
 import {
   ethCall,
   RpcError,
@@ -8,7 +8,7 @@ import {
   encodeFunctionCall,
   decodeResolveResult,
   decodeBool,
-} from "./rpc";
+} from "./rpc.js";
 
 /**
  * Resolve an issuer's DID from the on-chain DID Registry.

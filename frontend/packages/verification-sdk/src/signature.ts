@@ -62,19 +62,15 @@ interface WebAuthnAssertion {
  * and the authenticator signs `authenticatorData || SHA256(clientDataJSON)`,
  * where clientDataJSON embeds `challenge = base64url(SHA256(signingInput))`.
  *
- * This is a faithful port of the backend reference verifier
- * `Sovra.Crypto.WebAuthn.valid?/3` (backend/lib/sovra/crypto/web_authn.ex):
- * auth-data length, `type` prefix, `challenge` prefix, UP/UV/backup-state
- * flags, then ECDSA-P256 over the reconstructed message.
+ * Checked in order: auth-data length, `type` prefix, `challenge` prefix,
+ * UP/UV/backup-state flags, then ECDSA-P256 over the reconstructed message.
  *
- * Low-S is deliberately NOT enforced, matching the backend and the on-chain
- * OpenZeppelin WebAuthn verifier: WebAuthn authenticators may emit high-S
- * signatures. (The wallet's Aligned adapter normalizes to low-S, so this only
- * affects interoperability with other conformant signers, never the wallet.)
+ * Low-S is deliberately NOT enforced, matching the on-chain OpenZeppelin
+ * WebAuthn verifier: WebAuthn authenticators may emit high-S signatures.
  *
  * @param pubKeyX/pubKeyY the holder's on-chain passkey coordinates (the trust
  *   anchor). The `jwk` embedded in the KB-JWT header is self-asserted and is
- *   intentionally not used, matching the backend.
+ *   intentionally not used.
  */
 export function verifyWebAuthn(
   jwtRaw: string,

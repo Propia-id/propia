@@ -37,7 +37,7 @@ export interface VerifyOptions {
   issuerRegistryAddress: string;
   revocationRegistryAddress?: string;
   /**
-   * Endpoint for reading the holder's on-chain AlignedAccount keys. Defaults to
+   * Endpoint for reading the holder's on-chain account keys. Defaults to
    * `l2RpcUrl`. Set it only when holder smart accounts are delegated on a
    * different chain than the registries: the holder's key material is read from
    * the account contract itself, so it must be resolved on the chain where that
@@ -46,6 +46,14 @@ export interface VerifyOptions {
   holderRpcUrl?: string;
   maxClockSkew?: number;
   checkRevocation?: boolean;
+  /**
+   * Skip every on-chain read. Only the structure of the presentation is
+   * checked: no issuer signature, no issuer trust, no holder proof.
+   *
+   * A result can come back `valid: true` for a credential nobody signed, so
+   * never treat it as proof of anything. Intended for offline demos and tests.
+   * Check `trustNotVerified` to tell such a result apart.
+   */
   offlineMode?: boolean;
 }
 
@@ -95,6 +103,6 @@ export interface HolderPasskey {
 }
 
 export interface HolderKeyData {
-  /** Active WebAuthnP256 passkeys read from the holder's on-chain AlignedAccount. */
+  /** Active WebAuthnP256 passkeys read from the holder's on-chain account. */
   passkeys: HolderPasskey[];
 }

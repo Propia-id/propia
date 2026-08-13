@@ -1,13 +1,13 @@
-export { verify } from "./verify";
-export { verifyDocument, decodeDocument } from "./verify-document";
-export { checkRevocation } from "./revocation";
-export { VerificationError } from "./errors";
-export { VerificationCache } from "./cache";
-export { ErrorCode } from "./types";
-export type { VerifyOptions, VerificationResult } from "./types";
+export { verify } from "./verify.js";
+export { verifyDocument, decodeDocument } from "./verify-document.js";
+export { checkRevocation } from "./revocation.js";
+export { VerificationError } from "./errors.js";
+export { VerificationCache } from "./cache.js";
+export { ErrorCode } from "./types.js";
+export type { VerifyOptions, VerificationResult } from "./types.js";
 export type {
   VerifyDocumentOptions,
   DocumentVerificationResult,
   DocumentCheck,
   CheckSource,
-} from "./verify-document";
+} from "./verify-document.js";

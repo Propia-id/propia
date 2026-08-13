@@ -1,5 +1,5 @@
-import { ErrorCode, type HolderKeyData, type HolderPasskey } from "./types";
-import { VerificationError, validateEthAddress } from "./errors";
+import { ErrorCode, type HolderKeyData, type HolderPasskey } from "./types.js";
+import { VerificationError, validateEthAddress } from "./errors.js";
 import {
   ethCall,
   RpcError,
@@ -7,22 +7,21 @@ import {
   decodeBytes32,
   decodeUint8,
   decodeUint64,
-} from "./rpc";
+} from "./rpc.js";
 
-/** AlignedAccount Key.keyType enum value for WebAuthn P-256 keys. */
+/** Key.keyType enum value for WebAuthn P-256 keys. */
 const KEY_TYPE_WEBAUTHN_P256 = 2;
 
 /** Cap on keys enumerated, to bound RPC work against a hostile account. */
 const MAX_HOLDER_KEYS = 32;
 
 /**
- * Resolve the holder's active WebAuthn passkeys from their on-chain AlignedAccount.
+ * Resolve the holder's active WebAuthn passkeys from their on-chain account.
  *
- * The holder's DID address is an EOA delegated (EIP-7702) to Aligned's
- * `AlignedAccount`. Keys are enumerated via `getUserKeysCount()` /
+ * The holder's DID address is an EOA delegated (EIP-7702) to a smart account
+ * contract. Keys are enumerated via `getUserKeysCount()` /
  * `getKeyHashAt(uint256)` / `getUserKeyByHash(bytes32)`, then filtered to active
- * WebAuthnP256 keys (`keyType == 2`, `validAt <= now`). Mirrors the backend
- * reference resolver `Sovra.Ethereum.WalletReader.read_aligned_keys/1`.
+ * WebAuthnP256 keys (`keyType == 2`, `validAt <= now`).
  *
  * Returns every currently-usable passkey; the caller accepts a holder proof
  * that verifies against any of them. Throws HOLDER_NOT_FOUND when the account

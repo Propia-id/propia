@@ -1,4 +1,4 @@
-import type { ErrorCode } from "./types";
+import type { ErrorCode } from "./types.js";
 
 export class VerificationError extends Error {
   readonly code: ErrorCode;

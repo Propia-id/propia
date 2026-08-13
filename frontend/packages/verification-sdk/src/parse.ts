@@ -1,13 +1,11 @@
 import { base64urlDecode } from "@sovrahq/holder-core/utils";
-import { ErrorCode, type ParsedPresentation, type ParsedDisclosure } from "./types";
-import { VerificationError } from "./errors";
+import { ErrorCode, type ParsedPresentation, type ParsedDisclosure } from "./types.js";
+import { VerificationError } from "./errors.js";
 
 /**
  * Parse an SD-JWT presentation string into its components.
  *
  * Format: issuerJwt~disc1~disc2~...~kbJwt
- *
- * Mirrors wallet-core CredentialManager.parseSDJwt but also handles KB-JWT.
  */
 export function parsePresentation(sdJwt: string): ParsedPresentation {
   const parts = sdJwt.split("~");
@@ -65,7 +63,7 @@ export function parsePresentation(sdJwt: string): ParsedPresentation {
     throw new VerificationError(`Expected KB-JWT typ kb+jwt, got ${kbHeader.typ}`, ErrorCode.PARSE_ERROR);
   }
   // Holder proof is either a raw ES256 signature (legacy) or a WebAuthn passkey
-  // assertion (current Aligned wallet). Reject anything else up front.
+  // assertion (current wallet). Reject anything else up front.
   if (kbHeader.alg !== "ES256" && kbHeader.alg !== "WebAuthn") {
     throw new VerificationError(`Unsupported KB-JWT alg: ${kbHeader.alg}`, ErrorCode.PARSE_ERROR);
   }
@@ -110,4 +108,4 @@ function decodeJsonPart(b64: string, label: string): Record<string, unknown> {
 }
 
 // Re-export for backward compatibility
-export { VerificationError } from "./errors";
+export { VerificationError } from "./errors.js";

@@ -4,11 +4,11 @@ import {
   bytesToHex,
   base64urlDecode,
 } from "@sovrahq/holder-core/utils";
-import { verifyES256 } from "./signature";
-import { resolveIssuerDID, checkIssuerTrust } from "./resolve-issuer";
-import { readSignatureRecord } from "./signature-registry";
-import { VerificationError } from "./errors";
-import { ErrorCode } from "./types";
+import { verifyES256 } from "./signature.js";
+import { resolveIssuerDID, checkIssuerTrust } from "./resolve-issuer.js";
+import { readSignatureRecord } from "./signature-registry.js";
+import { VerificationError } from "./errors.js";
+import { ErrorCode } from "./types.js";
 
 /**
  * Verification for signed documents: issued directly by an issuer, with no holder

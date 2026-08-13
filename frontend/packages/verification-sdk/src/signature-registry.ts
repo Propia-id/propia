@@ -1,5 +1,5 @@
-import { ErrorCode } from "./types";
-import { VerificationError } from "./errors";
+import { ErrorCode } from "./types.js";
+import { VerificationError } from "./errors.js";
 import {
   ethCall,
   RpcError,
@@ -7,7 +7,7 @@ import {
   encodeFunctionCall,
   decodeBytes32,
   decodeUint64,
-} from "./rpc";
+} from "./rpc.js";
 
 export interface SignatureRecord {
   /** r component, 32 bytes */

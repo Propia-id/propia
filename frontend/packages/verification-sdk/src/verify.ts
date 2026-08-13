@@ -1,14 +1,14 @@
 import { sha256, base64urlEncode, keccak256, bytesToHex } from "@sovrahq/holder-core/utils";
-import type { VerifyOptions, VerificationResult } from "./types";
-import { ErrorCode } from "./types";
-import { parsePresentation } from "./parse";
-import { VerificationError, validateEthAddress } from "./errors";
-import { verifyES256, verifyWebAuthn } from "./signature";
-import { verifyDisclosures } from "./disclosure";
-import { resolveIssuerDID, checkIssuerTrust } from "./resolve-issuer";
-import { resolveHolderKeys, extractHolderAddress } from "./resolve-holder";
-import { checkRevocation } from "./revocation";
-import { VerificationCache } from "./cache";
+import type { VerifyOptions, VerificationResult } from "./types.js";
+import { ErrorCode } from "./types.js";
+import { parsePresentation } from "./parse.js";
+import { VerificationError, validateEthAddress } from "./errors.js";
+import { verifyES256, verifyWebAuthn } from "./signature.js";
+import { verifyDisclosures } from "./disclosure.js";
+import { resolveIssuerDID, checkIssuerTrust } from "./resolve-issuer.js";
+import { resolveHolderKeys, extractHolderAddress } from "./resolve-holder.js";
+import { checkRevocation } from "./revocation.js";
+import { VerificationCache } from "./cache.js";
 
 /** Module-level default cache shared across calls. */
 export const _defaultCache = new VerificationCache();
@@ -215,7 +215,7 @@ export async function verify(
       }
 
       // Step 10: Verify the KB-JWT holder proof against the on-chain passkeys.
-      // An AlignedAccount can hold multiple active WebAuthnP256 keys; the proof
+      // An account can hold multiple active WebAuthnP256 keys; the proof
       // is valid if it verifies against any one of them. WebAuthn passkey
       // assertions (current wallet) and raw ES256 (legacy) are both supported;
       // the alg was allow-listed during parsing.
@@ -303,8 +303,7 @@ export async function verify(
  * Accepts two shapes, because SD-JWT VC requires `iss` to be the *Credential
  * Issuer identifier* rather than a bare DID, and under OpenID4VCI that identifier
  * is an HTTPS URL. The Sovra issuer accordingly emits
- * `https://<host>/did:sovra:0x…` (see `Sovra.Issuer.SdJwt`), while `sub` and
- * `cnf.kid` stay bare DIDs:
+ * `https://<host>/did:sovra:0x…`, while `sub` and `cnf.kid` stay bare DIDs:
  *
  *   did:sovra:0xABC…
  *   https://api.example.com/did:sovra:0xABC…

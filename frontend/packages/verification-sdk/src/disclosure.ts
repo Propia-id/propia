@@ -1,6 +1,6 @@
 import { sha256, base64urlEncode } from "@sovrahq/holder-core/utils";
-import { ErrorCode, type ParsedDisclosure } from "./types";
-import { VerificationError } from "./errors";
+import { ErrorCode, type ParsedDisclosure } from "./types.js";
+import { VerificationError } from "./errors.js";
 
 /**
  * Verify that each disclosure's hash appears in the issuer JWT's _sd array.

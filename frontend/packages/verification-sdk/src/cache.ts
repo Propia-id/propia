@@ -1,4 +1,4 @@
-import type { IssuerKeyData, HolderKeyData } from "./types";
+import type { IssuerKeyData, HolderKeyData } from "./types.js";
 
 const TRUST_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_CACHE_SIZE = 200;
@@ -44,7 +44,7 @@ export class VerificationCache {
 
   setHolderKeys(address: string, data: HolderKeyData): void {
     this.evictIfNeeded(this.holderKeys);
-    // AlignedAccount keys have no single versionId; the entry is only ever read
+    // Account keys have no single versionId; the entry is only ever read
     // back within a single verify() call, so a fixed 0 is sufficient here.
     this.holderKeys.set(address.toLowerCase(), { data, versionId: 0 });
   }

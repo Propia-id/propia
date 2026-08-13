@@ -10,7 +10,7 @@ import { generateKeys, buildPresentation, type FixtureKeys } from "./fixtures";
 interface MockOpts {
   deactivatedIssuer?: boolean;
   untrusted?: boolean;
-  /** Holder AlignedAccount exposes zero keys. */
+  /** Holder account exposes zero keys. */
   holderNoKeys?: boolean;
   /** Holder's only key has validAt in the future (timelock not elapsed). */
   holderFutureValidAt?: boolean;
@@ -53,7 +53,7 @@ function buildMockRpcResponses(
   // isTrusted() return
   const trustedResult = "0x" + slot(opts.untrusted ? "0" : "1");
 
-  // Holder AlignedAccount view returns.
+  // Holder account view returns.
   const keysCountResult = "0x" + slot(opts.holderNoKeys ? "0" : "1");
   const keyHashResult = "0x" + "11".repeat(32);
   // Key { uint8 keyType; uint48 validAt; bytes publicKey (== abi.encode(x, y)) }
@@ -101,7 +101,7 @@ function createFetchMock(
     } else if (to === "0xissuerregistry") {
       result = responses.trustedResult;
     } else {
-      // Holder AlignedAccount — match by function selector.
+      // Holder account — match by function selector.
       const selector = calldata.slice(0, 10); // 0x + 8 hex chars
       const fns = [
         "getUserKeysCount()",
@@ -279,7 +279,7 @@ describe("verify", () => {
     expect(result.errorCode).toBe(ErrorCode.ISSUER_DEACTIVATED);
   });
 
-  it("returns HOLDER_NOT_FOUND when the holder AlignedAccount has no keys", async () => {
+  it("returns HOLDER_NOT_FOUND when the holder account has no keys", async () => {
     const fixture = buildPresentation(keys, {
       issuerAddress,
       holderAddress,
@@ -539,7 +539,7 @@ describe("verify", () => {
 
   // ─── holderRpcUrl ──────────────────────────────────
   //
-  // A holder's key material lives in their own AlignedAccount contract, so it can
+  // A holder's key material lives in their own account contract, so it can
   // only be read on the chain where that account is delegated. When that is not
   // the chain holding the registries, the two lookups must be split.
 
@@ -582,7 +582,7 @@ describe("verify", () => {
   //
   // SD-JWT VC requires `iss` to be the Credential Issuer identifier, which under
   // OpenID4VCI is an HTTPS URL. The Sovra issuer emits
-  // `https://<host>/did:sovra:0x…` (Sovra.Issuer.SdJwt), so the bare-DID form is
+  // `https://<host>/did:sovra:0x…`, so the bare-DID form is
   // not what real credentials carry.
 
   it("accepts iss as an https Credential Issuer identifier ending in the DID", async () => {
@@ -591,7 +591,7 @@ describe("verify", () => {
       holderAddress,
       vct,
       rawPayloadOverrides: {
-        iss: `https://test-api-sovra.flagonsa.com/did:sovra:${issuerAddress}`,
+        iss: `https://issuer.example.com/did:sovra:${issuerAddress}`,
       },
     });
 
@@ -602,7 +602,7 @@ describe("verify", () => {
     expect(result.valid).toBe(true);
     // The reported issuer is the identifier as presented, not a rewritten DID.
     expect(result.issuer).toBe(
-      `https://test-api-sovra.flagonsa.com/did:sovra:${issuerAddress}`,
+      `https://issuer.example.com/did:sovra:${issuerAddress}`,
     );
   });
 
@@ -635,7 +635,7 @@ describe("verify", () => {
       issuerAddress,
       holderAddress,
       vct,
-      rawPayloadOverrides: { iss: "https://test-api-sovra.flagonsa.com/issuers/42" },
+      rawPayloadOverrides: { iss: "https://issuer.example.com/issuers/42" },
     });
 
     globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
