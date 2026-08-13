@@ -18,6 +18,7 @@ defmodule Sovra.Issuer do
   }
 
   alias Sovra.Crypto.HmacKeyStore
+  alias Sovra.Documents
   alias Sovra.Crypto.P256
   alias Sovra.Crypto.WebAuthn
   alias Sovra.Ethereum.{IssuerRegistry, RevocationRegistry}
@@ -80,6 +81,17 @@ defmodule Sovra.Issuer do
     |> Repo.all()
   end
 
+  @doc """
+  Schemas of a single kind.
+  """
+  def list_schemas(workspace_id, kind) when is_binary(kind) do
+    from(s in CredentialSchema,
+      where: s.issuer_id == ^workspace_id and s.kind == ^kind,
+      order_by: [asc: :inserted_at, asc: :version]
+    )
+    |> Repo.all()
+  end
+
   # Optimistic concurrency: caller must pass `base_version`, the version they
   # observed when they started editing. The transaction locks the latest row
   # FOR UPDATE, verifies it still matches base_version, and only then inserts.
@@ -121,6 +133,9 @@ defmodule Sovra.Issuer do
         "issuer_id" => workspace_id,
         "schema_id" => prior.schema_id,
         "credential_type" => prior.credential_type,
+        # kind is immutable across revisions: a document schema stays a document
+        # schema, otherwise a revision could silently change how it is issued.
+        "kind" => prior.kind,
         "version" => prior.version + 1
       })
 
@@ -128,6 +143,7 @@ defmodule Sovra.Issuer do
       case CredentialSchema.create_changeset(new_attrs) |> Repo.insert() do
         {:ok, new_schema} ->
           inherit_design(prior, new_schema)
+          inherit_layout(prior, new_schema)
           new_schema
 
         {:error, changeset} ->
@@ -167,6 +183,15 @@ defmodule Sovra.Issuer do
           {:error, changeset} ->
             Repo.rollback(changeset)
         end
+    end
+  end
+
+  # Carry the prior version's page layout to the new schema row so a revised
+  # document still renders the same; admin can still edit it after.
+  defp inherit_layout(%CredentialSchema{} = prior, %CredentialSchema{} = new_schema) do
+    case Documents.copy_layout(prior.id, new_schema.id) do
+      {:ok, _} -> :ok
+      {:error, changeset} -> Repo.rollback(changeset)
     end
   end
 
@@ -324,6 +349,7 @@ defmodule Sovra.Issuer do
     with {:ok, workspace} <- Workspaces.get_workspace(workspace_id),
          :ok <- Workspaces.assert_provisioned(workspace),
          {:ok, schema} <- get_schema(workspace_id, schema_id),
+         :ok <- assert_kind(schema, "credential"),
          :ok <- validate_claims(schema, claims) do
       {plaintext_code, code_hash} = TokenHash.generate_and_hash(32)
       offer_id = Ecto.UUID.generate()
@@ -691,17 +717,12 @@ defmodule Sovra.Issuer do
 
   # ── Validation Helpers ─────────────────────────────────
 
-  defp validate_claims(schema, claims) do
-    claim_defs = ClaimUtils.parse_claim_defs(schema.claims)
-    required_keys = claim_defs |> Enum.filter(& &1["required"]) |> Enum.map(& &1["key"])
-    missing = Enum.reject(required_keys, &Map.has_key?(claims, &1))
+  # A credential schema is issued to a wallet over OID4VCI; a document schema is
+  # signed directly by the issuer. Mixing the two flows is always a mistake, so
+  # both entry points assert the kind rather than trusting the caller.
+  defp assert_kind(schema, expected), do: CredentialSchema.assert_kind(schema, expected)
 
-    if missing == [] do
-      :ok
-    else
-      {:error, {:missing_claims, missing}}
-    end
-  end
+  defp validate_claims(schema, claims), do: ClaimUtils.validate_required_claims(schema, claims)
 
   defp random_hex(bytes) do
     :crypto.strong_rand_bytes(bytes) |> Base.encode16(case: :lower)

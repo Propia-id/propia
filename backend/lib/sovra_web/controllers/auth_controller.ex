@@ -182,6 +182,12 @@ defmodule SovraWeb.AuthController do
   # need a session JWT). Narrower than the previous "/api/v1" — API-key
   # endpoints never need the session cookie.
   @access_cookie_path "/dashboard"
+  # The same access token again, scoped to the document endpoints, because a
+  # private document has to open for a logged-in person following a link and a
+  # cookie is only sent to its own path. Kept as a second cookie rather than
+  # widening the one above, which would send the session to every endpoint.
+  @document_cookie "document_session"
+  @document_cookie_path "/api/v1/documents"
 
   defp ensure_registration_enabled(conn, _opts) do
     if Application.get_env(:sovra, :registration_enabled, true) == true do
@@ -282,7 +288,7 @@ defmodule SovraWeb.AuthController do
     end
 
     conn
-    |> delete_resp_cookie(@access_cookie, path: @access_cookie_path)
+    |> delete_access_cookies()
     |> delete_resp_cookie(@refresh_cookie, path: @refresh_cookie_path)
     |> json(%{ok: true})
   end
@@ -307,7 +313,7 @@ defmodule SovraWeb.AuthController do
                 {:ok, access} = UserSession.create(user.id, current_workspace_id, user.is_admin)
 
                 conn
-                |> put_resp_cookie(@access_cookie, access, access_cookie_opts())
+                |> put_access_cookies(access)
                 |> put_resp_cookie(@refresh_cookie, new_refresh, refresh_cookie_opts())
                 |> json(%{
                   user: user_payload(user),
@@ -319,7 +325,7 @@ defmodule SovraWeb.AuthController do
           {:error, _reason} ->
             # Clear cookies so a compromised or stale client can't keep retrying.
             conn
-            |> delete_resp_cookie(@access_cookie, path: @access_cookie_path)
+            |> delete_access_cookies()
             |> delete_resp_cookie(@refresh_cookie, path: @refresh_cookie_path)
             |> put_status(401)
             |> json(%{error: "invalid_refresh"})
@@ -363,8 +369,21 @@ defmodule SovraWeb.AuthController do
     {:ok, refresh, _record} = RefreshTokens.create(user.id)
 
     conn
-    |> put_resp_cookie(@access_cookie, access, access_cookie_opts())
+    |> put_access_cookies(access)
     |> put_resp_cookie(@refresh_cookie, refresh, refresh_cookie_opts())
+  end
+
+  # The access token goes out twice, under the two paths that need it.
+  defp put_access_cookies(conn, access) do
+    conn
+    |> put_resp_cookie(@access_cookie, access, access_cookie_opts())
+    |> put_resp_cookie(@document_cookie, access, document_cookie_opts())
+  end
+
+  defp delete_access_cookies(conn) do
+    conn
+    |> delete_resp_cookie(@access_cookie, path: @access_cookie_path)
+    |> delete_resp_cookie(@document_cookie, path: @document_cookie_path)
   end
 
   defp access_cookie_opts do
@@ -376,6 +395,9 @@ defmodule SovraWeb.AuthController do
       max_age: @access_max_age
     ]
   end
+
+  defp document_cookie_opts,
+    do: Keyword.put(access_cookie_opts(), :path, @document_cookie_path)
 
   defp refresh_cookie_opts do
     [

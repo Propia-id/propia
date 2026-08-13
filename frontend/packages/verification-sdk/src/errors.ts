@@ -1,12 +1,12 @@
 import type { ErrorCode } from "./types";
 
 export class VerificationError extends Error {
-  constructor(
-    message: string,
-    public code: ErrorCode,
-  ) {
+  readonly code: ErrorCode;
+
+  constructor(message: string, code: ErrorCode) {
     super(message);
     this.name = "VerificationError";
+    this.code = code;
   }
 }
 

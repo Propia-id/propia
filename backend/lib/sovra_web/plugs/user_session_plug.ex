@@ -9,15 +9,26 @@ defmodule SovraWeb.Plugs.UserSessionPlug do
 
   def init(opts), do: opts
 
-  def call(conn, _opts) do
+  @doc """
+  The session token on a request, from `cookie` or the `Bearer` header.
+
+  Public, and taking the cookie name, so a controller can check for a session on
+  a route this plug does not gate. That is how a private document requires one
+  without closing the route to public documents, and it reads a different cookie
+  because a cookie is only sent to its own path.
+  """
+  def session_token(conn, cookie \\ "session") do
     conn = fetch_cookies(conn)
 
-    token =
-      conn.cookies["session"] ||
-        case get_req_header(conn, "authorization") do
-          ["Bearer " <> t] -> t
-          _ -> nil
-        end
+    conn.cookies[cookie] ||
+      case get_req_header(conn, "authorization") do
+        ["Bearer " <> token] -> token
+        _ -> nil
+      end
+  end
+
+  def call(conn, _opts) do
+    token = session_token(conn)
 
     if token do
       case Sovra.Auth.UserSession.verify(token) do

@@ -1,0 +1,35 @@
+defmodule SovraTest.Ethereum.StubSignatureRegistry do
+  @moduledoc """
+  Test stub for `Sovra.Ethereum.SignatureRegistry`. Wired in via the
+  `:signature_registry` config in `config/test.exs` so documents can be
+  issued and anchored end-to-end without a live chain.
+
+  Returns a deterministic fake transaction hash. Tests that need the
+  anchoring or the unconfigured path should swap this module via
+  `Application.put_env(:sovra, :signature_registry, ...)` for the
+  duration of the test.
+  """
+
+  def record(_signer, _type_id, _digest, _r, _s), do: {:ok, "0xstubtxhash"}
+  def configured?, do: true
+end
+
+defmodule SovraTest.Ethereum.AlwaysFailingSignatureRegistry do
+  @moduledoc """
+  Test variant whose anchoring transaction never lands, so issuance ends
+  `failed` with the document already signed and stored.
+  """
+
+  def record(_signer, _type_id, _digest, _r, _s), do: {:error, :transaction_reverted}
+  def configured?, do: true
+end
+
+defmodule SovraTest.Ethereum.UnconfiguredSignatureRegistry do
+  @moduledoc """
+  Test variant standing in for a deployment with no signature registry, where
+  issuance refuses to sign rather than hand out a document nothing can anchor.
+  """
+
+  def record(_signer, _type_id, _digest, _r, _s), do: {:error, :chain_not_configured}
+  def configured?, do: false
+end

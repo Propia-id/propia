@@ -1,0 +1,272 @@
+defmodule Sovra.Documents do
+  @moduledoc """
+  Signed documents: issued and signed directly by an issuer, with no wallet and no
+  holder.
+
+  The signed artefact is stored here because there is no holder to keep it. If we
+  do not store it, it exists nowhere.
+  """
+
+  alias Sovra.Documents.Attestation
+  alias Sovra.Documents.DocumentLayout
+  alias Sovra.Documents.SignedDocument
+  alias Sovra.Ethereum.IssuerRegistry
+  alias Sovra.Ethereum.SignatureRegistry
+  alias Sovra.Issuer
+  alias Sovra.Issuer.ClaimUtils
+  alias Sovra.Issuer.CredentialSchema
+  alias Sovra.Repo
+  alias Sovra.Workspaces
+
+  import Ecto.Query
+
+  require Logger
+
+  @doc """
+  Signs and stores a document for `schema_id` with `claims`, then anchors the
+  signature.
+
+  Refuses to sign at all without a signature registry: an unanchorable document
+  looks issued while missing the timestamp that makes it worth anything. Ends
+  `anchored`, or `failed` when the transaction did not go through.
+  """
+  def issue(workspace_id, schema_id, claims, opts \\ []) when is_map(claims) do
+    with {:ok, workspace} <- Workspaces.get_workspace(workspace_id),
+         :ok <- Workspaces.assert_provisioned(workspace),
+         :ok <- assert_anchoring_configured(),
+         {:ok, schema} <- Issuer.get_schema(workspace_id, schema_id),
+         :ok <- CredentialSchema.assert_kind(schema, "document"),
+         :ok <- ClaimUtils.validate_required_claims(schema, claims),
+         {:ok, visibility} <- cast_visibility(Keyword.get(opts, :visibility)),
+         # Generated before signing so the document's id is covered by the
+         # signature, as the payload's `jti`.
+         id = Ecto.UUID.generate(),
+         {:ok, signed} <- Attestation.build(workspace, schema, claims, id) do
+      attrs = %{
+        id: id,
+        workspace_id: workspace_id,
+        schema_id: schema.id,
+        credential: signed.credential,
+        digest: signed.digest,
+        status: "signed",
+        visibility: visibility,
+        signed_at: DateTime.utc_now() |> DateTime.truncate(:second)
+      }
+
+      case SignedDocument.create_changeset(attrs) |> Repo.insert() do
+        {:ok, document} ->
+          # Never log the credential itself: it carries the claim values, and
+          # anyone holding it can present the document.
+          Logger.info("[Documents] signed id=#{document.id} digest=#{hex(document.digest)}")
+
+          document = anchor(document, workspace, schema)
+          {:ok, Repo.preload(document, [:schema, :workspace])}
+
+        {:error, changeset} ->
+          Logger.warning("[Documents] insert failed: #{inspect(changeset.errors)}")
+          {:error, changeset}
+      end
+    end
+  end
+
+  defp assert_anchoring_configured do
+    if signature_registry().configured?(), do: :ok, else: {:error, :chain_not_configured}
+  end
+
+  # `private` also requires a session to read, so nobody sees the document as the
+  # issuer laid it out without an account. The default, so publishing is a choice
+  # rather than an oversight; `public` is the capability model the id implies.
+  defp cast_visibility(nil), do: {:ok, "private"}
+
+  defp cast_visibility(value) when is_binary(value) do
+    if value in SignedDocument.visibilities(),
+      do: {:ok, value},
+      else: {:error, {:invalid_visibility, value}}
+  end
+
+  defp cast_visibility(value), do: {:error, {:invalid_visibility, value}}
+
+  # Reached with a registry configured, so what fails here is the transaction
+  # itself: a revert, a dead RPC, a receipt that never arrives. A verifier rejects
+  # an unanchored document, so `failed` is unusable and has to be reissued.
+  #
+  # The row is kept anyway, and stored before anchoring on purpose: a receipt that
+  # never arrived is not the same as a transaction that never happened. Dropping
+  # it would risk a signature anchored on a chain that cannot be undone for a
+  # document missing from the database.
+  defp anchor(document, workspace, schema) do
+    type_id = IssuerRegistry.credential_type_hash(schema.credential_type)
+    {r, s} = signature_components(document.credential)
+
+    case signature_registry().record(workspace.eoa_address, type_id, document.digest, r, s) do
+      {:ok, tx_hash} ->
+        Logger.info("[Documents] anchored id=#{document.id} tx=#{tx_hash}")
+
+        set_status(document, %{
+          status: "anchored",
+          tx_hash: tx_hash,
+          anchored_at: DateTime.utc_now() |> DateTime.truncate(:second)
+        })
+
+      {:error, reason} ->
+        # Signer and type id go here rather than on the happy path: a revert is
+        # almost always one of the two not matching the registries.
+        Logger.error(
+          "[Documents] anchoring failed id=#{document.id} signer=#{workspace.eoa_address} " <>
+            "type_id=#{hex(type_id)} reason=#{inspect(reason)}"
+        )
+
+        set_status(document, %{status: "failed"})
+    end
+  end
+
+  # The third JWS segment is raw `r ‖ s`, 32 bytes each (RFC 7518), which is
+  # what the contract expects. Split on `~` first: the head is the JWT and the
+  # tail is the disclosure list, empty for a document.
+  defp signature_components(credential) do
+    [jwt | _disclosures] = String.split(credential, "~")
+    [_header, _payload, signature] = String.split(jwt, ".")
+    <<r::binary-32, s::binary-32>> = Base.url_decode64!(signature, padding: false)
+    {r, s}
+  end
+
+  defp set_status(document, attrs) do
+    document |> SignedDocument.status_changeset(attrs) |> Repo.update!()
+  end
+
+  defp signature_registry,
+    do: Application.get_env(:sovra, :signature_registry, SignatureRegistry)
+
+  def list(workspace_id) do
+    from(d in SignedDocument,
+      where: d.workspace_id == ^workspace_id,
+      order_by: [desc: :signed_at],
+      preload: [:schema, :workspace]
+    )
+    |> Repo.all()
+  end
+
+  def get(workspace_id, id) do
+    case Repo.one(
+           from d in SignedDocument,
+             where: d.id == ^id and d.workspace_id == ^workspace_id,
+             preload: [:schema, :workspace]
+         ) do
+      nil -> {:error, :document_not_found}
+      document -> {:ok, document}
+    end
+  end
+
+  @doc """
+  Changes who may read a document.
+
+  Going private closes the link, not the copies: a credential already handed out
+  stays readable and verifiable by whoever holds it. Not covered by the
+  signature, so this invalidates nothing.
+  """
+  # Unlike issuance, there is no default here: an explicit change with nothing to
+  # change to is a bad request, not a reset.
+  def set_visibility(_workspace_id, _id, nil), do: {:error, {:invalid_visibility, nil}}
+
+  def set_visibility(workspace_id, id, visibility) do
+    with {:ok, uuid} <- cast_uuid(id),
+         {:ok, visibility} <- cast_visibility(visibility),
+         {:ok, document} <- get(workspace_id, uuid) do
+      document
+      |> SignedDocument.visibility_changeset(visibility)
+      |> Repo.update()
+    end
+  end
+
+  defp cast_uuid(id) do
+    case Ecto.UUID.cast(id) do
+      {:ok, uuid} -> {:ok, uuid}
+      :error -> {:error, :document_not_found}
+    end
+  end
+
+  @doc """
+  Lookup by id with no workspace scope, for the public verification link. Holding
+  the id is the authorization.
+  """
+  def get_public(id) do
+    case Repo.one(
+           from d in SignedDocument,
+             where: d.id == ^id,
+             preload: [:schema, :workspace]
+         ) do
+      nil -> {:error, :document_not_found}
+      document -> {:ok, document}
+    end
+  end
+
+  def hex(binary) when is_binary(binary), do: Base.encode16(binary, case: :lower)
+
+  # ── Layouts ─────────────────────────────────────────────────────────
+  #
+  # Layouts hang off document schemas, which are the issuer's. `Sovra.Issuer`
+  # calls `copy_layout/2` when it revises one.
+
+  # A layout can embed a logo and a page template as data URIs, so the row needs
+  # a ceiling. Generous enough for a downscaled A4 template.
+  @max_layout_bytes 3_000_000
+
+  @doc """
+  Saves the page layout of the latest version of a document schema.
+
+  A layout is presentation, so this creates no schema revision and does not touch
+  what gets signed.
+  """
+  def update_layout(workspace_id, schema_id, layout) do
+    with {:ok, schema} <- Issuer.get_schema(workspace_id, schema_id),
+         :ok <- CredentialSchema.assert_kind(schema, "document"),
+         :ok <- assert_layout_size(layout) do
+      case Repo.get_by(DocumentLayout, credential_schema_id: schema.id) do
+        nil -> DocumentLayout.create_changeset(schema.id, layout) |> Repo.insert()
+        record -> DocumentLayout.update_changeset(record, layout) |> Repo.update()
+      end
+    end
+  end
+
+  @doc """
+  The layout of one schema, or nil.
+  """
+  def layout_for(schema_id) do
+    case Repo.get_by(DocumentLayout, credential_schema_id: schema_id) do
+      nil -> nil
+      record -> record.layout
+    end
+  end
+
+  @doc """
+  Layouts for many schemas at once, as a map keyed by schema id. One query, so
+  listing schemas does not turn into one lookup per row.
+  """
+  def layouts_for(schema_ids) when is_list(schema_ids) do
+    from(l in DocumentLayout,
+      where: l.credential_schema_id in ^schema_ids,
+      select: {l.credential_schema_id, l.layout}
+    )
+    |> Repo.all()
+    |> Map.new()
+  end
+
+  @doc """
+  Copies a layout onto another schema row. Used when a schema is revised, so the
+  new version keeps the page the previous one had.
+  """
+  def copy_layout(from_schema_id, to_schema_id) do
+    case layout_for(from_schema_id) do
+      nil -> {:ok, :nothing_to_copy}
+      layout -> DocumentLayout.create_changeset(to_schema_id, layout) |> Repo.insert()
+    end
+  end
+
+  defp assert_layout_size(layout) do
+    case Jason.encode(layout) do
+      {:ok, json} when byte_size(json) <= @max_layout_bytes -> :ok
+      {:ok, _json} -> {:error, :layout_too_large}
+      {:error, _reason} -> {:error, :invalid_layout}
+    end
+  end
+end

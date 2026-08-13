@@ -26,6 +26,7 @@ config :sovra,
   auth_provider: Sovra.Auth.MockAuthProvider,
   did_registry: SovraTest.Ethereum.StubDIDRegistry,
   revocation_registry: SovraTest.Ethereum.StubRevocationRegistry,
+  signature_registry: SovraTest.Ethereum.StubSignatureRegistry,
   ethereum: [
     admin_private_key: "0x" <> String.duplicate("11", 32),
     did_registry_address: "0x0000000000000000000000000000000000000001",

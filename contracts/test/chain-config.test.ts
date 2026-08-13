@@ -45,6 +45,11 @@ function validRaw(): any {
           STATUS_MANAGER_ROLE: [BACKEND],
           UPGRADER_ROLE: [UPGRADER],
         },
+        SignatureRegistryV1: {
+          DEFAULT_ADMIN_ROLE: [ADMIN],
+          RECORDER_ROLE: [BACKEND],
+          UPGRADER_ROLE: [UPGRADER],
+        },
       },
     },
   };

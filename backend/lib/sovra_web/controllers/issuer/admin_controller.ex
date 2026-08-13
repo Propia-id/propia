@@ -3,6 +3,7 @@ defmodule SovraWeb.Issuer.AdminController do
   use OpenApiSpex.ControllerSpecs
 
   alias Sovra.Accounts
+  alias Sovra.Documents
   alias Sovra.Issuer
   alias Sovra.Workspaces
 
@@ -92,7 +93,16 @@ defmodule SovraWeb.Issuer.AdminController do
            credential_type: %OpenApiSpex.Schema{type: :string},
            name: %OpenApiSpex.Schema{type: :string},
            claims: %OpenApiSpex.Schema{type: :array, items: %OpenApiSpex.Schema{type: :object}},
-           validity_period: %OpenApiSpex.Schema{type: :string, example: "1y"}
+           validity_period: %OpenApiSpex.Schema{type: :string, example: "1y"},
+           kind: %OpenApiSpex.Schema{
+             type: :string,
+             enum: ["credential", "document"],
+             default: "credential",
+             description:
+               "`credential` is issued to a wallet over OID4VCI and bound to a holder key. " <>
+                 "`document` is signed directly by the issuer, with no holder, and is the " <>
+                 "only kind `POST /dashboard/issuer/documents` accepts."
+           }
          }
        }},
     responses: %{
@@ -403,7 +413,8 @@ defmodule SovraWeb.Issuer.AdminController do
       credential_type: params["credential_type"],
       name: params["name"],
       claims: normalize_claims(params["claims"]),
-      validity_period: to_string(params["validity_period"] || "1y")
+      validity_period: to_string(params["validity_period"] || "1y"),
+      kind: params["kind"] || "credential"
     }
 
     case Issuer.create_schema(workspace_id, attrs) do
@@ -416,7 +427,8 @@ defmodule SovraWeb.Issuer.AdminController do
           credential_type: schema.credential_type,
           name: schema.name,
           claims: schema.claims,
-          validity_period: schema.validity_period
+          validity_period: schema.validity_period,
+          kind: schema.kind
         })
 
       {:error, %Ecto.Changeset{} = changeset} ->
@@ -432,9 +444,95 @@ defmodule SovraWeb.Issuer.AdminController do
     end
   end
 
+  @error_object %OpenApiSpex.Schema{
+    type: :object,
+    properties: %{
+      error: %OpenApiSpex.Schema{type: :string},
+      details: %OpenApiSpex.Schema{type: :object, nullable: true}
+    }
+  }
+
+  operation(:update_layout,
+    summary: "Save a document schema's page layout",
+    description:
+      "Where each field sits on the rendered page, for the latest version of a document " <>
+        "schema. Presentation only: it creates no schema revision and is not covered by " <>
+        "the signature. A revision copies the layout forward.",
+    parameters: [
+      schema_id: [in: :path, type: :string, description: "The schema's own id", required: true]
+    ],
+    request_body:
+      {"Layout", "application/json",
+       %OpenApiSpex.Schema{
+         type: :object,
+         required: [:layout],
+         properties: %{
+           layout: %OpenApiSpex.Schema{
+             type: :object,
+             description:
+               "`page` sizes the sheet (A4 at 96dpi by default), `background` is a data URI, " <>
+                 "and `elements` positions `field`, `text`, `line`, `box` and `image` entries. " <>
+                 "Built by the dashboard's layout editor. 3 MB serialised, images included."
+           }
+         }
+       }},
+    responses: %{
+      200 =>
+        {"Layout saved", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{
+             schema_id: %OpenApiSpex.Schema{type: :string},
+             layout: %OpenApiSpex.Schema{type: :object}
+           }
+         }},
+      404 => {"Schema not found", "application/json", @error_object},
+      413 => {"Layout over 3 MB", "application/json", @error_object},
+      422 => {"Not a document schema, or invalid layout", "application/json", @error_object}
+    }
+  )
+
+  def update_layout(conn, %{"schema_id" => schema_id} = params) do
+    workspace_id = conn.assigns.current_user.workspace_id
+
+    case Documents.update_layout(workspace_id, schema_id, params["layout"]) do
+      {:ok, record} ->
+        json(conn, %{schema_id: schema_id, layout: record.layout})
+
+      {:error, :schema_not_found} ->
+        conn |> put_status(404) |> json(%{error: "schema_not_found"})
+
+      {:error, {:wrong_schema_kind, kind}} ->
+        conn
+        |> put_status(422)
+        |> json(%{
+          error: "wrong_schema_kind",
+          details: "layouts only apply to documents, got #{kind}"
+        })
+
+      {:error, :layout_too_large} ->
+        conn
+        |> put_status(413)
+        |> json(%{
+          error: "layout_too_large",
+          details: "the layout, including embedded images, is over 3 MB"
+        })
+
+      {:error, :invalid_layout} ->
+        conn |> put_status(422) |> json(%{error: "invalid_layout"})
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        conn
+        |> put_status(422)
+        |> json(%{error: "validation_error", details: changeset_errors(changeset)})
+    end
+  end
+
   def list_schemas(conn, _params) do
     workspace_id = conn.assigns.current_user.workspace_id
     schemas = Issuer.list_schemas(workspace_id)
+    # One query for every layout, rather than one per schema.
+    layouts = Documents.layouts_for(Enum.map(schemas, & &1.id))
 
     json(conn, %{
       schemas:
@@ -446,7 +544,9 @@ defmodule SovraWeb.Issuer.AdminController do
             name: s.name,
             claims: s.claims,
             validity_period: s.validity_period,
-            version: s.version
+            version: s.version,
+            kind: s.kind,
+            layout: Map.get(layouts, s.id)
           }
         end)
     })
@@ -482,7 +582,8 @@ defmodule SovraWeb.Issuer.AdminController do
               name: schema.name,
               claims: schema.claims,
               validity_period: schema.validity_period,
-              version: schema.version
+              version: schema.version,
+              kind: schema.kind
             })
 
           {:error, :schema_not_found} ->

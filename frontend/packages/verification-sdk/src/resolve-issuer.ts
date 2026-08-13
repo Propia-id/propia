@@ -1,4 +1,4 @@
-import { keccak256, bytesToHex } from "@sovrahq/holder-core/utils";
+import { keccak256 } from "@sovrahq/holder-core/utils";
 import { ErrorCode, type IssuerKeyData } from "./types";
 import { VerificationError } from "./errors";
 import {

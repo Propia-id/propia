@@ -40,12 +40,12 @@ export async function ethCall(
 }
 
 export class RpcError extends Error {
-  constructor(
-    message: string,
-    public data?: string,
-  ) {
+  readonly data?: string;
+
+  constructor(message: string, data?: string) {
     super(message);
     this.name = "RpcError";
+    this.data = data;
   }
 }
 

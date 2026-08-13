@@ -137,7 +137,12 @@ defmodule Sovra.Issuer.SDJWT do
     |> then(fn {disc, non_disc} -> {Enum.reverse(disc), Enum.reverse(non_disc)} end)
   end
 
-  defp parse_validity_period(period) do
+  @doc """
+  Parses a schema validity period (`"1y"`, `"6m"`, `"30d"`) into seconds.
+  Defaults to one year when unparseable. Public so the document issuance path
+  derives `exp` the same way credentials do.
+  """
+  def parse_validity_period(period) do
     case Regex.run(~r/^(\d+)(y|m|d)$/, period) do
       [_, n, "y"] -> String.to_integer(n) * 365 * 86400
       [_, n, "m"] -> String.to_integer(n) * 30 * 86400

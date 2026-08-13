@@ -95,6 +95,15 @@ defmodule SovraWeb.Issuer.OfferController do
       {:error, {:missing_claims, missing}} ->
         conn |> put_status(422) |> json(%{error: "missing_claims", details: missing})
 
+      {:error, {:wrong_schema_kind, kind}} ->
+        conn
+        |> put_status(422)
+        |> json(%{
+          error: "wrong_schema_kind",
+          details:
+            "this schema is of kind #{kind}; only credential schemas can be offered to a wallet"
+        })
+
       {:error, reason} ->
         conn |> put_status(422) |> json(%{error: to_string(reason)})
     end

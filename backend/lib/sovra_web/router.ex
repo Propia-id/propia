@@ -5,6 +5,11 @@ defmodule SovraWeb.Router do
     plug :accepts, ["json"]
   end
 
+  # The only route that answers with HTML. Everything else here is JSON.
+  pipeline :document_page do
+    plug :accepts, ["html"]
+  end
+
   pipeline :guardian_session do
     plug SovraWeb.Plugs.SessionPlug
   end
@@ -156,10 +161,14 @@ defmodule SovraWeb.Router do
     get "/schemas/:schema_id/design", AdminController, :get_design
     put "/schemas/:schema_id/design", AdminController, :upsert_design
     delete "/schemas/:schema_id/design", AdminController, :delete_design
+    put "/schemas/:schema_id/layout", AdminController, :update_layout
     post "/offers", OfferController, :create
     get "/offers", AdminController, :list_offers
     get "/credentials", AdminController, :list_issued_credentials
     get "/credentials/:id", AdminController, :show_issued_credential
+    post "/documents", DocumentController, :create
+    get "/documents", DocumentController, :index
+    put "/documents/:id/visibility/:visibility", DocumentController, :update_visibility
   end
 
   # Verification listings on the dashboard (JWT session) — reuses the
@@ -323,6 +332,16 @@ defmodule SovraWeb.Router do
     put "/credentials/:id/status/:status", AdminController, :update_credential_status
   end
 
+  # Signed documents (workspace API key). Schemas and layouts stay on the
+  # dashboard, like credential schemas.
+  scope "/api/v1/issuer", SovraWeb.Issuer do
+    pipe_through [:api, :api_key]
+
+    post "/documents", DocumentController, :create
+    get "/documents", DocumentController, :index
+    put "/documents/:id/visibility/:visibility", DocumentController, :update_visibility
+  end
+
   # Verifier API (workspace API key — server-to-server, used to start OID4VP
   # sessions)
   scope "/api/v1/verifier", SovraWeb.Verifier do
@@ -339,5 +358,24 @@ defmodule SovraWeb.Router do
     pipe_through :api
 
     get "/:issuer_did/:purpose", StatusListController, :show
+  end
+
+  # Signed documents, public. Serves the credential so a verifier can check it,
+  # never a verdict. Holding the id is the authorization.
+  scope "/api/v1/documents", SovraWeb.Verify do
+    pipe_through :api
+
+    get "/:id", DocumentController, :show
+  end
+
+  # The same document, rendered as a page, for a browser or for an agent that
+  # wants the document rather than the credential.
+  #
+  # Under /api/v1 because the dashboard is a single page app served from `/` and
+  # owns `/documents` itself: a page route at the root would collide with its tab.
+  scope "/api/v1/documents", SovraWeb.Verify do
+    pipe_through :document_page
+
+    get "/:id/page", DocumentController, :page
   end
 end

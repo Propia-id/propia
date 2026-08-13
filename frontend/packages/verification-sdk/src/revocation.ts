@@ -1,7 +1,7 @@
 import { hexToBytes, concatBytes, bytesToHex } from "@sovrahq/holder-core/utils";
 import { ErrorCode } from "./types";
 import { VerificationError } from "./errors";
-import { ethCall, RpcError, functionSelector, encodeAddress, decodeBool } from "./rpc";
+import { ethCall, RpcError, functionSelector, decodeBool } from "./rpc";
 
 const REVOCATION = 0;
 

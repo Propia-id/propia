@@ -79,6 +79,8 @@ defmodule Sovra.MixProject do
       {:open_api_spex, "~> 3.21"},
       {:oban, "~> 2.18"},
       {:swoosh, "~> 1.16"},
+      # QR codes for the server-rendered document page.
+      {:eqrcode, "~> 0.2"},
       {:phoenix_swoosh, "~> 1.2"},
       {:gen_smtp, "~> 1.2"}
     ]

@@ -117,6 +117,10 @@ end
 #              material on the API node (production).
 # Local wins when ADMIN_PRIVATE_KEY is set; otherwise KMS is used once a signer
 # and a DID registry are configured. On-chain stays disabled if neither.
+# Block explorer used for the transaction link on rendered documents. Display
+# only: nothing depends on it being reachable.
+config :sovra, :explorer_url, System.get_env("EXPLORER_URL", "https://explorer.testnet.sovra.io")
+
 admin_pk = System.get_env("ADMIN_PRIVATE_KEY")
 
 cond do
@@ -128,7 +132,8 @@ cond do
       admin_private_key: admin_pk,
       did_registry_address: System.fetch_env!("DID_REGISTRY_ADDRESS"),
       issuer_registry_address: System.fetch_env!("ISSUER_REGISTRY_ADDRESS"),
-      revocation_registry_address: System.get_env("REVOCATION_REGISTRY_ADDRESS")
+      revocation_registry_address: System.get_env("REVOCATION_REGISTRY_ADDRESS"),
+      signature_registry_address: System.get_env("SIGNATURE_REGISTRY_ADDRESS")
 
   signer_url not in [nil, ""] and System.get_env("DID_REGISTRY_ADDRESS") not in [nil, ""] ->
     config :sovra, :ethereum,
@@ -137,7 +142,8 @@ cond do
       chain_id: String.to_integer(env.("CHAIN_ID") || "65536999"),
       did_registry_address: System.fetch_env!("DID_REGISTRY_ADDRESS"),
       issuer_registry_address: System.fetch_env!("ISSUER_REGISTRY_ADDRESS"),
-      revocation_registry_address: System.get_env("REVOCATION_REGISTRY_ADDRESS")
+      revocation_registry_address: System.get_env("REVOCATION_REGISTRY_ADDRESS"),
+      signature_registry_address: System.get_env("SIGNATURE_REGISTRY_ADDRESS")
 
   true ->
     :ok

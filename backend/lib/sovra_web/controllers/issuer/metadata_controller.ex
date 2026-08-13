@@ -31,7 +31,9 @@ defmodule SovraWeb.Issuer.MetadataController do
   def show_by_id(conn, %{"workspace_did" => workspace_did}) do
     case Workspaces.get_workspace_by_did(workspace_did) do
       {:ok, workspace} ->
-        schemas = Issuer.list_schemas(workspace.id)
+        # Credentials only: a document has no wallet flow, so advertising one
+        # here would offer a wallet something it can never collect.
+        schemas = Issuer.list_schemas(workspace.id, "credential")
         designs = Issuer.list_designs(workspace.id)
         metadata = OID4VCI.build_metadata(workspace, schemas, designs)
         json(conn, metadata)

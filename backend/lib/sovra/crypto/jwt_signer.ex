@@ -3,7 +3,7 @@ defmodule Sovra.Crypto.JwtSigner do
   ES256 (P-256) compact-JWS signer. Used for SD-JWT credentials and W3C
   BitstringStatusListCredential JWTs.
 
-  Signature is raw `r||s` (64 bytes) per RFC 7515 §3.4 — not the DER form.
+  Signature is raw `r||s` (64 bytes) per RFC 7518, not the DER form.
   """
 
   alias Sovra.Crypto.Key

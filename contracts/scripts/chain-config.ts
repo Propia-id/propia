@@ -15,6 +15,7 @@ export const REGISTRY_ROLES = {
   SovraDIDRegistryV1: [DEFAULT_ADMIN_ROLE, "DID_MANAGER_ROLE", "UPGRADER_ROLE"],
   SovraIssuerRegistryV1: [DEFAULT_ADMIN_ROLE, "ISSUER_MANAGER_ROLE", "UPGRADER_ROLE"],
   SovraRevocationRegistryV1: [DEFAULT_ADMIN_ROLE, "STATUS_MANAGER_ROLE", "UPGRADER_ROLE"],
+  SignatureRegistryV1: [DEFAULT_ADMIN_ROLE, "RECORDER_ROLE", "UPGRADER_ROLE"],
 } as const;
 
 export type RegistryName = keyof typeof REGISTRY_ROLES;
@@ -217,7 +218,7 @@ export function handoffWarnings(config: NetworkRoleConfig, deployer: string): st
   if (!config.renounceDeployer) {
     warnings.push(
       `renounceDeployer is false — the deploy key ${address} keeps DEFAULT_ADMIN_ROLE, ` +
-        `UPGRADER_ROLE and the manager role on all three registries`
+        `UPGRADER_ROLE and the write role on every registry`
     );
   }
   if (config.beaconOwner === address) {

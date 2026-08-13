@@ -114,6 +114,17 @@ async function main() {
   const revocationRegistryAddr = await revocationRegistry.getAddress();
   console.log("SovraRevocationRegistryV1 proxy deployed to:", revocationRegistryAddr);
 
+  // ─── Signature Registry (UUPS proxy, validated) ───
+  const SignatureRegistryV1 = await ethers.getContractFactory("SignatureRegistryV1", deployer);
+  const signatureRegistry = await upgrades.deployProxy(
+    SignatureRegistryV1,
+    [deployer.address, didRegistryAddr, issuerRegistryAddr],
+    { kind: "uups" }
+  );
+  await signatureRegistry.waitForDeployment();
+  const signatureRegistryAddr = await signatureRegistry.getAddress();
+  console.log("SignatureRegistryV1 proxy deployed to:", signatureRegistryAddr);
+
   // ─── Output file ───────────────────────────────────
   // Written before the role transactions so a failure there cannot lose the
   // deployed addresses; rewritten with the role outcome once they succeed.
@@ -143,6 +154,7 @@ async function main() {
         SovraDIDRegistryV1: { address: didRegistryAddr, type: "uups-proxy" },
         SovraIssuerRegistryV1: { address: issuerRegistryAddr, type: "uups-proxy" },
         SovraRevocationRegistryV1: { address: revocationRegistryAddr, type: "uups-proxy" },
+        SignatureRegistryV1: { address: signatureRegistryAddr, type: "uups-proxy" },
       },
       roles: {
         configured: roleConfig.roles,
@@ -165,6 +177,7 @@ async function main() {
     SovraDIDRegistryV1: didRegistry,
     SovraIssuerRegistryV1: issuerRegistry,
     SovraRevocationRegistryV1: revocationRegistry,
+    SignatureRegistryV1: signatureRegistry,
   });
 
   console.log("");
@@ -184,6 +197,7 @@ async function main() {
   await verify(didRegistryAddr);
   await verify(issuerRegistryAddr);
   await verify(revocationRegistryAddr);
+  await verify(signatureRegistryAddr);
 
   // ─── Summary ──────────────────────────────────────
   console.log("\n=== Deployment Summary ===");
@@ -193,6 +207,7 @@ async function main() {
   console.log("SovraDIDRegistryV1:         ", didRegistryAddr);
   console.log("SovraIssuerRegistryV1:      ", issuerRegistryAddr);
   console.log("SovraRevocationRegistryV1:  ", revocationRegistryAddr);
+  console.log("SignatureRegistryV1:        ", signatureRegistryAddr);
 }
 
 main().catch((error) => {

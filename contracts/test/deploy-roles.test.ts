@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { ethers, upgrades } from "hardhat";
+import type { BaseContract } from "ethers";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 import { NetworkRoleConfig, parseChainConfig, roleId } from "../scripts/chain-config";
 import {
@@ -52,10 +53,19 @@ async function deployRegistries(deployer: HardhatEthersSigner): Promise<Deployed
   )) as unknown as SovraRevocationRegistryV1;
   await revocation.waitForDeployment();
 
+  const Signature = await ethers.getContractFactory("SignatureRegistryV1", deployer);
+  const signature = (await upgrades.deployProxy(
+    Signature,
+    [deployer.address, await did.getAddress(), await issuer.getAddress()],
+    { kind: "uups" }
+  )) as unknown as BaseContract;
+  await signature.waitForDeployment();
+
   const registries = toRegistries({
     SovraDIDRegistryV1: did,
     SovraIssuerRegistryV1: issuer,
     SovraRevocationRegistryV1: revocation,
+    SignatureRegistryV1: signature,
   });
 
   return { did, issuer, revocation, registries };
@@ -92,6 +102,11 @@ function buildConfig(opts: {
           SovraRevocationRegistryV1: {
             DEFAULT_ADMIN_ROLE: [admin],
             STATUS_MANAGER_ROLE: managers,
+            UPGRADER_ROLE: [upgrader],
+          },
+          SignatureRegistryV1: {
+            DEFAULT_ADMIN_ROLE: [admin],
+            RECORDER_ROLE: managers,
             UPGRADER_ROLE: [upgrader],
           },
         },
@@ -180,7 +195,7 @@ describe("deploy roles", function () {
 
       const grants = await grantConfiguredRoles(deployed.registries, config);
 
-      expect(grants).to.have.lengthOf(9);
+      expect(grants).to.have.lengthOf(12);
       expect(grants.every((g) => !g.alreadyHeld)).to.be.true;
       expect(grants.filter((g) => g.contract === "SovraDIDRegistryV1")).to.have.lengthOf(3);
     });
@@ -205,7 +220,7 @@ describe("deploy roles", function () {
   // ─── Renounce ───────────────────────────────────────
 
   describe("renounceDeployerRoles", function () {
-    it("drops all nine deployer roles and leaves the configured holders alone", async function () {
+    it("drops every deployer role and leaves the configured holders alone", async function () {
       const config = buildConfig({
         admin: admin.address,
         upgrader: upgrader.address,
@@ -216,7 +231,7 @@ describe("deploy roles", function () {
 
       const renounced = await renounceDeployerRoles(deployed.registries, config, deployer.address);
 
-      expect(renounced).to.have.lengthOf(9);
+      expect(renounced).to.have.lengthOf(12);
       const { did, issuer, revocation } = deployed;
       for (const [registry, manager] of [
         [did, DID_MANAGER_ROLE],
@@ -330,8 +345,8 @@ describe("deploy roles", function () {
         deployer.address
       );
 
-      expect(granted).to.have.lengthOf(9);
-      expect(renounced).to.have.lengthOf(9);
+      expect(granted).to.have.lengthOf(12);
+      expect(renounced).to.have.lengthOf(12);
       expect(await deployed.did.hasRole(DID_MANAGER_ROLE, backend.address)).to.be.true;
       expect(await deployed.did.hasRole(DEFAULT_ADMIN_ROLE, deployer.address)).to.be.false;
     });

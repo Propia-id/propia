@@ -73,7 +73,8 @@ config :sovra, :ethereum,
   admin_private_key: System.get_env("ADMIN_PRIVATE_KEY"),
   did_registry_address: System.get_env("DID_REGISTRY_ADDRESS"),
   issuer_registry_address: System.get_env("ISSUER_REGISTRY_ADDRESS"),
-  revocation_registry_address: System.get_env("REVOCATION_REGISTRY_ADDRESS")
+  revocation_registry_address: System.get_env("REVOCATION_REGISTRY_ADDRESS"),
+  signature_registry_address: System.get_env("SIGNATURE_REGISTRY_ADDRESS")
 
 # aws_credentials starts as an application dependency (pulled in by :aws for the
 # signer). Dev runs off-AWS and uses the DatabaseKeyStore, so pin it to the
