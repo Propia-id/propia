@@ -45,6 +45,12 @@ if frontend_url = System.get_env("ISSUER_FRONTEND_URL") do
   config :sovra, :issuer_frontend_url, frontend_url
 end
 
+# Sender for transactional email. The address must be a verified sender on the
+# Postmark account in prod.
+if from_address = env.("EMAIL_FROM_ADDRESS") do
+  config :sovra, :emails, from: {env.("EMAIL_FROM_NAME") || "Sovra", from_address}
+end
+
 # Self-service organization creation. OFF by default (see config.exs). Unset or
 # any other value keeps the compile-time default, so a deployment must opt in
 # explicitly.
@@ -244,6 +250,20 @@ if config_env() == :prod and service != "signer" do
       ip: {0, 0, 0, 0, 0, 0, 0, 0}
     ],
     secret_key_base: secret_key_base
+
+  # Transactional email. Both are checked at boot: a deployment that can't send
+  # invitations or password resets should fail here, not on the first delivery.
+  config :sovra, Sovra.Mailer,
+    adapter: Swoosh.Adapters.Postmark,
+    api_key: env.("POSTMARK_API_KEY") || raise("environment variable POSTMARK_API_KEY is missing")
+
+  config :swoosh, api_client: Swoosh.ApiClient.Req
+
+  env.("EMAIL_FROM_ADDRESS") ||
+    raise """
+    environment variable EMAIL_FROM_ADDRESS is missing.
+    Set it to a sender address verified on the Postmark account.
+    """
 
   # ## SSL Support
   #

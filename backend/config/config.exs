@@ -70,11 +70,17 @@ config :sovra, Oban,
      ]}
   ]
 
-# Mailer (Swoosh). Local adapter in dev/test; configure SMTP/Resend/etc. in
-# runtime.exs for prod.
+# Mailer (Swoosh). Local adapter in dev (preview at /dev/mailbox), Test in
+# test, Postmark in prod (runtime.exs, from POSTMARK_API_KEY).
 config :sovra, Sovra.Mailer, adapter: Swoosh.Adapters.Local
 
+# Local/Test adapters don't talk HTTP. Prod switches this to
+# Swoosh.ApiClient.Req for the Postmark adapter.
 config :swoosh, :api_client, false
+
+# Sender for transactional email. Must be a verified sender on the Postmark
+# account in prod (EMAIL_FROM_* env vars override it).
+config :sovra, :emails, from: {"Sovra", "no-reply@sovra.io"}
 
 # Frontend URL used when building reset-password links etc.
 config :sovra,

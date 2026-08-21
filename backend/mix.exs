@@ -81,8 +81,7 @@ defmodule Sovra.MixProject do
       {:swoosh, "~> 1.16"},
       # QR codes for the server-rendered document page.
       {:eqrcode, "~> 0.2"},
-      {:phoenix_swoosh, "~> 1.2"},
-      {:gen_smtp, "~> 1.2"}
+      {:phoenix_swoosh, "~> 1.2"}
     ]
   end
 

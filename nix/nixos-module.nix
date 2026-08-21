@@ -23,6 +23,8 @@
 #   GOOGLE_REDIRECT_URI=https://yourdomain.com/wallet/auth/callback
 #   SIGNER_URL=<KMS signer service URL, e.g. http://sovra-signer:4001>
 #   SIGNER_TOKEN=<shared bearer token for the signer RPC>
+#   POSTMARK_API_KEY=<Postmark server API token>
+#   EMAIL_FROM_ADDRESS=<sender verified on the Postmark account>
 
 { config, lib, pkgs, ... }:
 
@@ -52,8 +54,9 @@ in
         Path to environment file containing all runtime secrets and config.
         Must contain DATABASE_URL, SECRET_KEY_BASE, GUARDIAN_SESSION_SECRET,
         STORED_KEYS_ENCRYPTION_KEY, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
-        GOOGLE_REDIRECT_URI, and SIGNER_URL + SIGNER_TOKEN (to reach the KMS
-        signer service).
+        GOOGLE_REDIRECT_URI, SIGNER_URL + SIGNER_TOKEN (to reach the KMS
+        signer service), and POSTMARK_API_KEY + EMAIL_FROM_ADDRESS (to send
+        transactional email).
         Optionally REVOCATION_REGISTRY_ADDRESS for on-chain credential
         revocation.
       '';

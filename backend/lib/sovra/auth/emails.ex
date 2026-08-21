@@ -10,14 +10,12 @@ defmodule Sovra.Auth.Emails do
 
   import Swoosh.Email
 
-  @from {"Sovra", "no-reply@sovra.local"}
-
   # ── Public builders ─────────────────────────────────────────
 
   def password_reset(email_address, full_name, reset_link) do
     new()
     |> to({full_name || "", email_address})
-    |> from(@from)
+    |> from(sender())
     |> subject("Reset your Sovra password")
     |> html_body(
       shell(
@@ -31,7 +29,7 @@ defmodule Sovra.Auth.Emails do
   def welcome(email_address, full_name, workspace_name) do
     new()
     |> to({full_name || "", email_address})
-    |> from(@from)
+    |> from(sender())
     |> subject("Welcome to Sovra")
     |> html_body(
       shell(
@@ -45,7 +43,7 @@ defmodule Sovra.Auth.Emails do
   def password_changed(email_address, full_name) do
     new()
     |> to({full_name || "", email_address})
-    |> from(@from)
+    |> from(sender())
     |> subject("Your Sovra password was changed")
     |> html_body(
       shell(
@@ -59,7 +57,7 @@ defmodule Sovra.Auth.Emails do
   def issuer_invitation(email_address, invitation_link) do
     new()
     |> to(email_address)
-    |> from(@from)
+    |> from(sender())
     |> subject("You're invited to issue credentials on Sovra")
     |> html_body(
       shell(
@@ -73,7 +71,7 @@ defmodule Sovra.Auth.Emails do
   def issuer_invitation_code(email_address, code) do
     new()
     |> to(email_address)
-    |> from(@from)
+    |> from(sender())
     |> subject("Your Sovra confirmation code")
     # Not the code itself: the preheader shows up in lock-screen notifications,
     # and reading it there would defeat the point of confirming the mailbox.
@@ -571,6 +569,10 @@ defmodule Sovra.Auth.Emails do
   end
 
   # ── helpers ─────────────────────────────────────────────────
+
+  defp sender do
+    Application.fetch_env!(:sovra, :emails)[:from]
+  end
 
   defp console_url do
     Application.get_env(:sovra, :issuer_frontend_url, "http://localhost:5173")

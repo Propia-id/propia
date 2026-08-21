@@ -176,6 +176,8 @@ GOOGLE_CLIENT_SECRET=your-google-client-secret
 GOOGLE_REDIRECT_URI=https://yourdomain.com/wallet/auth/callback
 SIGNER_URL=http://sovra-signer:4001
 SIGNER_TOKEN=<shared bearer token, identical on the signer service>
+POSTMARK_API_KEY=<Postmark server API token>
+EMAIL_FROM_ADDRESS=no-reply@yourdomain.com
 EOF
 sudo chmod 600 /etc/sovra/env
 sudo chown sovra:sovra /etc/sovra/env
@@ -260,6 +262,8 @@ Required:
 | `GOOGLE_REDIRECT_URI` | OAuth callback URL |
 | `SIGNER_URL` | KMS signer service base URL (e.g. `http://sovra-signer:4001`) |
 | `SIGNER_TOKEN` | Shared bearer token for the signer RPC (matches the signer service) |
+| `POSTMARK_API_KEY` | Postmark server API token for transactional email |
+| `EMAIL_FROM_ADDRESS` | Sender address, must be verified on the Postmark account (e.g. `no-reply@sovra.io`) |
 
 Set automatically by the NixOS module (not in env file):
 
@@ -288,6 +292,7 @@ Optional (tuning):
 | `POOL_SIZE` | Database connection pool size (default: 10) |
 | `ECTO_IPV6` | Enable IPv6 for database connections (`true`/`1`) |
 | `DNS_CLUSTER_QUERY` | DNS query for clustering multiple nodes |
+| `EMAIL_FROM_NAME` | Display name on transactional email (default: `Sovra`) |
 
 ## Local Testing
 
