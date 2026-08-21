@@ -8,7 +8,23 @@ defmodule Sovra.Auth.MailerJob do
   alias Sovra.Auth.Emails
   alias Sovra.Mailer
 
+  # Invitation mail goes out before the account exists, so these two resolve
+  # the recipient from the job args instead of looking up a user.
   @impl Oban.Worker
+  def perform(%Oban.Job{args: %{"kind" => "issuer_invitation", "email" => email} = args}) do
+    case ArgsCrypto.decrypt(args["encrypted_token"] || "") do
+      {:ok, token} -> deliver(Emails.issuer_invitation(email, build_invitation_link(token)))
+      :error -> {:error, :decrypt_failed}
+    end
+  end
+
+  def perform(%Oban.Job{args: %{"kind" => "issuer_invitation_code", "email" => email} = args}) do
+    case ArgsCrypto.decrypt(args["encrypted_code"] || "") do
+      {:ok, code} -> deliver(Emails.issuer_invitation_code(email, code))
+      :error -> {:error, :decrypt_failed}
+    end
+  end
+
   def perform(%Oban.Job{args: %{"kind" => kind} = args}) do
     case Accounts.get_user(args["user_id"]) do
       nil ->
@@ -46,5 +62,17 @@ defmodule Sovra.Auth.MailerJob do
   defp build_reset_link(token) do
     base = Application.get_env(:sovra, :issuer_frontend_url, "http://localhost:5173")
     "#{base}/reset-password?token=#{token}"
+  end
+
+  defp build_invitation_link(token) do
+    base = Application.get_env(:sovra, :issuer_frontend_url, "http://localhost:5173")
+    "#{base}/accept-invitation?token=#{token}"
+  end
+
+  defp deliver(email) do
+    case Mailer.deliver(email) do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
   end
 end

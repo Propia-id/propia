@@ -37,6 +37,12 @@ defmodule SovraWeb.Router do
     plug SovraWeb.Plugs.RateLimitPlug, max_requests: 5, window_ms: 60_000
   end
 
+  # Looser than :auth_rate_limited, which is too tight here: entering the code
+  # can legitimately take a few tries before the right one lands.
+  pipeline :invitation_rate_limited do
+    plug SovraWeb.Plugs.RateLimitPlug, max_requests: 20, window_ms: 60_000
+  end
+
   pipeline :require_admin do
     plug SovraWeb.Plugs.RequireAdminPlug
   end
@@ -147,6 +153,25 @@ defmodule SovraWeb.Router do
     post "/refresh", AuthController, :refresh
     post "/password/reset-request", AuthController, :password_reset_request
     post "/password/reset", AuthController, :password_reset_confirm
+  end
+
+  # Redeeming an invitation. Public: the token in the body is the authorization.
+  # Self-service registration is closed, so this is the way in.
+  scope "/dashboard/auth/invitations", SovraWeb.Invitations do
+    pipe_through [:api, :invitation_rate_limited, :auth_origin_check]
+
+    post "/lookup", InvitationController, :lookup
+    post "/request-code", InvitationController, :request_code
+    post "/accept", InvitationController, :accept
+  end
+
+  # Issuing invitations. Authorizing a new issuer is Sovra's call.
+  scope "/dashboard/invitations", SovraWeb.Invitations do
+    pipe_through [:api, :user_session, :require_admin]
+
+    post "/", AdminInvitationController, :create
+    get "/", AdminInvitationController, :index
+    delete "/:id", AdminInvitationController, :revoke
   end
 
   # Issuer admin

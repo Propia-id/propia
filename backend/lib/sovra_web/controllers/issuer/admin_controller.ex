@@ -377,14 +377,7 @@ defmodule SovraWeb.Issuer.AdminController do
   end
 
   def list_issuers(conn, _params) do
-    workspaces = Workspaces.list_workspaces()
-
-    json(conn, %{
-      issuers:
-        Enum.map(workspaces, fn w ->
-          %{id: w.id, name: w.name, did: w.did, status: w.status, email: w.email}
-        end)
-    })
+    json(conn, %{issuers: Workspaces.list_workspaces()})
   end
 
   def get_issuer(conn, _params) do

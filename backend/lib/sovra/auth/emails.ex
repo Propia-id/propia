@@ -56,6 +56,36 @@ defmodule Sovra.Auth.Emails do
     |> text_body(password_changed_text(full_name, console_url()))
   end
 
+  def issuer_invitation(email_address, invitation_link) do
+    new()
+    |> to(email_address)
+    |> from(@from)
+    |> subject("You're invited to issue credentials on Sovra")
+    |> html_body(
+      shell(
+        "You've been invited to create a Sovra issuer account. Link expires in 48 hours.",
+        issuer_invitation_body(email_address, invitation_link)
+      )
+    )
+    |> text_body(issuer_invitation_text(email_address, invitation_link))
+  end
+
+  def issuer_invitation_code(email_address, code) do
+    new()
+    |> to(email_address)
+    |> from(@from)
+    |> subject("Your Sovra confirmation code")
+    # Not the code itself: the preheader shows up in lock-screen notifications,
+    # and reading it there would defeat the point of confirming the mailbox.
+    |> html_body(
+      shell(
+        "Your Sovra confirmation code expires in 15 minutes.",
+        issuer_invitation_code_body(code)
+      )
+    )
+    |> text_body(issuer_invitation_code_text(code))
+  end
+
   # ── Bodies ──────────────────────────────────────────────────
 
   defp welcome_body(full_name, workspace_name, console_url) do
@@ -131,6 +161,52 @@ defmodule Sovra.Auth.Emails do
     """
   end
 
+  defp issuer_invitation_body(email_address, invitation_link) do
+    addr = escape(email_address)
+
+    """
+    #{eyebrow("blue", "Invitation · Issuer console")}
+
+    #{headline("You're invited to Sovra", nil)}
+
+    #{body_paragraph("<strong style=\"color:#ffffff\">#{addr}</strong> has been authorized to create an issuer organization on Sovra. Follow the link to choose a password and name your organization.")}
+
+    #{cta_row(button(invitation_link, "Accept invitation"))}
+
+    <div style="font-size:13px;color:#888888;margin-top:12px;font-family:Arial,Helvetica,sans-serif;">
+      Link expires in 48 hours.
+    </div>
+
+    #{fallback_link(invitation_link)}
+
+    #{divider()}
+
+    #{callout("purple", "One more step after the form", "We'll email a short confirmation code to this same address. You'll need it to finish, so a forwarded invitation is not enough for someone else to claim the account.")}
+    """
+  end
+
+  defp issuer_invitation_code_body(code) do
+    """
+    #{eyebrow("blue", "Confirmation code · Issuer console")}
+
+    #{headline("Your confirmation code", nil)}
+
+    #{body_paragraph("Enter this code to finish creating your Sovra issuer account.")}
+
+    <div style="font-family:'SFMono-Regular',Consolas,monospace;font-size:34px;font-weight:700;letter-spacing:0.28em;color:#ffffff;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:18px 0;text-align:center;margin:0 0 12px;">
+      #{escape(code)}
+    </div>
+
+    <div style="font-size:13px;color:#888888;margin-bottom:8px;font-family:Arial,Helvetica,sans-serif;">
+      Code expires in 15 minutes.
+    </div>
+
+    #{divider()}
+
+    #{callout("danger", "Didn't start this?", "Someone entered this address on the Sovra sign-up form. No account is created without this code, so ignore this email and contact <span style=\"color:#ffffff\">security@sovra.io</span>.")}
+    """
+  end
+
   # ── Text fallbacks ──────────────────────────────────────────
 
   defp welcome_text(full_name, workspace_name, console_url) do
@@ -191,6 +267,45 @@ defmodule Sovra.Auth.Emails do
     Wasn't you? Reset your password again from the sign-in page and contact
     security@sovra.io. All previous sessions on your account have already
     been revoked.
+
+    — Sovra
+    """
+  end
+
+  defp issuer_invitation_text(email_address, invitation_link) do
+    """
+    Hi,
+
+    #{email_address} has been authorized to create an issuer organization on
+    Sovra. Open the link below to choose a password and name your organization:
+
+    #{invitation_link}
+
+    Link expires in 48 hours.
+
+    After the form we'll email a short confirmation code to this same address.
+    You'll need it to finish, so a forwarded invitation is not enough for
+    someone else to claim the account.
+
+    Didn't expect this? Ignore this email and contact security@sovra.io.
+
+    — Sovra
+    """
+  end
+
+  defp issuer_invitation_code_text(code) do
+    """
+    Hi,
+
+    Your Sovra confirmation code is:
+
+      #{code}
+
+    Enter it to finish creating your issuer account. The code expires in 15
+    minutes.
+
+    Didn't start this? No account is created without this code, so ignore this
+    email and contact security@sovra.io.
 
     — Sovra
     """
