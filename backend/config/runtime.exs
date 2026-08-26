@@ -69,6 +69,23 @@ case env.("REGISTRATION_ENABLED") do
   _ -> :ok
 end
 
+# --- New Relic (both roles) ------------------------------------------------
+# `:direct` adds a `:logger` primary filter that reports each event and returns
+# `:ignore` — which in Erlang's logger means "no opinion", not "drop" — so the
+# event still reaches the default handler and normal logging is unaffected.
+# Dormant unless both vars are set; app_name is what separates environments.
+newrelic_app_name = env.("NEW_RELIC_APP_NAME")
+newrelic_license_key = env.("NEW_RELIC_LICENSE_KEY")
+
+if newrelic_app_name && newrelic_license_key do
+  config :new_relic_agent,
+    app_name: newrelic_app_name,
+    license_key: newrelic_license_key,
+    # Bound the connect so an outage can't stall the harvester.
+    httpc_request_options: [connect_timeout: 5000],
+    logs_in_context: :direct
+end
+
 # One release, two roles (see Sovra.Application). SERVICE=signer boots the KMS
 # signer service (no DB / endpoint); anything else is a full API node.
 service = System.get_env("SERVICE", "api")

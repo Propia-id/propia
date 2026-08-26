@@ -81,7 +81,11 @@ defmodule Sovra.MixProject do
       {:swoosh, "~> 1.16"},
       # QR codes for the server-rendered document page.
       {:eqrcode, "~> 0.2"},
-      {:phoenix_swoosh, "~> 1.2"}
+      {:phoenix_swoosh, "~> 1.2"},
+
+      # Ships logs (and APM data) to New Relic from within the app. Dormant
+      # unless NEW_RELIC_APP_NAME + NEW_RELIC_LICENSE_KEY are set (runtime.exs).
+      {:new_relic_agent, "~> 1.41"}
     ]
   end
 

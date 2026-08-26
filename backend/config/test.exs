@@ -81,6 +81,13 @@ config :bcrypt_elixir, log_rounds: 4
 # Print only warnings and errors during test
 config :logger, level: :warning
 
+# Never report from the suite, even if NEW_RELIC_* is exported in a shell.
+config :new_relic_agent, harvest_enabled: false
+
+# :os_mon rides in as an optional dep of the agent and its port programs log on
+# VM shutdown. Test-only: the agent does sample memsup/cpu_sup when enabled.
+config :os_mon, start_memsup: false, start_cpu_sup: false
+
 # Initialize plugs at runtime for faster test compilation
 config :phoenix, :plug_init_mode, :runtime
 

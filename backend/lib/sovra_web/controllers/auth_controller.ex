@@ -263,6 +263,8 @@ defmodule SovraWeb.AuthController do
         workspaces = Workspaces.list_workspaces_for_user(user.id)
         current_workspace_id = workspaces |> List.first() |> get_in([Access.key(:id)])
 
+        Logger.info("[Auth] login ok user_id=#{user.id} workspace=#{current_workspace_id}")
+
         conn
         |> set_auth_cookies(user, current_workspace_id)
         |> json(%{
@@ -272,6 +274,8 @@ defmodule SovraWeb.AuthController do
         })
 
       {:error, :invalid_credentials} ->
+        # No email here: these logs leave the host for New Relic.
+        Logger.info("[Auth] login failed reason=invalid_credentials")
         conn |> put_status(401) |> json(%{error: "invalid_credentials"})
     end
   end

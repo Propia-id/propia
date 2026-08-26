@@ -39,6 +39,7 @@ broadcast/
 *.log
 *.swp
 *~
+.idea
 
 # Nix
 .direnv/
