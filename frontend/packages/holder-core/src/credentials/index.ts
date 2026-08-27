@@ -1,5 +1,9 @@
 import type { SecureStorage } from "../platform/index";
-import type { StoredCredential, CredentialStore } from "../state/index";
+import type {
+  StoredCredential,
+  CredentialStore,
+  CredentialDisplayMetadata,
+} from "../state/index";
 import { credentialKey } from "../state/index";
 import { sha256, base64urlDecode, base64urlEncode } from "../utils/index";
 
@@ -21,6 +25,7 @@ export interface ParsedCredential {
 export interface IssuerInfo {
   issuerDid: string;
   issuerName: string;
+  display?: CredentialDisplayMetadata;
 }
 
 // ─── Credential Manager ──────────────────────────────
@@ -120,6 +125,7 @@ export class CredentialManager {
       issuedAt: (parsed.payload.iat as number) ?? Date.now() / 1000,
       expiresAt: (parsed.payload.exp as number) ?? 0,
       claims: parsed.claims,
+      ...(issuerInfo.display ? { display: issuerInfo.display } : {}),
     };
 
     // Add to in-memory store and persist under the active wallet's namespace.

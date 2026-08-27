@@ -3,6 +3,22 @@ import type { SecureStorage } from "../platform/index";
 
 // ─── Credential Store ─────────────────────────────────
 
+/**
+ * The issuer's card design, from its OID4VCI `display` entry at issuance.
+ *
+ * Text fields only. `display` also carries `logo`/`background_image`, but an
+ * issuer may inline those as `data:` URIs hundreds of kilobytes long, and this
+ * is persisted into the credential index in the platform secure store — sized
+ * for key material, not images.
+ */
+export interface CredentialDisplayMetadata {
+  name?: string;
+  locale?: string;
+  description?: string;
+  backgroundColor?: string;
+  textColor?: string;
+}
+
 export interface StoredCredential {
   id: string;
   sdJwt: string;
@@ -12,6 +28,8 @@ export interface StoredCredential {
   issuedAt: number;
   expiresAt: number;
   claims: Record<string, unknown>;
+  /** Absent pre-capture and on issuers publishing no `display` — always have a fallback. */
+  display?: CredentialDisplayMetadata;
 }
 
 export interface CredentialState {

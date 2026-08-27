@@ -8,6 +8,22 @@ export interface TokenResponse {
   expires_in: number;
 }
 
+export interface DisplayImage {
+  uri: string;
+  alt_text?: string;
+}
+
+/** One `display` entry (OID4VCI 1.0 §11.2.3). Issuers may publish one per locale. */
+export interface CredentialDisplay {
+  name: string;
+  locale?: string;
+  description?: string;
+  logo?: DisplayImage;
+  background_color?: string;
+  text_color?: string;
+  background_image?: DisplayImage;
+}
+
 export interface IssuerMetadata {
   credential_issuer: string;
   credential_endpoint: string;
@@ -20,10 +36,10 @@ export interface IssuerMetadata {
         type: string[];
         credentialSubject?: Record<string, unknown>;
       };
-      display?: Array<{ name: string; locale?: string }>;
+      display?: CredentialDisplay[];
     }
   >;
-  display?: Array<{ name: string; locale?: string }>;
+  display?: CredentialDisplay[];
 }
 
 export interface AuthServerMetadata {

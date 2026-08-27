@@ -14,11 +14,17 @@ export type {
   TokenResponse,
   IssuerMetadata,
   AuthServerMetadata,
+  CredentialDisplay,
+  DisplayImage,
 } from "./api/index";
 
 // State stores
 export { createCredentialStore } from "./state/index";
-export type { CredentialStore, StoredCredential } from "./state/index";
+export type {
+  CredentialStore,
+  StoredCredential,
+  CredentialDisplayMetadata,
+} from "./state/index";
 export { createApprovalStore } from "./state/approval-store";
 export type { ApprovalStore } from "./state/approval-store";
 
@@ -27,7 +33,12 @@ export { CredentialManager } from "./credentials/index";
 export type { ParsedCredential, IssuerInfo } from "./credentials/index";
 
 // Protocol flows
-export { IssuanceProtocol, PresentationProtocol } from "./protocols/index";
+export {
+  IssuanceProtocol,
+  PresentationProtocol,
+  pickCredentialDisplay,
+  toStoredDisplay,
+} from "./protocols/index";
 export type {
   CredentialOffer,
   DCQLQuery,

@@ -1,6 +1,6 @@
-import type { ApiClient, IssuerMetadata } from "../api/index";
+import type { ApiClient, IssuerMetadata, CredentialDisplay } from "../api/index";
 import type { CredentialManager } from "../credentials/index";
-import type { StoredCredential } from "../state/index";
+import type { StoredCredential, CredentialDisplayMetadata } from "../state/index";
 import {
   base64urlEncode,
   sha256,
@@ -65,6 +65,49 @@ export interface ApprovalData {
   sharedClaims: string[];
   withheldClaims: string[];
   credential: StoredCredential;
+  /** What the verifier asked for; re-derive against it when the holder switches. */
+  requestedClaims: string[];
+  /** Every credential the request accepts, `credential` among them. */
+  matches: StoredCredential[];
+}
+
+// ─── Issuer display metadata ──────────────────────────
+
+/** Exact locale match, then same language, then the first entry. */
+export function pickCredentialDisplay(
+  display: CredentialDisplay[] | undefined,
+  preferredLocale?: string,
+): CredentialDisplay | undefined {
+  if (!display || display.length === 0) return undefined;
+
+  if (preferredLocale) {
+    const wanted = preferredLocale.toLowerCase();
+    const language = wanted.split("-")[0];
+    const exact = display.find((d) => d.locale?.toLowerCase() === wanted);
+    if (exact) return exact;
+    const sameLanguage = display.find(
+      (d) => d.locale?.toLowerCase().split("-")[0] === language,
+    );
+    if (sameLanguage) return sameLanguage;
+  }
+
+  return display[0];
+}
+
+/** Narrow to the persisted fields; `logo`/`background_image` are dropped on purpose. */
+export function toStoredDisplay(
+  display: CredentialDisplay | undefined,
+): CredentialDisplayMetadata | undefined {
+  if (!display) return undefined;
+
+  const stored: CredentialDisplayMetadata = {};
+  if (display.name) stored.name = display.name;
+  if (display.locale) stored.locale = display.locale;
+  if (display.description) stored.description = display.description;
+  if (display.background_color) stored.backgroundColor = display.background_color;
+  if (display.text_color) stored.textColor = display.text_color;
+
+  return Object.keys(stored).length > 0 ? stored : undefined;
 }
 
 // ─── OID4VCI Protocol ─────────────────────────────────
@@ -102,6 +145,7 @@ export class IssuanceProtocol {
   async executeIssuance(
     offer: CredentialOffer,
     txCode?: string,
+    preferredLocale?: string,
   ): Promise<StoredCredential> {
     const identity = this.getIdentity();
 
@@ -147,13 +191,22 @@ export class IssuanceProtocol {
 
     // 6. Extract issuer info from metadata
     const issuerName =
-      metadata.display?.[0]?.name ?? offer.credential_issuer;
+      pickCredentialDisplay(metadata.display, preferredLocale)?.name ??
+      offer.credential_issuer;
     const issuerDid = `did:sovra:${new URL(offer.credential_issuer).hostname}`;
+
+    const display = toStoredDisplay(
+      pickCredentialDisplay(
+        metadata.credential_configurations_supported?.[credConfigId]?.display,
+        preferredLocale,
+      ),
+    );
 
     // 7. Store credential
     return this.credentialManager.storeCredential(sdJwtString, {
       issuerDid,
       issuerName,
+      display,
     });
   }
 
@@ -268,25 +321,35 @@ export class PresentationProtocol {
     };
   }
 
-  /** Find a matching credential for the verifier's DCQL query. */
-  findMatchingCredential(
+  /** Every credential the query accepts, in wallet order — the holder picks. */
+  findMatchingCredentials(
     query: DCQLQuery,
     credentials: StoredCredential[],
-  ): { credential: StoredCredential; requestedClaims: string[] } | null {
+  ): { credentials: StoredCredential[]; requestedClaims: string[] } | null {
     for (const queryCredential of query.credentials) {
       const vctValues = queryCredential.meta?.vct_values ?? [];
       const requestedClaims =
         queryCredential.claims?.map((c) => c.path[c.path.length - 1]) ?? [];
 
-      for (const cred of credentials) {
-        const matches =
-          vctValues.length === 0 || vctValues.includes(cred.credentialType);
-        if (matches) {
-          return { credential: cred, requestedClaims };
-        }
+      const matches = credentials.filter(
+        (cred) =>
+          vctValues.length === 0 || vctValues.includes(cred.credentialType),
+      );
+      if (matches.length > 0) {
+        return { credentials: matches, requestedClaims };
       }
     }
     return null;
+  }
+
+  /** First match only, for callers that cannot offer a choice. */
+  findMatchingCredential(
+    query: DCQLQuery,
+    credentials: StoredCredential[],
+  ): { credential: StoredCredential; requestedClaims: string[] } | null {
+    const match = this.findMatchingCredentials(query, credentials);
+    if (!match) return null;
+    return { credential: match.credentials[0], requestedClaims: match.requestedClaims };
   }
 
   /** Build data for the approval screen. */
@@ -294,6 +357,7 @@ export class PresentationProtocol {
     request: VPRequest,
     credential: StoredCredential,
     requestedClaims: string[],
+    matches: StoredCredential[] = [credential],
   ): ApprovalData {
     const allClaims = Object.keys(credential.claims).filter(
       (k) => !k.startsWith("_") && k !== "iss" && k !== "sub" && k !== "iat" && k !== "exp" && k !== "vct" && k !== "cnf" && k !== "credentialStatus",
@@ -305,6 +369,8 @@ export class PresentationProtocol {
       sharedClaims: requestedClaims.filter((c) => allClaims.includes(c)),
       withheldClaims: allClaims.filter((c) => !requestedClaims.includes(c)),
       credential,
+      requestedClaims,
+      matches,
     };
   }
 
