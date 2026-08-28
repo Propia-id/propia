@@ -24,6 +24,34 @@ export interface CredentialDisplay {
   background_image?: DisplayImage;
 }
 
+/** One `display` entry for a single claim (OID4VCI 1.0 Appendix B.2). */
+export interface ClaimDisplay {
+  name: string;
+  locale?: string;
+}
+
+/**
+ * A claims description object (OID4VCI 1.0 Appendix B.2). `path` is a claims
+ * path pointer: a segment per level, so a Sovra credential's flat claims are
+ * always a single-element path.
+ */
+export interface ClaimDescription {
+  path: (string | number | null)[];
+  mandatory?: boolean;
+  display?: ClaimDisplay[];
+}
+
+/**
+ * A configuration's presentation data (OID4VCI 1.0 §12.2.4). Draft 13 had
+ * `display` at the top of the configuration object and `claims` as an object
+ * keyed by claim name; 1.0 nests both here and makes `claims` an array keyed
+ * by `path`. Only the 1.0 position is read.
+ */
+export interface CredentialMetadata {
+  display?: CredentialDisplay[];
+  claims?: ClaimDescription[];
+}
+
 export interface IssuerMetadata {
   credential_issuer: string;
   credential_endpoint: string;
@@ -34,9 +62,8 @@ export interface IssuerMetadata {
       format: string;
       credential_definition: {
         type: string[];
-        credentialSubject?: Record<string, unknown>;
       };
-      display?: CredentialDisplay[];
+      credential_metadata?: CredentialMetadata;
     }
   >;
   display?: CredentialDisplay[];

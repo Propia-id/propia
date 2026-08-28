@@ -7,8 +7,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { pickCredentialDisplay, toStoredDisplay } from "../src/protocols";
-import type { CredentialDisplay } from "../src/api";
+import { pickCredentialDisplay, pickClaimLabels, toStoredDisplay } from "../src/protocols";
+import type { CredentialDisplay, ClaimDescription } from "../src/api";
 
 const EN: CredentialDisplay = {
   name: "Employee Badge",
@@ -94,5 +94,83 @@ describe("toStoredDisplay", () => {
       background_image: { uri: "data:image/png;base64,BBBB" },
     });
     expect(JSON.stringify(stored)).not.toContain("data:image");
+  });
+});
+
+/**
+ * The same contract for claim labels: the backend publishes one claims
+ * description per schema claim (Sovra.Issuer.OID4VCI.claims_for/1) and the
+ * wallet labels rows from whatever is captured here. Dropping it is invisible
+ * too — the row still renders, just under a key-derived label instead of the
+ * issuer's own wording.
+ */
+describe("pickClaimLabels", () => {
+  const labelled: ClaimDescription[] = [
+    {
+      path: ["fullName"],
+      mandatory: true,
+      display: [
+        { name: "Full name", locale: "en-US" },
+        { name: "Nombre completo", locale: "es-AR" },
+      ],
+    },
+    { path: ["age"], display: [{ name: "Age", locale: "en-US" }] },
+  ];
+
+  it("returns undefined when the issuer describes no claims", () => {
+    expect(pickClaimLabels(undefined)).toBeUndefined();
+    expect(pickClaimLabels([])).toBeUndefined();
+  });
+
+  it("maps each single-segment path onto its label", () => {
+    expect(pickClaimLabels(labelled)).toEqual({ fullName: "Full name", age: "Age" });
+  });
+
+  it("resolves each claim's label in the preferred locale", () => {
+    expect(pickClaimLabels(labelled, "es-AR")).toEqual({
+      fullName: "Nombre completo",
+      // Only an en-US entry exists, so it falls back rather than dropping the row.
+      age: "Age",
+    });
+  });
+
+  it("matches on language when no region matches", () => {
+    expect(pickClaimLabels(labelled, "es")?.fullName).toBe("Nombre completo");
+  });
+
+  it("skips a claim described without any display", () => {
+    expect(pickClaimLabels([{ path: ["age"], mandatory: true }])).toBeUndefined();
+  });
+
+  it("skips a blank label so the wallet derives one instead", () => {
+    expect(pickClaimLabels([{ path: ["age"], display: [{ name: "   " }] }])).toBeUndefined();
+  });
+
+  it("trims surrounding whitespace off a label", () => {
+    expect(pickClaimLabels([{ path: ["age"], display: [{ name: "  Age  " }] }])).toEqual({
+      age: "Age",
+    });
+  });
+
+  it("ignores pointers into nested structures — stored claims are flat", () => {
+    const nested: ClaimDescription[] = [
+      { path: ["address", "city"], display: [{ name: "City" }] },
+      { path: ["degrees", 0], display: [{ name: "First degree" }] },
+      { path: [null], display: [{ name: "Every element" }] },
+    ];
+    expect(pickClaimLabels(nested)).toBeUndefined();
+  });
+
+  it("ignores an empty path segment", () => {
+    expect(pickClaimLabels([{ path: [""], display: [{ name: "Nameless" }] }])).toBeUndefined();
+  });
+
+  it("keeps the labels it can resolve when a sibling is unusable", () => {
+    expect(
+      pickClaimLabels([
+        { path: ["address", "city"], display: [{ name: "City" }] },
+        { path: ["age"], display: [{ name: "Age" }] },
+      ]),
+    ).toEqual({ age: "Age" });
   });
 });

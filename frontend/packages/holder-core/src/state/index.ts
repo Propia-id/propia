@@ -30,6 +30,15 @@ export interface StoredCredential {
   claims: Record<string, unknown>;
   /** Absent pre-capture and on issuers publishing no `display` — always have a fallback. */
   display?: CredentialDisplayMetadata;
+  /**
+   * Claim key → the issuer's own label, from the OID4VCI claims descriptions
+   * at issuance. Captured here rather than re-fetched so a card still renders
+   * the issuer's wording offline, and so credentials stored before this
+   * existed keep working on the derived label.
+   *
+   * Sparse: only claims the issuer actually labelled appear.
+   */
+  claimLabels?: Record<string, string>;
 }
 
 export interface CredentialState {

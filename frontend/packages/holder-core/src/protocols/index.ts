@@ -1,4 +1,9 @@
-import type { ApiClient, IssuerMetadata, CredentialDisplay } from "../api/index";
+import type {
+  ApiClient,
+  IssuerMetadata,
+  CredentialDisplay,
+  ClaimDescription,
+} from "../api/index";
 import type { CredentialManager } from "../credentials/index";
 import type { StoredCredential, CredentialDisplayMetadata } from "../state/index";
 import {
@@ -74,24 +79,59 @@ export interface ApprovalData {
 // ─── Issuer display metadata ──────────────────────────
 
 /** Exact locale match, then same language, then the first entry. */
-export function pickCredentialDisplay(
-  display: CredentialDisplay[] | undefined,
+function pickByLocale<T extends { locale?: string }>(
+  entries: T[] | undefined,
   preferredLocale?: string,
-): CredentialDisplay | undefined {
-  if (!display || display.length === 0) return undefined;
+): T | undefined {
+  if (!entries || entries.length === 0) return undefined;
 
   if (preferredLocale) {
     const wanted = preferredLocale.toLowerCase();
     const language = wanted.split("-")[0];
-    const exact = display.find((d) => d.locale?.toLowerCase() === wanted);
+    const exact = entries.find((e) => e.locale?.toLowerCase() === wanted);
     if (exact) return exact;
-    const sameLanguage = display.find(
-      (d) => d.locale?.toLowerCase().split("-")[0] === language,
+    const sameLanguage = entries.find(
+      (e) => e.locale?.toLowerCase().split("-")[0] === language,
     );
     if (sameLanguage) return sameLanguage;
   }
 
-  return display[0];
+  return entries[0];
+}
+
+/** Exact locale match, then same language, then the first entry. */
+export function pickCredentialDisplay(
+  display: CredentialDisplay[] | undefined,
+  preferredLocale?: string,
+): CredentialDisplay | undefined {
+  return pickByLocale(display, preferredLocale);
+}
+
+/**
+ * Claim key → the issuer's label, from the configuration's claims descriptions
+ * (OID4VCI 1.0 Appendix B.2). Locale resolution matches the card's.
+ *
+ * Only single-segment paths map to a key: the wallet stores flat claims, so a
+ * pointer into a nested structure has nothing to attach a label to. Claims
+ * described without a `display` are skipped so the wallet keeps deriving a
+ * label from the key rather than showing nothing.
+ */
+export function pickClaimLabels(
+  claims: ClaimDescription[] | undefined,
+  preferredLocale?: string,
+): Record<string, string> | undefined {
+  if (!claims || claims.length === 0) return undefined;
+
+  const labels: Record<string, string> = {};
+  for (const claim of claims) {
+    if (claim.path?.length !== 1) continue;
+    const key = claim.path[0];
+    if (typeof key !== "string" || !key) continue;
+    const name = pickByLocale(claim.display, preferredLocale)?.name?.trim();
+    if (name) labels[key] = name;
+  }
+
+  return Object.keys(labels).length > 0 ? labels : undefined;
 }
 
 /** Narrow to the persisted fields; `logo`/`background_image` are dropped on purpose. */
@@ -195,18 +235,19 @@ export class IssuanceProtocol {
       offer.credential_issuer;
     const issuerDid = `did:sovra:${new URL(offer.credential_issuer).hostname}`;
 
+    const credentialMetadata =
+      metadata.credential_configurations_supported?.[credConfigId]?.credential_metadata;
     const display = toStoredDisplay(
-      pickCredentialDisplay(
-        metadata.credential_configurations_supported?.[credConfigId]?.display,
-        preferredLocale,
-      ),
+      pickCredentialDisplay(credentialMetadata?.display, preferredLocale),
     );
+    const claimLabels = pickClaimLabels(credentialMetadata?.claims, preferredLocale);
 
     // 7. Store credential
     return this.credentialManager.storeCredential(sdJwtString, {
       issuerDid,
       issuerName,
       display,
+      claimLabels,
     });
   }
 

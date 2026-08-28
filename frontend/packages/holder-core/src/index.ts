@@ -15,6 +15,9 @@ export type {
   IssuerMetadata,
   AuthServerMetadata,
   CredentialDisplay,
+  CredentialMetadata,
+  ClaimDescription,
+  ClaimDisplay,
   DisplayImage,
 } from "./api/index";
 
@@ -37,6 +40,7 @@ export {
   IssuanceProtocol,
   PresentationProtocol,
   pickCredentialDisplay,
+  pickClaimLabels,
   toStoredDisplay,
 } from "./protocols/index";
 export type {

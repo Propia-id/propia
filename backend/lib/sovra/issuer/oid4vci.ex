@@ -7,6 +7,11 @@ defmodule Sovra.Issuer.OID4VCI do
   alias Sovra.Issuer.ClaimUtils
   alias Sovra.Repo
 
+  # Every display string we publish is authored in one language today, so the
+  # locale is fixed rather than plumbed through. Wallets resolve exact tag,
+  # then language, then first entry.
+  @locale "en-US"
+
   def build_metadata(workspace, schemas, designs \\ []) do
     base_url = ClaimUtils.base_url()
     workspace = Repo.preload(workspace, :organization)
@@ -21,7 +26,8 @@ defmodule Sovra.Issuer.OID4VCI do
            "credential_definition" => %{
              "type" => ["VerifiableCredential", schema.credential_type]
            },
-           "display" => display_for(schema, workspace, Map.get(designs_by_schema_id, schema.id))
+           "credential_metadata" =>
+             credential_metadata(schema, workspace, Map.get(designs_by_schema_id, schema.id))
          }}
       end)
 
@@ -48,6 +54,46 @@ defmodule Sovra.Issuer.OID4VCI do
 
   defp display_entry(workspace), do: %{"name" => workspace.name}
 
+  # OID4VCI 1.0 §12.2.4: a configuration's presentation data — the card face
+  # (`display`) and the per-claim labels (`claims`) — is nested under
+  # `credential_metadata`. Both sat at the top of the configuration object in
+  # draft 13; wallets read the 1.0 position only.
+  defp credential_metadata(schema, workspace, design) do
+    %{"display" => display_for(schema, workspace, design)}
+    |> maybe_put("claims", claims_for(schema))
+  end
+
+  # OID4VCI 1.0 Appendix B.2 — one claims description object per schema claim.
+  # `path` is a claims path pointer; our claims are flat, so every pointer is a
+  # single segment. Claims the issuer never labelled are still described (the
+  # wallet wants `mandatory`), just without a `display` for the wallet to
+  # override its own derived label with.
+  defp claims_for(schema) do
+    case schema.claims |> ClaimUtils.parse_claim_defs() |> Enum.flat_map(&claim_description/1) do
+      [] -> nil
+      descriptions -> descriptions
+    end
+  end
+
+  defp claim_description(%{"key" => key} = claim) when is_binary(key) and key != "" do
+    [
+      %{"path" => [key]}
+      |> maybe_put("mandatory", if(claim["required"] == true, do: true))
+      |> maybe_put("display", claim_display(claim["label"]))
+    ]
+  end
+
+  defp claim_description(_), do: []
+
+  defp claim_display(label) when is_binary(label) do
+    case String.trim(label) do
+      "" -> nil
+      trimmed -> [%{"name" => trimmed, "locale" => @locale}]
+    end
+  end
+
+  defp claim_display(_), do: nil
+
   defp display_for(schema, workspace, nil) do
     [credential_display(schema, workspace)]
   end
@@ -58,7 +104,7 @@ defmodule Sovra.Issuer.OID4VCI do
     [
       %{
         "name" => title_text || design.name || schema.name,
-        "locale" => "en-US",
+        "locale" => @locale,
         "description" => design.description,
         "logo" => image_ref(design.styles && design.styles.thumbnail),
         "background_color" => color(design.styles && design.styles.background),

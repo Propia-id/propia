@@ -26,6 +26,7 @@ export interface IssuerInfo {
   issuerDid: string;
   issuerName: string;
   display?: CredentialDisplayMetadata;
+  claimLabels?: Record<string, string>;
 }
 
 // ─── Credential Manager ──────────────────────────────
@@ -126,6 +127,7 @@ export class CredentialManager {
       expiresAt: (parsed.payload.exp as number) ?? 0,
       claims: parsed.claims,
       ...(issuerInfo.display ? { display: issuerInfo.display } : {}),
+      ...(issuerInfo.claimLabels ? { claimLabels: issuerInfo.claimLabels } : {}),
     };
 
     // Add to in-memory store and persist under the active wallet's namespace.

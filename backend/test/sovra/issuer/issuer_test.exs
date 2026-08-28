@@ -1170,7 +1170,7 @@ defmodule Sovra.IssuerTest do
       metadata = Sovra.Issuer.OID4VCI.build_metadata(issuer, [schema], [])
 
       config = metadata["credential_configurations_supported"][schema.credential_type]
-      assert config["display"] == [%{"name" => schema.name}]
+      assert config["credential_metadata"]["display"] == [%{"name" => schema.name}]
     end
 
     test "projects design styling into OID4VCI display" do
@@ -1192,7 +1192,9 @@ defmodule Sovra.IssuerTest do
       metadata = Sovra.Issuer.OID4VCI.build_metadata(issuer, [schema], [design])
 
       [display_obj] =
-        metadata["credential_configurations_supported"][schema.credential_type]["display"]
+        metadata["credential_configurations_supported"][schema.credential_type][
+          "credential_metadata"
+        ]["display"]
 
       assert display_obj["name"] == "The Title"
       assert display_obj["description"] == "A branded credential"
@@ -1217,7 +1219,10 @@ defmodule Sovra.IssuerTest do
 
       configs = metadata["credential_configurations_supported"]
       assert map_size(configs) == 1
-      assert configs[v2.credential_type]["display"] == [%{"name" => v2.name}]
+
+      assert configs[v2.credential_type]["credential_metadata"]["display"] == [
+               %{"name" => v2.name}
+             ]
     end
   end
 end
