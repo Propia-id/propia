@@ -2,6 +2,8 @@ defmodule SovraWeb.Verifier.VerificationControllerTest do
   use SovraWeb.ConnCase, async: false
 
   alias Sovra.Organizations.Organization
+  alias Sovra.Verification
+  alias Sovra.Verification.Session
   alias Sovra.Workspaces.ApiKeys
   alias Sovra.Workspaces.Workspace
 
@@ -157,6 +159,83 @@ defmodule SovraWeb.Verifier.VerificationControllerTest do
       assert resp["holder_did"] == nil
       assert resp["presentation_data"] == nil
       assert resp["completed_at"] == nil
+    end
+
+    test "the authorization request URI is rebuilt identically", %{conn: conn} do
+      %{workspace: ws} = create_workspace()
+      {:ok, %{api_key: key}} = ApiKeys.create_api_key(ws.id, "Prod")
+
+      created =
+        conn
+        |> put_req_header("authorization", "Bearer #{key}")
+        |> post("/api/v1/verifier/verifications", %{"dcql_query" => dcql_query()})
+        |> json_response(201)
+
+      resp =
+        conn
+        |> put_req_header("authorization", "Bearer #{key}")
+        |> get("/api/v1/verifier/verifications/#{created["session_id"]}")
+        |> json_response(200)
+
+      assert resp["authorization_request_uri"] == created["authorization_request_uri"]
+    end
+
+    test "the authorization request URI is withheld once settled", %{conn: conn} do
+      %{workspace: ws} = create_workspace()
+      {:ok, %{api_key: key}} = ApiKeys.create_api_key(ws.id, "Prod")
+
+      session_id =
+        conn
+        |> put_req_header("authorization", "Bearer #{key}")
+        |> post("/api/v1/verifier/verifications", %{"dcql_query" => dcql_query()})
+        |> json_response(201)
+        |> Map.fetch!("session_id")
+
+      {:ok, session} = Verification.get_session(session_id)
+
+      {:ok, _} =
+        session
+        |> Session.fail_changeset(%{
+          error: "session_expired",
+          completed_at: DateTime.utc_now() |> DateTime.truncate(:second)
+        })
+        |> Sovra.Repo.update()
+
+      resp =
+        conn
+        |> put_req_header("authorization", "Bearer #{key}")
+        |> get("/api/v1/verifier/verifications/#{session_id}")
+        |> json_response(200)
+
+      assert resp["status"] == "failed"
+      assert resp["authorization_request_uri"] == nil
+    end
+
+    test "the authorization request URI is withheld past expiry", %{conn: conn} do
+      %{workspace: ws} = create_workspace()
+      {:ok, %{api_key: key}} = ApiKeys.create_api_key(ws.id, "Prod")
+
+      session_id =
+        conn
+        |> put_req_header("authorization", "Bearer #{key}")
+        |> post("/api/v1/verifier/verifications", %{"dcql_query" => dcql_query()})
+        |> json_response(201)
+        |> Map.fetch!("session_id")
+
+      {:ok, session} = Verification.get_session(session_id)
+      past = DateTime.utc_now() |> DateTime.add(-1, :second) |> DateTime.truncate(:second)
+      {:ok, _} = session |> Ecto.Changeset.change(expires_at: past) |> Sovra.Repo.update()
+
+      resp =
+        conn
+        |> put_req_header("authorization", "Bearer #{key}")
+        |> get("/api/v1/verifier/verifications/#{session_id}")
+        |> json_response(200)
+
+      # Still pending: the sweeper runs on a cron, so the serializer has to
+      # check the clock itself.
+      assert resp["status"] == "pending"
+      assert resp["authorization_request_uri"] == nil
     end
 
     test "404 cross-tenant lookup", %{conn: conn} do

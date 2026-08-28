@@ -130,14 +130,11 @@ defmodule Sovra.Verification do
         })
 
       with {:ok, session} <- Repo.insert(changeset) do
-        uri = build_authorization_request_uri(session, workspace)
-        uri_ref = build_authorization_request_uri_ref(session, workspace)
-
         {:ok,
          %{
            session: session,
-           authorization_request_uri: uri,
-           authorization_request_uri_ref: uri_ref
+           authorization_request_uri: build_authorization_request_uri(session),
+           authorization_request_uri_ref: build_authorization_request_uri_ref(session)
          }}
       end
     end
@@ -146,8 +143,13 @@ defmodule Sovra.Verification do
   defp validate_dcql(%{"credentials" => [_ | _]}), do: :ok
   defp validate_dcql(_), do: {:error, :invalid_dcql_query}
 
-  defp build_authorization_request_uri(session, workspace) do
-    params = URI.encode_query(build_request_params(session, workspace, json: true))
+  @doc """
+  Build the pass-by-value OID4VP URI for a session, every request parameter
+  inline. This is the form a wallet can scan: the short `request_uri` form is
+  not resolved on the holder side.
+  """
+  def build_authorization_request_uri(%Session{} = session) do
+    params = URI.encode_query(build_request_params(session, json: true))
     "openid4vp://?" <> params
   end
 
@@ -156,17 +158,17 @@ defmodule Sovra.Verification do
   returning as JSON from the pass-by-reference `request_uri` endpoint. The
   same fields are embedded inline in the pass-by-value URI form.
   """
-  def build_request_object(%Session{} = session, workspace) do
-    build_request_params(session, workspace, json: false)
+  def build_request_object(%Session{} = session) do
+    build_request_params(session, json: false)
   end
 
-  defp build_request_params(session, workspace, opts) do
+  defp build_request_params(session, opts) do
     base = ClaimUtils.base_url()
     response_uri = "#{base}/wallet/verifier/direct_post/#{session.id}"
     json_dcql? = Keyword.get(opts, :json, false)
 
     %{
-      "client_id" => "verifier:#{workspace.id}",
+      "client_id" => "verifier:#{session.workspace_id}",
       "response_type" => "vp_token",
       "response_mode" => "direct_post",
       "response_uri" => response_uri,
@@ -181,13 +183,13 @@ defmodule Sovra.Verification do
   Build the short-form OID4VP URI that points at this server's
   pass-by-reference request endpoint.
   """
-  def build_authorization_request_uri_ref(%Session{} = session, workspace) do
+  def build_authorization_request_uri_ref(%Session{} = session) do
     base = ClaimUtils.base_url()
     request_uri = "#{base}/wallet/verifier/request/#{session.id}"
 
     params =
       URI.encode_query(%{
-        "client_id" => "verifier:#{workspace.id}",
+        "client_id" => "verifier:#{session.workspace_id}",
         "request_uri" => request_uri
       })
 

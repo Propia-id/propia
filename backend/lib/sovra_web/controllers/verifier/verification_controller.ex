@@ -73,6 +73,14 @@ defmodule SovraWeb.Verifier.VerificationController do
       session_id: %OpenApiSpex.Schema{type: :string, format: :uuid},
       status: %OpenApiSpex.Schema{type: :string},
       dcql_query: %OpenApiSpex.Schema{type: :object},
+      authorization_request_uri: %OpenApiSpex.Schema{
+        type: :string,
+        nullable: true,
+        description:
+          "Pass-by-value URI, presentable as a QR code. Only set while the " <>
+            "session can still be presented against; null once it is settled " <>
+            "or past `expires_at`."
+      },
       holder_did: %OpenApiSpex.Schema{type: :string, nullable: true},
       presentation_data: %OpenApiSpex.Schema{type: :object, nullable: true},
       error: %OpenApiSpex.Schema{type: :string, nullable: true},
@@ -180,6 +188,7 @@ defmodule SovraWeb.Verifier.VerificationController do
       session_id: s.id,
       status: s.status,
       dcql_query: s.dcql_query,
+      authorization_request_uri: pending_request_uri(s),
       holder_did: s.holder_did,
       presentation_data: s.presentation_data,
       error: s.error,
@@ -188,6 +197,17 @@ defmodule SovraWeb.Verifier.VerificationController do
       inserted_at: DateTime.to_iso8601(s.inserted_at)
     }
   end
+
+  # Rebuilt from the stored session rather than persisted. Withheld once a
+  # presentation would be rejected, which includes a session still marked
+  # pending past its expiry — the sweeper that flips the status runs on a cron.
+  defp pending_request_uri(%{status: "pending"} = session) do
+    if DateTime.compare(DateTime.utc_now(), session.expires_at) == :lt do
+      Verification.build_authorization_request_uri(session)
+    end
+  end
+
+  defp pending_request_uri(_session), do: nil
 
   defp maybe_put(opts, _key, nil), do: opts
   defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)

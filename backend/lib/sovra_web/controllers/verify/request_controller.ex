@@ -3,7 +3,6 @@ defmodule SovraWeb.Verify.RequestController do
   use OpenApiSpex.ControllerSpecs
 
   alias Sovra.Verification
-  alias Sovra.Workspaces
 
   tags(["Verify"])
 
@@ -44,9 +43,8 @@ defmodule SovraWeb.Verify.RequestController do
 
   def show(conn, %{"session_id" => session_id}) do
     with {:ok, session} <- Verification.get_session(session_id),
-         false <- expired?(session),
-         {:ok, workspace} <- Workspaces.get_workspace(session.workspace_id) do
-      json(conn, Verification.build_request_object(session, workspace))
+         false <- expired?(session) do
+      json(conn, Verification.build_request_object(session))
     else
       _ ->
         conn |> put_status(404) |> json(%{error: "session_not_found"})
