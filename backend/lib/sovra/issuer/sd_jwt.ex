@@ -17,8 +17,6 @@ defmodule Sovra.Issuer.SDJWT do
   """
   def build(issuer, schema, claims, holder_did, opts \\ []) do
     now = System.system_time(:second)
-    validity_seconds = parse_validity_period(schema.validity_period)
-    exp = now + validity_seconds
 
     # Separate claims into disclosable vs non-disclosable based on schema
     claim_defs = ClaimUtils.parse_claim_defs(schema.claims)
@@ -40,12 +38,12 @@ defmodule Sovra.Issuer.SDJWT do
         "iss" => "#{ClaimUtils.base_url()}/#{issuer.did}",
         "sub" => holder_did,
         "iat" => now,
-        "exp" => exp,
         "vct" => schema.credential_type,
         "cnf" => %{"kid" => "#{holder_did}#2of2"},
         "_sd" => Enum.map(disclosures, & &1.digest),
         "_sd_alg" => "sha-256"
       }
+      |> maybe_add_expiry(schema, now)
       |> Map.merge(Map.new(non_disclosable_claims))
       |> maybe_add_credential_status(issuer, opts)
 
@@ -73,7 +71,6 @@ defmodule Sovra.Issuer.SDJWT do
   """
   def build_preview(issuer, schema, claims, opts \\ []) do
     iat = System.system_time(:second)
-    exp = iat + parse_validity_period(schema.validity_period)
 
     schema_keys =
       schema.claims
@@ -83,11 +80,19 @@ defmodule Sovra.Issuer.SDJWT do
     %{
       "iss" => "#{ClaimUtils.base_url()}/#{issuer.did}",
       "iat" => iat,
-      "exp" => exp,
       "vct" => schema.credential_type
     }
+    |> maybe_add_expiry(schema, iat)
     |> Map.merge(Map.take(claims, schema_keys))
     |> maybe_add_credential_status(issuer, opts)
+  end
+
+  # Omitted, never `"exp" => nil`: RFC 7519 requires a NumericDate when present.
+  defp maybe_add_expiry(payload, schema, iat) do
+    case parse_validity_period(schema.validity_period) do
+      nil -> payload
+      seconds -> Map.put(payload, "exp", iat + seconds)
+    end
   end
 
   defp maybe_add_credential_status(payload, issuer, opts) do
@@ -139,9 +144,13 @@ defmodule Sovra.Issuer.SDJWT do
 
   @doc """
   Parses a schema validity period (`"1y"`, `"6m"`, `"30d"`) into seconds.
-  Defaults to one year when unparseable. Public so the document issuance path
-  derives `exp` the same way credentials do.
+
+  `nil` in, `nil` out: no validity period, so no `exp`. An unparseable string
+  still falls back to one year. Public so the document issuance path derives
+  `exp` the same way credentials do.
   """
+  def parse_validity_period(nil), do: nil
+
   def parse_validity_period(period) do
     case Regex.run(~r/^(\d+)(y|m|d)$/, period) do
       [_, n, "y"] -> String.to_integer(n) * 365 * 86400

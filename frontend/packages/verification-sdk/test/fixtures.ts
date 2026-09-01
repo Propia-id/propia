@@ -104,6 +104,8 @@ export interface FixtureOptions {
   claims?: Record<string, unknown>;
   disclosableClaims?: Record<string, unknown>;
   exp?: number;
+  /** Omit `exp` entirely — SD-JWT VC makes it OPTIONAL. */
+  noExp?: boolean;
   iat?: number;
   nonce?: string;
   audience?: string;
@@ -170,7 +172,7 @@ export function buildPresentation(
     vct,
     cnf: { kid: `did:sovra:${holderAddress}#passkey` },
     iat,
-    exp,
+    ...(opts.noExp ? {} : { exp }),
     _sd: sdDigests,
     _sd_alg: "sha-256",
     ...nonDisclosableClaims,

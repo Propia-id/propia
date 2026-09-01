@@ -24,12 +24,25 @@ defmodule Sovra.Issuer.CredentialSchema do
     timestamps(type: :utc_datetime)
   end
 
-  @required ~w(schema_id issuer_id credential_type name claims validity_period)a
+  @required ~w(schema_id issuer_id credential_type name claims)a
+
+  # Optional, but validated whenever the key is given: parse_validity_period/1
+  # falls back to a year on anything it cannot read, so "1yr" would silently
+  # become a real date. Zero is rejected too — "0d" puts `exp` at issuance, dead
+  # on arrival.
+  @validity_period ~r/^[1-9]\d*(y|m|d)$/
 
   def create_changeset(record \\ %__MODULE__{}, attrs) do
     record
     |> cast(attrs, @required ++ [:version, :kind])
+    # Cast on its own with `empty_values: []` so a blank period reaches
+    # validate_format/3. Ecto's default treats "" — and any whitespace-only
+    # string — as empty and casts it to the field default, recording no change:
+    # validate_format/3 would never run and the schema would read as an explicit
+    # "no expiry", which is the one thing nil is not allowed to be guessed for.
+    |> cast(attrs, [:validity_period], empty_values: [])
     |> validate_required(@required)
+    |> validate_format(:validity_period, @validity_period)
     |> validate_inclusion(:kind, @kinds)
     |> unique_constraint([:issuer_id, :schema_id, :version])
   end

@@ -12,6 +12,12 @@ defmodule Sovra.Documents.Attestation do
   # Same media type the credential rail emits and the verification SDK checks.
   @header %{"alg" => "ES256", "typ" => "vc+sd-jwt"}
 
+  # The claims payload/4 sets itself, so a schema is not allowed to declare one.
+  # `exp` is listed even though the registered map omits it when the schema has
+  # no validity period: that absence is exactly what would let a declared `exp`
+  # through and put an expiry the issuer never configured into a signed payload.
+  @registered_claims ~w(iss vct jti iat exp)
+
   @doc """
   Signs an attestation over `claims`. `jti` is the document's id, so its identity
   is covered by the signature. Returns the JWS, the payload, and the sha-256 of
@@ -49,7 +55,7 @@ defmodule Sovra.Documents.Attestation do
     payload
     |> Base.url_decode64!(padding: false)
     |> Jason.decode!()
-    |> then(&ClaimUtils.take_declared_claims(schema, &1))
+    |> then(&declared_claims(schema, &1))
   end
 
   @doc """
@@ -61,19 +67,28 @@ defmodule Sovra.Documents.Attestation do
   """
   def payload(workspace, schema, claims, jti) do
     iat = System.system_time(:second)
-    exp = iat + SDJWT.parse_validity_period(schema.validity_period)
-    declared = ClaimUtils.take_declared_claims(schema, claims)
+    declared = declared_claims(schema, claims)
 
-    registered = %{
-      "iss" => "#{ClaimUtils.base_url()}/#{workspace.did}",
-      "vct" => schema.credential_type,
-      "jti" => jti,
-      "iat" => iat,
-      "exp" => exp
-    }
+    registered =
+      %{
+        "iss" => "#{ClaimUtils.base_url()}/#{workspace.did}",
+        "vct" => schema.credential_type,
+        "jti" => jti,
+        "iat" => iat
+      }
+      |> maybe_put_exp(SDJWT.parse_validity_period(schema.validity_period), iat)
 
     # Registered claims win: a schema declaring a claim named `iss` must not be
     # able to overwrite who issued the document.
     Map.merge(declared, registered)
   end
+
+  defp declared_claims(schema, claims) do
+    schema
+    |> ClaimUtils.take_declared_claims(claims)
+    |> Map.drop(@registered_claims)
+  end
+
+  defp maybe_put_exp(registered, nil, _iat), do: registered
+  defp maybe_put_exp(registered, seconds, iat), do: Map.put(registered, "exp", iat + seconds)
 end

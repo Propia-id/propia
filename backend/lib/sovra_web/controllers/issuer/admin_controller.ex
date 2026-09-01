@@ -87,13 +87,19 @@ defmodule SovraWeb.Issuer.AdminController do
       {"Schema params", "application/json",
        %OpenApiSpex.Schema{
          type: :object,
-         required: [:schema_id, :credential_type, :name, :claims],
+         required: [:schema_id, :credential_type, :name, :claims, :validity_period],
          properties: %{
            schema_id: %OpenApiSpex.Schema{type: :string},
            credential_type: %OpenApiSpex.Schema{type: :string},
            name: %OpenApiSpex.Schema{type: :string},
            claims: %OpenApiSpex.Schema{type: :array, items: %OpenApiSpex.Schema{type: :object}},
-           validity_period: %OpenApiSpex.Schema{type: :string, example: "1y"},
+           validity_period: %OpenApiSpex.Schema{
+             type: :string,
+             nullable: true,
+             example: "1y",
+             description:
+               "How long an issued credential stays valid, e.g. `1y`, `6m`, `30d`. Required — send `null` to issue credentials that never expire. A zero-length period is rejected."
+           },
            kind: %OpenApiSpex.Schema{
              type: :string,
              enum: ["credential", "document"],
@@ -116,7 +122,7 @@ defmodule SovraWeb.Issuer.AdminController do
              credential_type: %OpenApiSpex.Schema{type: :string},
              name: %OpenApiSpex.Schema{type: :string},
              claims: %OpenApiSpex.Schema{type: :array, items: %OpenApiSpex.Schema{type: :object}},
-             validity_period: %OpenApiSpex.Schema{type: :string}
+             validity_period: %OpenApiSpex.Schema{type: :string, nullable: true}
            }
          }},
       422 =>
@@ -153,7 +159,7 @@ defmodule SovraWeb.Issuer.AdminController do
                      type: :array,
                      items: %OpenApiSpex.Schema{type: :object}
                    },
-                   validity_period: %OpenApiSpex.Schema{type: :string},
+                   validity_period: %OpenApiSpex.Schema{type: :string, nullable: true},
                    version: %OpenApiSpex.Schema{type: :integer}
                  }
                }
@@ -174,11 +180,17 @@ defmodule SovraWeb.Issuer.AdminController do
       {"Schema revision params", "application/json",
        %OpenApiSpex.Schema{
          type: :object,
-         required: [:name, :claims, :base_version],
+         required: [:name, :claims, :base_version, :validity_period],
          properties: %{
            name: %OpenApiSpex.Schema{type: :string},
            claims: %OpenApiSpex.Schema{type: :array, items: %OpenApiSpex.Schema{type: :object}},
-           validity_period: %OpenApiSpex.Schema{type: :string, example: "1y"},
+           validity_period: %OpenApiSpex.Schema{
+             type: :string,
+             nullable: true,
+             example: "1y",
+             description:
+               "How long an issued credential stays valid, e.g. `1y`, `6m`, `30d`. Required — send `null` to issue credentials that never expire. A zero-length period is rejected."
+           },
            base_version: %OpenApiSpex.Schema{
              type: :integer,
              description:
@@ -197,7 +209,7 @@ defmodule SovraWeb.Issuer.AdminController do
              credential_type: %OpenApiSpex.Schema{type: :string},
              name: %OpenApiSpex.Schema{type: :string},
              claims: %OpenApiSpex.Schema{type: :array, items: %OpenApiSpex.Schema{type: :object}},
-             validity_period: %OpenApiSpex.Schema{type: :string},
+             validity_period: %OpenApiSpex.Schema{type: :string, nullable: true},
              version: %OpenApiSpex.Schema{type: :integer}
            }
          }},
@@ -290,7 +302,11 @@ defmodule SovraWeb.Issuer.AdminController do
       holder_did: %OpenApiSpex.Schema{type: :string},
       status: %OpenApiSpex.Schema{type: :string},
       issued_at: %OpenApiSpex.Schema{type: :string, format: :"date-time"},
-      expires_at: %OpenApiSpex.Schema{type: :string, format: :"date-time"},
+      expires_at: %OpenApiSpex.Schema{
+        type: :string,
+        format: :"date-time",
+        nullable: true
+      },
       schema: %OpenApiSpex.Schema{
         type: :object,
         properties: %{
@@ -399,6 +415,16 @@ defmodule SovraWeb.Issuer.AdminController do
   end
 
   def create_schema(conn, params) do
+    case fetch_validity_period(params) do
+      {:error, message} ->
+        validation_error(conn, :validity_period, message)
+
+      {:ok, validity_period} ->
+        do_create_schema(conn, params, validity_period)
+    end
+  end
+
+  defp do_create_schema(conn, params, validity_period) do
     workspace_id = conn.assigns.current_user.workspace_id
 
     attrs = %{
@@ -406,7 +432,7 @@ defmodule SovraWeb.Issuer.AdminController do
       credential_type: params["credential_type"],
       name: params["name"],
       claims: normalize_claims(params["claims"]),
-      validity_period: to_string(params["validity_period"] || "1y"),
+      validity_period: validity_period,
       kind: params["kind"] || "credential"
     }
 
@@ -546,53 +572,48 @@ defmodule SovraWeb.Issuer.AdminController do
   end
 
   def revise_schema(conn, %{"schema_id" => schema_id} = params) do
-    case parse_base_version(params["base_version"]) do
-      :error ->
-        conn
-        |> put_status(422)
-        |> json(%{
-          error: "validation_error",
-          details: %{base_version: ["must be a positive integer"]}
-        })
+    with {:ok, base_version} <- parse_base_version(params["base_version"]),
+         {:ok, validity_period} <- fetch_validity_period(params) do
+      workspace_id = conn.assigns.current_user.workspace_id
 
-      {:ok, base_version} ->
-        workspace_id = conn.assigns.current_user.workspace_id
+      attrs = %{
+        name: params["name"],
+        claims: normalize_claims(params["claims"]),
+        validity_period: validity_period
+      }
 
-        attrs = %{
-          name: params["name"],
-          claims: normalize_claims(params["claims"]),
-          validity_period: to_string(params["validity_period"] || "1y")
-        }
+      case Issuer.revise_schema(workspace_id, schema_id, base_version, attrs) do
+        {:ok, schema} ->
+          conn
+          |> put_status(201)
+          |> json(%{
+            id: schema.id,
+            schema_id: schema.schema_id,
+            credential_type: schema.credential_type,
+            name: schema.name,
+            claims: schema.claims,
+            validity_period: schema.validity_period,
+            version: schema.version,
+            kind: schema.kind
+          })
 
-        case Issuer.revise_schema(workspace_id, schema_id, base_version, attrs) do
-          {:ok, schema} ->
-            conn
-            |> put_status(201)
-            |> json(%{
-              id: schema.id,
-              schema_id: schema.schema_id,
-              credential_type: schema.credential_type,
-              name: schema.name,
-              claims: schema.claims,
-              validity_period: schema.validity_period,
-              version: schema.version,
-              kind: schema.kind
-            })
+        {:error, :schema_not_found} ->
+          conn |> put_status(404) |> json(%{error: "schema_not_found"})
 
-          {:error, :schema_not_found} ->
-            conn |> put_status(404) |> json(%{error: "schema_not_found"})
+        {:error, :schema_revision_conflict} ->
+          conn |> put_status(409) |> json(%{error: "schema_revision_conflict"})
 
-          {:error, :schema_revision_conflict} ->
-            conn |> put_status(409) |> json(%{error: "schema_revision_conflict"})
+        {:error, status} when status in [:workspace_inactive, :organization_inactive] ->
+          conn |> put_status(403) |> json(%{error: to_string(status)})
 
-          {:error, status} when status in [:workspace_inactive, :organization_inactive] ->
-            conn |> put_status(403) |> json(%{error: to_string(status)})
-
-          {:error, %Ecto.Changeset{} = changeset} ->
-            conn
-            |> put_status(422)
-            |> json(%{error: "validation_error", details: changeset_errors(changeset)})
-        end
+        {:error, %Ecto.Changeset{} = changeset} ->
+          conn
+          |> put_status(422)
+          |> json(%{error: "validation_error", details: changeset_errors(changeset)})
+      end
+    else
+      :error -> validation_error(conn, :base_version, "must be a positive integer")
+      {:error, message} -> validation_error(conn, :validity_period, message)
     end
   end
 
@@ -901,7 +922,7 @@ defmodule SovraWeb.Issuer.AdminController do
       holder_did: c.holder_did,
       status: c.status,
       issued_at: DateTime.to_iso8601(c.issued_at),
-      expires_at: DateTime.to_iso8601(c.expires_at),
+      expires_at: c.expires_at && DateTime.to_iso8601(c.expires_at),
       schema: %{
         id: c.schema.id,
         schema_id: c.schema.schema_id,
@@ -929,6 +950,27 @@ defmodule SovraWeb.Issuer.AdminController do
         name: offer.schema.name
       }
     }
+  end
+
+  # How long a credential stays valid is never guessed: the caller states it or
+  # the request fails. Only an explicit null opts out of expiry — Map.fetch/2
+  # keeps that distinct from an omitted key, which params["..."] cannot.
+  #
+  # The type guard is not decoration: `to_string/1` raises on a JSON object, so
+  # without it a body like `{"validity_period": {}}` is a 500 rather than a 422.
+  defp fetch_validity_period(params) do
+    case Map.fetch(params, "validity_period") do
+      :error -> {:error, ~s(is required — send null for a credential that never expires)}
+      {:ok, nil} -> {:ok, nil}
+      {:ok, value} when is_binary(value) -> {:ok, value}
+      {:ok, _} -> {:error, ~s(must be a string like "1y", or null for no expiry)}
+    end
+  end
+
+  defp validation_error(conn, field, message) do
+    conn
+    |> put_status(422)
+    |> json(%{error: "validation_error", details: %{field => [message]}})
   end
 
   defp normalize_claims(%{"claims" => claims}) when is_list(claims), do: claims

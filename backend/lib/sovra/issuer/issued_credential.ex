@@ -19,8 +19,8 @@ defmodule Sovra.Issuer.IssuedCredential do
     timestamps(type: :utc_datetime)
   end
 
-  @required ~w(issuer_id schema_id holder_did issued_at expires_at)a
-  @optional ~w(id status_list_index status_purpose)a
+  @required ~w(issuer_id schema_id holder_did issued_at)a
+  @optional ~w(id status_list_index status_purpose expires_at)a
 
   # Postgres truncates default Ecto index names to 63 chars; the trailing
   # `_index` suffix becomes `_i`. Keep this name in sync with the actual DB

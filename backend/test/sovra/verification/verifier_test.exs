@@ -35,7 +35,7 @@ defmodule Sovra.Verification.VerifierTest do
 
   defp create_workspace(name), do: provision_workspace(fixture_workspace(name: name).workspace)
 
-  defp create_schema(workspace_id) do
+  defp create_schema(workspace_id, validity_period \\ "1y") do
     {:ok, schema} =
       Issuer.create_schema(workspace_id, %{
         schema_id: "diploma-#{System.unique_integer([:positive])}",
@@ -50,14 +50,24 @@ defmodule Sovra.Verification.VerifierTest do
           },
           %{"key" => "degree", "type" => "string", "required" => true, "disclosable" => true}
         ],
-        validity_period: "1y"
+        validity_period: validity_period
       })
 
     schema
   end
 
   defp build_sd_jwt(issuer_workspace, holder_did, opts) do
-    schema = create_schema(issuer_workspace.id)
+    {validity_period, opts} = Keyword.pop(opts, :validity_period, "1y")
+    # Overrides the persisted schema in memory. The changeset rejects a
+    # zero-length period, so this is the only way to build an expired
+    # credential without waiting for one to age out.
+    {unchecked, opts} = Keyword.pop(opts, :validity_period_unchecked)
+
+    schema =
+      case unchecked do
+        nil -> create_schema(issuer_workspace.id, validity_period)
+        raw -> %{create_schema(issuer_workspace.id, validity_period) | validity_period: raw}
+      end
 
     {:ok, sd_jwt} =
       Sovra.Issuer.SDJWT.build(
@@ -78,6 +88,11 @@ defmodule Sovra.Verification.VerifierTest do
       {[issuer | disclosures], [""]} -> {issuer, disclosures}
       {[issuer | disclosures], [last]} -> {issuer, disclosures ++ [last]}
     end
+  end
+
+  defp decode_payload(jwt) do
+    [_, payload_b64 | _] = String.split(jwt, ".")
+    payload_b64 |> Base.url_decode64!(padding: false) |> Jason.decode!()
   end
 
   defp generate_holder_keys do
@@ -138,7 +153,7 @@ defmodule Sovra.Verification.VerifierTest do
       build_sd_jwt(
         issuer_ws,
         holder_did,
-        Keyword.take(opts, [:status_list_index])
+        Keyword.take(opts, [:status_list_index, :validity_period, :validity_period_unchecked])
       )
 
     {:ok, %{session: session}} =
@@ -217,6 +232,41 @@ defmodule Sovra.Verification.VerifierTest do
         worker: Sovra.Webhooks.DeliveryJob,
         args: %{"event" => "presentation.verified"}
       )
+    end
+  end
+
+  describe "submit_presentation/3 — credential expiry" do
+    test "credential with no exp verifies" do
+      ctx = setup_session(validity_period: nil)
+
+      {issuer_jwt, _} = parts_of(ctx.sd_jwt)
+      refute Map.has_key?(decode_payload(issuer_jwt), "exp")
+
+      assert {:ok, session} =
+               submit(ctx, default_kb_payload(ctx), revocation_registry: StubRegistryOk)
+
+      assert session.status == "completed"
+      assert session.error == nil
+    end
+
+    # "0d" puts exp at issuance time, which is never > now.
+    test "credential whose exp has passed -> credential_expired" do
+      ctx = setup_session(validity_period_unchecked: "0d")
+
+      assert {:ok, session} =
+               submit(ctx, default_kb_payload(ctx), revocation_registry: StubRegistryOk)
+
+      assert session.status == "failed"
+      assert session.error == "credential_expired"
+    end
+
+    test "credential with a future exp verifies" do
+      ctx = setup_session(validity_period: "1d")
+
+      assert {:ok, session} =
+               submit(ctx, default_kb_payload(ctx), revocation_registry: StubRegistryOk)
+
+      assert session.status == "completed"
     end
   end
 

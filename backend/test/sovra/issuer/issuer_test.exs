@@ -18,7 +18,7 @@ defmodule Sovra.IssuerTest do
   defp create_test_user, do: fixture_user()
   defp create_test_issuer, do: provision_workspace(fixture_workspace().workspace)
 
-  defp create_test_schema(issuer) do
+  defp create_test_schema(issuer, opts \\ []) do
     attrs = %{
       schema_id: "test-schema-#{System.unique_integer([:positive])}",
       credential_type: "TestCredential",
@@ -27,11 +27,144 @@ defmodule Sovra.IssuerTest do
         %{"key" => "name", "type" => "string", "required" => true, "disclosable" => true},
         %{"key" => "age", "type" => "integer", "required" => false, "disclosable" => true}
       ],
-      validity_period: "1y"
+      validity_period: Keyword.get(opts, :validity_period, "1y")
     }
 
     {:ok, schema} = Issuer.create_schema(issuer.id, attrs)
     schema
+  end
+
+  defp holder_proof_jwt(c_nonce) do
+    {:ok, %{private_key: priv, public_key_x: x, public_key_y: y}} = P256.generate_key_pair()
+
+    header = %{
+      "typ" => "openid4vci-proof+jwt",
+      "alg" => "ES256",
+      "jwk" => %{
+        "kty" => "EC",
+        "crv" => "P-256",
+        "x" => Base.url_encode64(x, padding: false),
+        "y" => Base.url_encode64(y, padding: false)
+      }
+    }
+
+    payload = %{"iss" => "did:sovra:0xholder", "nonce" => c_nonce}
+    header_b64 = Base.url_encode64(Jason.encode!(header), padding: false)
+    payload_b64 = Base.url_encode64(Jason.encode!(payload), padding: false)
+    signing_input = "#{header_b64}.#{payload_b64}"
+    hash = :crypto.hash(:sha256, signing_input)
+    {:ok, %{r: r, s: s}} = P256.sign(hash, priv)
+    raw_sig = P256.pad_or_trim(r, 32) <> P256.pad_or_trim(s, 32)
+    sig_b64 = Base.url_encode64(raw_sig, padding: false)
+
+    %{"proof_type" => "jwt", "jwt" => "#{signing_input}.#{sig_b64}"}
+  end
+
+  defp jwt_payload(sd_jwt) do
+    [jwt | _] = String.split(sd_jwt, "~")
+    [_, payload_b64 | _] = String.split(jwt, ".")
+    payload_b64 |> Base.url_decode64!(padding: false) |> Jason.decode!()
+  end
+
+  describe "schemas without a validity period" do
+    test "a schema may omit validity_period entirely" do
+      issuer = create_test_issuer()
+
+      {:ok, schema} =
+        Issuer.create_schema(issuer.id, %{
+          schema_id: "no-expiry-#{System.unique_integer([:positive])}",
+          credential_type: "NoExpiryCredential",
+          name: "No Expiry",
+          claims: [
+            %{"key" => "name", "type" => "string", "required" => true, "disclosable" => true}
+          ],
+          validity_period: nil
+        })
+
+      assert schema.validity_period == nil
+    end
+
+    test "an unparseable validity_period is rejected rather than defaulted" do
+      issuer = create_test_issuer()
+
+      assert {:error, changeset} =
+               Issuer.create_schema(issuer.id, %{
+                 schema_id: "bad-#{System.unique_integer([:positive])}",
+                 credential_type: "BadCredential",
+                 name: "Bad",
+                 claims: [
+                   %{
+                     "key" => "name",
+                     "type" => "string",
+                     "required" => true,
+                     "disclosable" => true
+                   }
+                 ],
+                 validity_period: "1yr"
+               })
+
+      assert %{validity_period: ["has invalid format"]} = errors_on(changeset)
+    end
+
+    test "the offer preview carries no exp" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer, validity_period: nil)
+
+      {:ok, result} =
+        Issuer.create_credential_offer(issuer.id, schema.schema_id, %{"name" => "Alice"})
+
+      refute Map.has_key?(result.credential, "exp")
+      assert Map.has_key?(result.credential, "iat")
+    end
+
+    test "the issued SD-JWT carries no exp and the row records no expiry" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer, validity_period: nil)
+
+      {:ok, result} =
+        Issuer.create_credential_offer(issuer.id, schema.schema_id, %{"name" => "Alice"})
+
+      {:ok, token_data} = Issuer.exchange_token(result.pre_authorized_code)
+
+      {:ok, sd_jwt} =
+        Issuer.issue_credential(
+          token_data.access_token,
+          schema.credential_type,
+          holder_proof_jwt(token_data.c_nonce)
+        )
+
+      payload = jwt_payload(sd_jwt)
+      refute Map.has_key?(payload, "exp")
+      assert is_integer(payload["iat"])
+
+      issued = Repo.get_by!(Sovra.Issuer.IssuedCredential, id: result.offer.id)
+      assert issued.expires_at == nil
+      assert issued.issued_at != nil
+    end
+
+    test "a schema that sets a validity period still stamps exp" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer, validity_period: "1y")
+
+      {:ok, result} =
+        Issuer.create_credential_offer(issuer.id, schema.schema_id, %{"name" => "Alice"})
+
+      {:ok, token_data} = Issuer.exchange_token(result.pre_authorized_code)
+
+      {:ok, sd_jwt} =
+        Issuer.issue_credential(
+          token_data.access_token,
+          schema.credential_type,
+          holder_proof_jwt(token_data.c_nonce)
+        )
+
+      payload = jwt_payload(sd_jwt)
+      assert is_integer(payload["exp"])
+      assert payload["exp"] > payload["iat"]
+
+      issued = Repo.get_by!(Sovra.Issuer.IssuedCredential, id: result.offer.id)
+      assert issued.expires_at != nil
+    end
   end
 
   describe "Workspaces.create_workspace/3" do

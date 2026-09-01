@@ -602,13 +602,12 @@ defmodule Sovra.Issuer do
            SDJWT.build(workspace, schema, offer.claims, holder_did,
              status_list_index: offer.status_list_index
            ) do
-      # Extract exp from the freshly-built SD-JWT
+      # Extract exp from the freshly-built SD-JWT; absent when it never expires.
       [jwt_part | _] = String.split(sd_jwt, "~")
       [_, payload_b64 | _] = String.split(jwt_part, ".")
       {:ok, payload_json} = Base.url_decode64(payload_b64, padding: false)
       {:ok, payload} = Jason.decode(payload_json)
-      {:ok, expires_at} = DateTime.from_unix(payload["exp"])
-      expires_at = DateTime.truncate(expires_at, :second)
+      expires_at = unix_to_datetime(payload["exp"])
 
       # Reuse offer.id as the IssuedCredential's primary key so external
       # integrators have a single stable `credential_id` from offer creation
@@ -636,7 +635,7 @@ defmodule Sovra.Issuer do
                     "holder_did" => cred.holder_did,
                     "schema_type" => schema.credential_type,
                     "issued_at" => DateTime.to_iso8601(cred.issued_at),
-                    "expires_at" => DateTime.to_iso8601(cred.expires_at),
+                    "expires_at" => cred.expires_at && DateTime.to_iso8601(cred.expires_at),
                     "credential" => sd_jwt,
                     "format" => "vc+sd-jwt"
                   })
@@ -652,6 +651,13 @@ defmodule Sovra.Issuer do
         end
       end)
     end
+  end
+
+  defp unix_to_datetime(nil), do: nil
+
+  defp unix_to_datetime(seconds) when is_integer(seconds) do
+    {:ok, dt} = DateTime.from_unix(seconds)
+    DateTime.truncate(dt, :second)
   end
 
   # ── Proof Verification ─────────────────────────────────

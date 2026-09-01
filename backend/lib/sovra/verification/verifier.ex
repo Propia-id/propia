@@ -188,12 +188,20 @@ defmodule Sovra.Verification.Verifier do
     end
   end
 
+  # An absent `exp` means "valid indefinitely" (W3C VCDM 2.0 §4.9). Safe to
+  # honour here because verify_issuer_signature/2 has already run, so it cannot
+  # be stripped by an attacker. Map.fetch/2 keeps that case distinct from an
+  # explicit null, which is malformed and must fail.
+  #
+  # Do not collapse the guard to `exp == nil or exp > now`: Elixir's term
+  # ordering makes `"anything" > 1_234_567_890` true.
   defp check_expiry(effective, session, holder_did) do
     now = System.system_time(:second)
 
-    case effective["exp"] do
-      exp when is_integer(exp) and exp > now -> :ok
-      _ -> fail(session, "credential_expired", holder_did)
+    case Map.fetch(effective, "exp") do
+      :error -> :ok
+      {:ok, exp} when is_integer(exp) and exp > now -> :ok
+      {:ok, _} -> fail(session, "credential_expired", holder_did)
     end
   end
 

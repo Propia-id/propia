@@ -230,6 +230,22 @@ describe("verify", () => {
     expect(result.errorCode).toBe(ErrorCode.CREDENTIAL_EXPIRED);
   });
 
+  it("verifies a credential that carries no exp at all", async () => {
+    const fixture = buildPresentation(keys, {
+      issuerAddress,
+      holderAddress,
+      vct,
+      noExp: true,
+    });
+
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+
+    const result = await verify(fixture.presentation, baseOptions, testCache);
+
+    expect(result.valid).toBe(true);
+    expect(result.expiresAt).toBeUndefined();
+  });
+
   it("returns KB_NONCE_MISMATCH for wrong nonce", async () => {
     const fixture = buildPresentation(keys, {
       issuerAddress,

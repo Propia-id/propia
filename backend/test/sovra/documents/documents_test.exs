@@ -201,6 +201,49 @@ defmodule Sovra.DocumentsTest do
     end
   end
 
+  describe "issue/3 — registered claims" do
+    # `payload/4` omits `exp` when the schema declares no validity period. The
+    # declared claims are merged under the registered ones, so without dropping
+    # the registered names a schema claim called `exp` would take the vacated
+    # slot and set an expiry the issuer never configured, under the issuer's key.
+    test "a schema claim named exp cannot set the expiry", %{workspace: workspace} do
+      schema = schema_declaring_exp(workspace, nil)
+
+      {:ok, document} = Documents.issue(workspace.id, schema.schema_id, %{"exp" => 1})
+
+      refute Map.has_key?(payload(document.credential), "exp")
+      refute Map.has_key?(Attestation.claims(document.credential, schema), "exp")
+    end
+
+    test "the issuer's expiry wins over a schema claim named exp", %{workspace: workspace} do
+      schema = schema_declaring_exp(workspace, "1y")
+
+      {:ok, document} = Documents.issue(workspace.id, schema.schema_id, %{"exp" => 1})
+
+      exp = payload(document.credential)["exp"]
+      assert is_integer(exp)
+      assert exp > System.system_time(:second)
+    end
+
+    test "a schema with no validity period signs no exp at all", %{workspace: workspace} do
+      {:ok, schema} =
+        Issuer.create_schema(workspace.id, %{
+          schema_id: "letter-#{System.unique_integer([:positive])}",
+          credential_type: "EmploymentLetter",
+          name: "Employment letter",
+          kind: "document",
+          validity_period: nil,
+          claims: [%{"key" => "employee_name", "type" => "string", "required" => true}]
+        })
+
+      {:ok, document} = Documents.issue(workspace.id, schema.schema_id, claims())
+
+      signed = payload(document.credential)
+      refute Map.has_key?(signed, "exp")
+      assert signed["employee_name"] == "Ada Lovelace"
+    end
+  end
+
   describe "get_public/1 and list/1" do
     test "serves a document to anyone holding the id", %{workspace: workspace, schema: schema} do
       {:ok, document} = Documents.issue(workspace.id, schema.schema_id, claims())
@@ -216,6 +259,20 @@ defmodule Sovra.DocumentsTest do
       assert Enum.map(Documents.list(workspace.id), & &1.id) == [document.id]
       assert Documents.list(other.id) == []
     end
+  end
+
+  defp schema_declaring_exp(workspace, validity_period) do
+    {:ok, schema} =
+      Issuer.create_schema(workspace.id, %{
+        schema_id: "letter-#{System.unique_integer([:positive])}",
+        credential_type: "EmploymentLetter",
+        name: "Employment letter",
+        kind: "document",
+        validity_period: validity_period,
+        claims: [%{"key" => "exp", "type" => "string", "required" => true}]
+      })
+
+    schema
   end
 
   defp payload(credential) do
