@@ -7,9 +7,12 @@ import type {
 import type { CredentialManager } from "../credentials/index";
 import type { StoredCredential, CredentialDisplayMetadata } from "../state/index";
 import {
+  base64urlDecode,
   base64urlEncode,
+  p256Verify,
   sha256,
 } from "../utils/index";
+import { parseDidUrl, resolveAssertionKey } from "../did/index";
 
 // ─── Holder signing seam ──────────────────────────────
 
@@ -58,14 +61,33 @@ export interface VPRequest {
   clientId: string;
   nonce: string;
   dcqlQuery: DCQLQuery;
+  /**
+   * The verifier's own name, and only ever from a request whose signature
+   * verified. An unsigned request has no attested name, so this stays
+   * undefined however loudly its `client_metadata` claims one.
+   */
   verifierName?: string;
   state?: string;
   responseUri?: string;
   responseMode?: string;
+  /**
+   * Whether this request arrived as a signed request object whose signature
+   * verified against a key its own `client_id` resolves to. False means the
+   * verifier is unauthenticated — not that it is hostile, but nothing it says
+   * about itself has been established.
+   */
+  verified: boolean;
 }
 
 export interface ApprovalData {
-  verifierName: string;
+  /**
+   * The attested name, and only from a request whose signature verified.
+   * Undefined means the consent screen has nothing to call the verifier — it
+   * says so, rather than falling back to anything the request claimed.
+   */
+  verifierName?: string;
+  /** Mirrors `VPRequest.verified` — the consent screen has to say which it is. */
+  verified: boolean;
   credentialType: string;
   sharedClaims: string[];
   withheldClaims: string[];
@@ -306,6 +328,28 @@ export class IssuanceProtocol {
 
 // ─── OpenID4VP Protocol ───────────────────────────────
 
+/** OID4VP 1.0 Client Identifier Prefix for a DID-identified verifier. */
+const DID_CLIENT_ID_PREFIX = "decentralized_identifier:";
+
+/** RFC 9101 media type, and the `typ` a signed request object must carry. */
+const REQUEST_OBJECT_TYP = "oauth-authz-req+jwt";
+
+/**
+ * OID4VP 1.0 §5.9: the `aud` of a signed request under static Wallet metadata
+ * discovery. This wallet publishes no metadata for a verifier to discover, so
+ * every request it accepts is addressed to this fixed value.
+ */
+const STATIC_WALLET_AUD = "https://self-issued.me/v2";
+
+/** A compact JWS: three base64url segments. JSON can never look like this. */
+const JWS_SHAPE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+
+function decodeJsonSegment(segment: string): Record<string, unknown> {
+  return JSON.parse(
+    new TextDecoder().decode(base64urlDecode(segment)),
+  ) as Record<string, unknown>;
+}
+
 export class PresentationProtocol {
   constructor(
     private api: ApiClient,
@@ -316,6 +360,12 @@ export class PresentationProtocol {
       passkeyCredentialId: string;
       passkeyPublicKey: Uint8Array;
     },
+    /**
+     * On-chain DID Registry the verifier's `client_id` is resolved against.
+     * Without it a signed request cannot be checked at all, so requests that
+     * carry a signature are rejected rather than waved through unverified.
+     */
+    private didRegistryAddress?: string,
   ) {}
 
   /** Check if a QR code contains an OpenID4VP request. */
@@ -324,38 +374,197 @@ export class PresentationProtocol {
   }
 
   /**
-   * Parse an OpenID4VP request URI. Supports both the wrapped form
-   * (`?request=<JSON>`) and the flat-query form
-   * (`?client_id=...&dcql_query=<JSON>&...`) emitted by the Sovra verifier.
+   * Resolve an OpenID4VP request URI into the request the holder is being
+   * asked to answer, authenticating the verifier on the way.
+   *
+   * Three shapes arrive here:
+   *
+   *  - `?request=<JWS>` or `?request_uri=<url>` — a signed request object
+   *    (JAR, RFC 9101). The signature is verified against a key resolved from
+   *    the `client_id`'s own DID document on chain. Everything inside it,
+   *    `response_uri` included, is trusted only because of that signature, so
+   *    a signature that does not verify is a hard failure: it means someone
+   *    built this QR who does not hold the verifier's key.
+   *
+   *  - `?request=<JSON>` or a flat query — unsigned, as the standalone
+   *    verifier app still emits. Accepted only in the shape that app uses: a
+   *    bare `did:sovra` client_id, and no `direct_post`. `verified` is false
+   *    and any `client_metadata.client_name` is discarded — an unsigned
+   *    request is in no position to tell the citizen who is asking — and it
+   *    is answered by QR, never by posting the vp_token anywhere.
    */
-  parseRequest(uri: string): VPRequest {
-    const url = new URL(uri);
-    const params = url.searchParams;
-    const requestParam = params.get("request");
+  async resolveRequest(uri: string): Promise<VPRequest> {
+    const params = new URL(uri).searchParams;
+    const requestObject = await this.fetchRequestObject(params);
 
-    const fields: Record<string, unknown> = requestParam
-      ? (JSON.parse(requestParam) as Record<string, unknown>)
+    return requestObject
+      ? this.fromSignedRequest(requestObject, params.get("client_id"))
+      : this.fromUnsignedRequest(params);
+  }
+
+  /** The signed request object, by value or by reference; null when unsigned. */
+  private async fetchRequestObject(
+    params: URLSearchParams,
+  ): Promise<string | null> {
+    const inline = params.get("request");
+    if (inline) return JWS_SHAPE.test(inline) ? inline : null;
+
+    const requestUri = params.get("request_uri");
+    if (!requestUri) return null;
+
+    const fetched = (await this.api.fetchRequestObject(requestUri)).trim();
+    if (!JWS_SHAPE.test(fetched)) {
+      throw new Error("request_uri did not return a signed request object");
+    }
+    return fetched;
+  }
+
+  private async fromSignedRequest(
+    jws: string,
+    clientIdFromQuery: string | null,
+  ): Promise<VPRequest> {
+    const [headerB64, payloadB64, signatureB64] = jws.split(".");
+    const header = decodeJsonSegment(headerB64);
+    const fields = decodeJsonSegment(payloadB64);
+
+    if (header.typ !== REQUEST_OBJECT_TYP) {
+      throw new Error(`Request object is not a ${REQUEST_OBJECT_TYP}`);
+    }
+    if (header.alg !== "ES256") {
+      throw new Error(`Unsupported request object algorithm: ${header.alg}`);
+    }
+    if (fields.aud !== STATIC_WALLET_AUD) {
+      throw new Error("Request object is not addressed to this wallet");
+    }
+
+    const clientId = fields.client_id;
+    if (typeof clientId !== "string" || !clientId) {
+      throw new Error("Request object has no client_id");
+    }
+    // OID4VP 1.0: client_id travels both as a query parameter and inside the
+    // request object, and the two must agree — otherwise the QR could show one
+    // verifier while the signature covers another. Absent is not agreement:
+    // the parameter is mandatory.
+    if (clientIdFromQuery !== clientId) {
+      throw new Error("client_id does not match the signed request object");
+    }
+
+    if (!this.didRegistryAddress) {
+      throw new Error(
+        "Cannot verify a signed request: no DID Registry configured",
+      );
+    }
+    if (!clientId.startsWith(DID_CLIENT_ID_PREFIX)) {
+      throw new Error(`Unsupported client_id prefix: ${clientId}`);
+    }
+    const did = clientId.slice(DID_CLIENT_ID_PREFIX.length);
+
+    // The signing key must be a verification method of the client_id's own
+    // DID, named by `kid`. A kid pointing anywhere else would let a request
+    // be signed by a key the claimed verifier does not control.
+    const kid = typeof header.kid === "string" ? header.kid : "";
+    const { did: kidDid, fragment } = parseDidUrl(kid);
+    if (kidDid !== did || !fragment) {
+      throw new Error(`Request object kid is not a key of ${did}`);
+    }
+
+    const key = await resolveAssertionKey(
+      (to, calldata) => this.api.ethCall(to, calldata),
+      this.didRegistryAddress,
+      did,
+      fragment,
+    );
+
+    const signed = p256Verify(
+      sha256(new TextEncoder().encode(`${headerB64}.${payloadB64}`)),
+      base64urlDecode(signatureB64),
+      key.x,
+      key.y,
+    );
+    if (!signed) {
+      throw new Error("Request object signature does not verify");
+    }
+
+    // A missing or non-numeric `exp` is not "never expires": without one the
+    // QR is replayable for as long as the photograph of it survives.
+    if (typeof fields.exp !== "number" || fields.exp * 1000 <= Date.now()) {
+      throw new Error("Request object has expired or carries no expiry");
+    }
+
+    // JSON off the wire: a signature proves who wrote `client_metadata`, not
+    // that `client_name` is a string. The consent screen renders it into a
+    // React Native <Text>, which throws on anything else — after the signature
+    // has already verified.
+    const clientMetadata = fields.client_metadata as
+      | Record<string, unknown>
+      | undefined;
+    const clientName = clientMetadata?.client_name;
+
+    return {
+      ...this.commonFields(fields),
+      clientId,
+      verifierName: typeof clientName === "string" ? clientName : undefined,
+      verified: true,
+    };
+  }
+
+  private fromUnsignedRequest(params: URLSearchParams): VPRequest {
+    const inline = params.get("request");
+
+    const fields: Record<string, unknown> = inline
+      ? (JSON.parse(inline) as Record<string, unknown>)
       : Object.fromEntries(params.entries());
 
+    const clientId = fields.client_id;
+    if (typeof clientId !== "string" || !clientId) {
+      throw new Error("Missing required OpenID4VP parameters");
+    }
+
+    // A `decentralized_identifier:` client_id names a DID the wallet can
+    // resolve a key for — that is the entire point of the prefix. Taking one
+    // unsigned lets an attacker copy a real verifier's client_id off its QR,
+    // drop the `request` parameter, and inherit the identity without the
+    // proof. The standalone verifier app carries a bare `did:sovra:0x…`, so
+    // this bars the downgrade, not that app.
+    if (clientId.startsWith(DID_CLIENT_ID_PREFIX)) {
+      throw new Error(
+        `A ${DID_CLIENT_ID_PREFIX} client_id must arrive in a signed request object`,
+      );
+    }
+
+    // No `verifierName`: the name in an unsigned request is exactly the field
+    // an impersonator sets, so it never reaches the consent screen.
+    const request = { ...this.commonFields(fields), clientId, verified: false };
+
+    // `direct_post` mails the disclosed claims to an address the QR chose, and
+    // only a signature binds that address to the verifier. Unsigned it is
+    // refused outright: no Sovra verifier asks for it — the standalone app
+    // omits `response_uri`/`response_mode` and is answered by QR instead.
+    if (request.responseMode === "direct_post" || request.responseUri) {
+      throw new Error(
+        "An unsigned request cannot use direct_post: nothing binds its response_uri to the verifier",
+      );
+    }
+
+    return request;
+  }
+
+  private commonFields(
+    fields: Record<string, unknown>,
+  ): Omit<VPRequest, "clientId" | "verified"> {
     const dcqlRaw = fields.dcql_query;
     const dcqlQuery =
       typeof dcqlRaw === "string"
         ? (JSON.parse(dcqlRaw) as DCQLQuery)
         : (dcqlRaw as DCQLQuery);
 
-    if (!fields.client_id || !fields.nonce || !dcqlQuery) {
+    if (!fields.nonce || !dcqlQuery) {
       throw new Error("Missing required OpenID4VP parameters");
     }
 
-    const clientMetadata = fields.client_metadata as
-      | Record<string, string>
-      | undefined;
-
     return {
-      clientId: fields.client_id as string,
       nonce: fields.nonce as string,
       dcqlQuery,
-      verifierName: clientMetadata?.client_name,
       state: (fields.state as string) ?? undefined,
       responseUri: (fields.response_uri as string) ?? undefined,
       responseMode: (fields.response_mode as string) ?? undefined,
@@ -404,8 +613,13 @@ export class PresentationProtocol {
       (k) => !k.startsWith("_") && k !== "iss" && k !== "sub" && k !== "iat" && k !== "exp" && k !== "vct" && k !== "cnf" && k !== "credentialStatus",
     );
 
+    // `clientId` may stand in for a missing `client_name` only once a
+    // signature has bound it to a DID; unsigned, it is whatever the QR said.
     return {
-      verifierName: request.verifierName ?? request.clientId,
+      verifierName: request.verified
+        ? (request.verifierName ?? request.clientId)
+        : undefined,
+      verified: request.verified,
       credentialType: credential.credentialType,
       sharedClaims: requestedClaims.filter((c) => allClaims.includes(c)),
       withheldClaims: allClaims.filter((c) => !requestedClaims.includes(c)),
@@ -426,6 +640,13 @@ export class PresentationProtocol {
    * read by the standalone verifier app) needs the bare form.
    */
   async executeDirectPost(request: VPRequest, vpToken: string): Promise<void> {
+    // `resolveRequest` already refuses an unsigned direct_post, but holder-core
+    // is a package: the invariant has to hold at its own boundary too.
+    if (!request.verified) {
+      throw new Error(
+        "direct_post requires a request object whose signature verified",
+      );
+    }
     if (!request.responseUri || !request.state) {
       throw new Error(
         "direct_post requires response_uri and state in the request",

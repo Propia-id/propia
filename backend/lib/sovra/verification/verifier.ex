@@ -153,8 +153,12 @@ defmodule Sovra.Verification.Verifier do
     end
   end
 
+  # `aud` is compared against the `client_id` stored on the session — the exact
+  # value that was signed into the authorization request — rather than one
+  # recomputed from the workspace, so a later DID change cannot retroactively
+  # invalidate (or validate) a presentation already in flight.
   defp check_kb_payload(kb_payload, session, parts, holder_did) do
-    expected_aud = "verifier:#{session.workspace_id}"
+    expected_aud = session.client_id
     expected_sd_hash = SDJWT.compute_sd_hash(parts.sd_jwt, parts.disclosures)
     now = System.system_time(:second)
     iat = kb_payload["iat"]

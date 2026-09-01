@@ -93,6 +93,35 @@ export function p256GetPublicKey(privateKey: Uint8Array): Uint8Array {
   return p256.getPublicKey(privateKey, false);
 }
 
+/**
+ * Verify a P256 signature in raw `r||s` (64-byte) form against a message hash
+ * and the public key's x/y coordinates.
+ *
+ * Only the canonical low-S form is accepted: ECDSA admits both `(r, s)` and
+ * `(r, n - s)` for the same hash and key, and everything Sovra signs
+ * normalizes to low-S, so accepting the malleable twin would let one logical
+ * signature travel under two distinct byte-shapes.
+ */
+export function p256Verify(
+  messageHash: Uint8Array,
+  signature: Uint8Array,
+  x: Uint8Array,
+  y: Uint8Array,
+): boolean {
+  if (signature.length !== 64) return false;
+
+  try {
+    return p256.verify(
+      signature,
+      messageHash,
+      concatBytes(new Uint8Array([0x04]), x, y),
+      { lowS: true, format: "compact" },
+    );
+  } catch {
+    return false;
+  }
+}
+
 // ─── secp256k1 (throwaway EOA) ────────────────────────
 
 export function generateSecp256k1KeyPair(): {
@@ -152,6 +181,128 @@ export function encodeFunctionCall(
 ): Uint8Array {
   const selector = keccak256(new TextEncoder().encode(functionSig)).slice(0, 4);
   return concatBytes(selector, ...params.map(padTo32));
+}
+
+// ─── ABI Decoding ─────────────────────────────────────
+
+function stripPrefix(hex: string): string {
+  return hex.startsWith("0x") ? hex.slice(2) : hex;
+}
+
+/** Extract 32 bytes from hex return data at the given slot index. */
+export function decodeBytes32(data: string, slot: number): Uint8Array {
+  const hex = stripPrefix(data);
+  const word = hex.slice(slot * 64, slot * 64 + 64);
+  // A short slice used to yield a short array, and `bytes[31]` on it is
+  // `undefined` — which reads as a set bool and a nonzero uint.
+  if (word.length !== 64) {
+    throw new Error(`ABI data ends before slot ${slot}`);
+  }
+  return hexToBytes(word);
+}
+
+/** Extract a boolean from a 32-byte ABI slot. */
+export function decodeBool(data: string, slot: number): boolean {
+  return decodeBytes32(data, slot)[31] !== 0;
+}
+
+/** Extract a uint8 from a 32-byte ABI slot. */
+export function decodeUint8(data: string, slot: number): number {
+  return decodeBytes32(data, slot)[31];
+}
+
+/** Extract a uint32 from a 32-byte ABI slot. */
+export function decodeUint32(data: string, slot: number): number {
+  const bytes = decodeBytes32(data, slot);
+  return (bytes[28] << 24) | (bytes[29] << 16) | (bytes[30] << 8) | bytes[31];
+}
+
+/** Extract a uint64 from a 32-byte ABI slot. */
+export function decodeUint64(data: string, slot: number): number {
+  const bytes = decodeBytes32(data, slot);
+  // JS handles integers up to 2^53 exactly, which covers every timestamp and
+  // version counter the registries store.
+  let value = 0;
+  for (let i = 24; i < 32; i++) value = value * 256 + bytes[i];
+  return value;
+}
+
+// ─── DID Registry resolve() decoder ───────────────────
+
+export interface DecodedVerificationMethod {
+  id: Uint8Array;
+  keyType: number;
+  pubKeyX: Uint8Array;
+  pubKeyY: Uint8Array;
+  relationships: number;
+}
+
+export interface DecodedResolveResult {
+  methods: DecodedVerificationMethod[];
+  created: number;
+  updated: number;
+  versionId: number;
+  deactivated: boolean;
+}
+
+/**
+ * Decode the return value of SovraDIDRegistry.resolve(address).
+ *
+ * Return type: (VerificationMethod[] memory, ServiceEndpoint[] memory,
+ *               uint64 created, uint64 updated, uint32 versionId, bool deactivated)
+ *
+ * ABI layout (slots):
+ *   0: offset to VerificationMethod[]
+ *   1: offset to ServiceEndpoint[]
+ *   2: created (uint64)
+ *   3: updated (uint64)
+ *   4: versionId (uint32)
+ *   5: deactivated (bool)
+ *   Then dynamic data at the offsets.
+ */
+export function decodeResolveResult(data: string): DecodedResolveResult {
+  const hex = stripPrefix(data);
+
+  const created = decodeUint64(data, 2);
+  const updated = decodeUint64(data, 3);
+  const versionId = decodeUint32(data, 4);
+  const deactivated = decodeBool(data, 5);
+
+  const methodsOffset = decodeUint64(data, 0); // byte offset into the data
+  const methodsStart = methodsOffset * 2; // char offset in the hex string
+  // A short slice still parses: a response ending in the count word's first
+  // two characters yields 0, the loop below does not run, and a truncated read
+  // is reported as a DID that publishes no keys. `Number.isInteger` never
+  // catches that, so the word is length-checked the way `decodeBytes32` is.
+  const countWord = hex.slice(methodsStart, methodsStart + 64);
+  if (countWord.length !== 64) {
+    throw new Error("ABI data ends before the verification method count");
+  }
+  const methodsCount = parseInt(countWord, 16);
+  if (!Number.isInteger(methodsCount)) {
+    throw new Error("Verification method count is not a number");
+  }
+
+  const methods: DecodedVerificationMethod[] = [];
+  for (let i = 0; i < methodsCount; i++) {
+    // Each VerificationMethod is 5 x 32-byte words.
+    const elemStart = methodsStart + 64 + i * 5 * 64;
+    if (elemStart + 5 * 64 > hex.length) {
+      throw new Error(`ABI data ends inside verification method ${i}`);
+    }
+    methods.push({
+      id: hexToBytes(hex.slice(elemStart, elemStart + 64)),
+      keyType: parseInt(hex.slice(elemStart + 64 + 62, elemStart + 64 + 64), 16),
+      pubKeyX: hexToBytes(hex.slice(elemStart + 128, elemStart + 192)),
+      pubKeyY: hexToBytes(hex.slice(elemStart + 192, elemStart + 256)),
+      relationships: parseInt(
+        hex.slice(elemStart + 256 + 62, elemStart + 256 + 64),
+        16,
+      ),
+    });
+  }
+
+  return { methods, created, updated, versionId, deactivated };
 }
 
 // ─── EIP-712 ──────────────────────────────────────────

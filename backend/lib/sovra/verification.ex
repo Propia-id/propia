@@ -10,6 +10,7 @@ defmodule Sovra.Verification do
 
   alias Sovra.Issuer.ClaimUtils
   alias Sovra.Repo
+  alias Sovra.Verification.RequestObject
   alias Sovra.Verification.Session
   alias Sovra.Verification.Verifier
   alias Sovra.Workspaces
@@ -106,95 +107,97 @@ defmodule Sovra.Verification do
   Returns `{:ok, %{session, authorization_request_uri}}` on success, or one of:
   `{:error, :workspace_not_found}`, `{:error, :workspace_inactive}`,
   `{:error, :organization_inactive}`, `{:error, :invalid_dcql_query}`,
-  `{:error, %Ecto.Changeset{}}`.
+  `{:error, %Ecto.Changeset{}}`, or whatever the signer returns when the
+  request object cannot be signed — a session with no signed request is no
+  session at all, so nothing is persisted in that case.
   """
   def create_session(workspace_id, dcql_query, opts \\ []) when is_map(dcql_query) do
     ttl = Keyword.get(opts, :ttl_seconds, @session_ttl_seconds)
 
     with {:ok, workspace} <- Workspaces.get_active_workspace(workspace_id),
          :ok <- Workspaces.assert_provisioned(workspace),
-         :ok <- validate_dcql(dcql_query) do
-      nonce = random_token(16)
-      state = random_token(16)
-
-      expires_at =
-        DateTime.utc_now() |> DateTime.add(ttl, :second) |> DateTime.truncate(:second)
-
-      changeset =
-        Session.create_changeset(%{
-          workspace_id: workspace.id,
-          dcql_query: dcql_query,
-          nonce: nonce,
-          state: state,
-          expires_at: expires_at
-        })
-
-      with {:ok, session} <- Repo.insert(changeset) do
-        {:ok,
-         %{
-           session: session,
-           authorization_request_uri: build_authorization_request_uri(session),
-           authorization_request_uri_ref: build_authorization_request_uri_ref(session)
-         }}
-      end
+         :ok <- validate_dcql(dcql_query),
+         draft = draft_session(workspace, dcql_query, ttl),
+         {:ok, request_object} <- RequestObject.sign(workspace, draft),
+         {:ok, session} <- insert_session(draft, workspace, request_object) do
+      {:ok,
+       %{
+         session: session,
+         authorization_request_uri: build_authorization_request_uri(session),
+         authorization_request_uri_ref: build_authorization_request_uri_ref(session)
+       }}
     end
+  end
+
+  # The id is minted here rather than by the insert because it is part of the
+  # `response_uri` the request object commits to: the request has to be signed
+  # before the row it belongs to exists.
+  defp draft_session(workspace, dcql_query, ttl) do
+    %Session{
+      id: Ecto.UUID.generate(),
+      workspace_id: workspace.id,
+      dcql_query: dcql_query,
+      nonce: random_token(16),
+      state: random_token(16),
+      expires_at: DateTime.utc_now() |> DateTime.add(ttl, :second) |> DateTime.truncate(:second)
+    }
+  end
+
+  defp insert_session(%Session{} = draft, workspace, request_object) do
+    %Session{id: draft.id}
+    |> Session.create_changeset(%{
+      workspace_id: draft.workspace_id,
+      dcql_query: draft.dcql_query,
+      nonce: draft.nonce,
+      state: draft.state,
+      expires_at: draft.expires_at,
+      client_id: RequestObject.client_id(workspace),
+      request_object: request_object
+    })
+    |> Repo.insert()
   end
 
   defp validate_dcql(%{"credentials" => [_ | _]}), do: :ok
   defp validate_dcql(_), do: {:error, :invalid_dcql_query}
 
   @doc """
-  Build the pass-by-value OID4VP URI for a session, every request parameter
-  inline. This is the form a wallet can scan: the short `request_uri` form is
-  not resolved on the holder side.
+  Build the pass-by-value OID4VP URI for a session: the signed request object
+  inline as `request`, alongside the `client_id` OID4VP requires to appear as
+  a query parameter as well.
+
+  Returns `nil` for a session minted before request signing landed, which has
+  no request object to carry — such a session has at most its 10-minute TTL
+  left to live.
   """
-  def build_authorization_request_uri(%Session{} = session) do
-    params = URI.encode_query(build_request_params(session, json: true))
-    "openid4vp://?" <> params
+  def build_authorization_request_uri(%Session{request_object: jwt} = session)
+      when is_binary(jwt) do
+    "openid4vp://?" <>
+      URI.encode_query(%{"client_id" => session.client_id, "request" => jwt})
   end
+
+  def build_authorization_request_uri(%Session{}), do: nil
 
   @doc """
-  Build the OID4VP authorization request object for a session, suitable for
-  returning as JSON from the pass-by-reference `request_uri` endpoint. The
-  same fields are embedded inline in the pass-by-value URI form.
+  The signed OID4VP authorization request (JAR) for a session, as served by the
+  pass-by-reference `request_uri` endpoint. `nil` for a session minted before
+  request signing landed.
   """
-  def build_request_object(%Session{} = session) do
-    build_request_params(session, json: false)
-  end
-
-  defp build_request_params(session, opts) do
-    base = ClaimUtils.base_url()
-    response_uri = "#{base}/wallet/verifier/direct_post/#{session.id}"
-    json_dcql? = Keyword.get(opts, :json, false)
-
-    %{
-      "client_id" => "verifier:#{session.workspace_id}",
-      "response_type" => "vp_token",
-      "response_mode" => "direct_post",
-      "response_uri" => response_uri,
-      "nonce" => session.nonce,
-      "state" => session.state,
-      "dcql_query" =>
-        if(json_dcql?, do: Jason.encode!(session.dcql_query), else: session.dcql_query)
-    }
-  end
+  def build_request_object(%Session{request_object: jwt}), do: jwt
 
   @doc """
   Build the short-form OID4VP URI that points at this server's
-  pass-by-reference request endpoint.
+  pass-by-reference request endpoint. The QR stays small; the wallet fetches
+  the signed request object from `request_uri`.
   """
-  def build_authorization_request_uri_ref(%Session{} = session) do
-    base = ClaimUtils.base_url()
-    request_uri = "#{base}/wallet/verifier/request/#{session.id}"
+  def build_authorization_request_uri_ref(%Session{request_object: jwt} = session)
+      when is_binary(jwt) do
+    request_uri = "#{ClaimUtils.base_url()}/wallet/verifier/request/#{session.id}"
 
-    params =
-      URI.encode_query(%{
-        "client_id" => "verifier:#{session.workspace_id}",
-        "request_uri" => request_uri
-      })
-
-    "openid4vp://?" <> params
+    "openid4vp://?" <>
+      URI.encode_query(%{"client_id" => session.client_id, "request_uri" => request_uri})
   end
+
+  def build_authorization_request_uri_ref(%Session{}), do: nil
 
   defp random_token(bytes) do
     :crypto.strong_rand_bytes(bytes) |> Base.url_encode64(padding: false)

@@ -27,4 +27,24 @@ defmodule Sovra.Ethereum.WalletReaderTest do
       assert {:error, :malformed_key} = WalletReader.decode_aligned_key(<<0, 1, 2>>)
     end
   end
+
+  describe "decode_call_body/1" do
+    test "decodes a 32-byte word" do
+      assert {:ok, <<1::256>>} =
+               WalletReader.decode_call_body("0x" <> Base.encode16(<<1::256>>, case: :lower))
+    end
+
+    # Not {:ok, 0}: nonce 0 would go on to be signed into an EIP-712 hash.
+    test "rejects an empty result" do
+      assert {:error, :empty_response} = WalletReader.decode_call_body("0x")
+    end
+
+    test "rejects a null result" do
+      assert {:error, :malformed_response} = WalletReader.decode_call_body(nil)
+    end
+
+    test "rejects a non-hex result" do
+      assert {:error, :malformed_response} = WalletReader.decode_call_body("0xzz")
+    end
+  end
 end

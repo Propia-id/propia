@@ -51,6 +51,15 @@ export type {
   HolderSigner,
 } from "./protocols/index";
 
+// DID resolution
+export {
+  resolveAssertionKey,
+  parseDidUrl,
+  didSovraAddress,
+  DidResolutionError,
+} from "./did/index";
+export type { ResolvedKey, EthCall } from "./did/index";
+
 // Utilities
 export {
   keccak256,
@@ -60,6 +69,7 @@ export {
   base64urlEncode,
   base64urlDecode,
   p256Sign,
+  p256Verify,
   p256GetPublicKey,
   p256PublicKeyToXY,
   buildDomainSeparator,

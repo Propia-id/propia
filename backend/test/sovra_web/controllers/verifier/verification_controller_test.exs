@@ -43,6 +43,25 @@ defmodule SovraWeb.Verifier.VerificationControllerTest do
       assert resp["expires_at"]
     end
 
+    # Signing the request object is a KMS round-trip, so its errors reach
+    # handle_create and used to be a CaseClauseError — a 500 with a stacktrace.
+    test "502 when the signer is unavailable", %{conn: conn} do
+      %{workspace: ws} = create_workspace()
+      {:ok, %{api_key: key}} = ApiKeys.create_api_key(ws.id, "Prod")
+
+      previous = Application.get_env(:sovra, :key_store)
+      Application.put_env(:sovra, :key_store, SovraTest.Crypto.FailingKeyStore)
+      on_exit(fn -> Application.put_env(:sovra, :key_store, previous) end)
+
+      resp =
+        conn
+        |> put_req_header("authorization", "Bearer #{key}")
+        |> post("/api/v1/verifier/verifications", %{"dcql_query" => dcql_query()})
+        |> json_response(502)
+
+      assert resp == %{"error" => "signer_unavailable"}
+    end
+
     test "401 without API key", %{conn: conn} do
       conn = post(conn, "/api/v1/verifier/verifications", %{"dcql_query" => dcql_query()})
       assert json_response(conn, 401) == %{"error" => "invalid_api_key"}

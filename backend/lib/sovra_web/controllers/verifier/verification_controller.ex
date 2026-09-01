@@ -2,6 +2,8 @@ defmodule SovraWeb.Verifier.VerificationController do
   use SovraWeb, :controller
   use OpenApiSpex.ControllerSpecs
 
+  require Logger
+
   alias Sovra.Verification
 
   tags(["Verifier OID4VP"])
@@ -51,7 +53,8 @@ defmodule SovraWeb.Verifier.VerificationController do
       400 => {"Missing or invalid DCQL", "application/json", @error},
       401 => {"Missing or invalid auth", "application/json", @error},
       403 => {"Workspace or organization inactive", "application/json", @error},
-      404 => {"Workspace not found", "application/json", @error}
+      404 => {"Workspace not found", "application/json", @error},
+      502 => {"Signer unavailable", "application/json", @error}
     }
   )
 
@@ -258,6 +261,12 @@ defmodule SovraWeb.Verifier.VerificationController do
 
       {:error, %Ecto.Changeset{}} ->
         conn |> put_status(422) |> json(%{error: "validation_error"})
+
+      # Signing the request object reaches the KMS, so anything left here is an
+      # upstream failure — not a shape to crash the request on.
+      {:error, reason} ->
+        Logger.error("create_session failed: #{inspect(reason)}")
+        conn |> put_status(502) |> json(%{error: "signer_unavailable"})
     end
   end
 end

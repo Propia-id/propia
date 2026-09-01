@@ -31,7 +31,8 @@ function makeProtocol() {
 
 function request(overrides: Partial<VPRequest> = {}): VPRequest {
   return {
-    clientId: "verifier:test-workspace",
+    clientId: "decentralized_identifier:did:sovra:0x00000000000000000000000000000000000000a1",
+    verified: true,
     nonce: "test-nonce",
     state: "test-state",
     responseUri: "http://localhost:4000/wallet/verifier/direct_post/test-session",
@@ -56,6 +57,18 @@ describe("executeDirectPost", () => {
       identity_citizen: PRESENTATION,
     });
     expect(posted[0].state).toBe("test-state");
+  });
+
+  // Unsigned, nothing binds `response_uri` to the verifier that asked.
+  // `resolveRequest` refuses this first, but holder-core is a package: the
+  // invariant has to hold at its own boundary too.
+  it("refuses a request whose signature never verified", async () => {
+    const { protocol, posted } = makeProtocol();
+
+    await expect(
+      protocol.executeDirectPost(request({ verified: false }), PRESENTATION),
+    ).rejects.toThrow(/signature verified/);
+    expect(posted).toHaveLength(0);
   });
 
   it("throws when the DCQL query carries no credential id to key on", async () => {

@@ -20,13 +20,9 @@ defmodule Sovra.Ethereum.WalletReader do
     # nonce() selector = keccak256("nonce()")[0:4] = 0xaffed0e0
     selector = ExKeccak.hash_256("nonce()") |> binary_part(0, 4)
 
-    case Client.call(%{data: selector}, to: wallet_address) do
-      {:ok, "0x" <> hex} ->
-        {nonce, _} = Integer.parse(hex, 16)
-        {:ok, nonce}
-
-      {:error, reason} ->
-        {:error, reason}
+    case call_raw(wallet_address, selector) do
+      {:ok, raw} -> {:ok, :binary.decode_unsigned(raw)}
+      {:error, _} = err -> err
     end
   end
 
@@ -122,62 +118,69 @@ defmodule Sovra.Ethereum.WalletReader do
   end
 
   defp read_user_keys_count(wallet_address) do
-    case Client.call(%{data: selector("getUserKeysCount()")}, to: wallet_address) do
-      {:ok, "0x" <> hex} ->
-        case Integer.parse(hex, 16) do
-          {n, _} -> {:ok, n}
-          :error -> {:error, :malformed_response}
-        end
-
-      {:error, _} = err ->
-        err
+    case call_raw(wallet_address, selector("getUserKeysCount()")) do
+      {:ok, raw} -> {:ok, :binary.decode_unsigned(raw)}
+      {:error, _} = err -> err
     end
   end
 
   defp read_key_hash_at(wallet_address, index) do
     data = selector("getKeyHashAt(uint256)") <> <<index::256>>
 
-    case Client.call(%{data: data}, to: wallet_address) do
-      {:ok, "0x" <> hex} ->
-        case Base.decode16(hex, case: :mixed) do
-          {:ok, <<key_hash::binary-32>>} -> {:ok, key_hash}
-          _ -> {:error, :malformed_response}
-        end
-
-      {:error, _} = err ->
-        err
+    case call_raw(wallet_address, data) do
+      {:ok, <<key_hash::binary-32>>} -> {:ok, key_hash}
+      {:ok, _} -> {:error, :malformed_response}
+      {:error, _} = err -> err
     end
   end
 
   defp read_user_key_by_hash(wallet_address, <<key_hash::binary-32>>) do
     data = selector("getUserKeyByHash(bytes32)") <> key_hash
 
-    case Client.call(%{data: data}, to: wallet_address) do
-      {:ok, "0x" <> hex} ->
-        case Base.decode16(hex, case: :mixed) do
-          {:ok, raw} -> decode_aligned_key(raw)
-          _ -> {:error, :malformed_response}
-        end
-
-      {:error, _} = err ->
-        err
+    case call_raw(wallet_address, data) do
+      {:ok, raw} -> decode_aligned_key(raw)
+      {:error, _} = err -> err
     end
   end
 
   defp selector(signature), do: ExKeccak.hash_256(signature) |> binary_part(0, 4)
 
   defp read_bytes32(wallet_address, signature) do
-    selector = ExKeccak.hash_256(signature) |> binary_part(0, 4)
+    case call_raw(wallet_address, selector(signature)) do
+      {:ok, <<bytes::binary-32>>} -> {:ok, bytes}
+      {:ok, _} -> {:error, :malformed_response}
+      {:error, _} = err -> err
+    end
+  end
 
-    case Client.call(%{data: selector}, to: wallet_address) do
-      {:ok, "0x" <> hex} ->
-        case Base.decode16(hex, case: :mixed) do
-          {:ok, <<bytes::binary-32>>} -> {:ok, bytes}
-          _ -> {:error, :malformed_response}
-        end
+  @doc """
+  Decode an `eth_call` result body. Pure; exposed for testing.
 
-      {:error, _} = err ->
-        err
+  An `eth_call` naming a function the account does not implement does not
+  revert — it returns empty, which some nodes report as "0x" and others as a
+  bare null. That is what a holder DID pointed at the wrong kind of account
+  looks like (an EIP-7702 AlignedAccount read with the legacy SovraWalletV1
+  selectors, say), and the caller records `holder_did_unresolvable` for it.
+  """
+  @spec decode_call_body(term) :: {:ok, binary} | {:error, atom}
+  def decode_call_body("0x" <> hex) do
+    case Base.decode16(hex, case: :mixed) do
+      # Zero bytes is not a value. `read_nonce` read it as nonce 0 and signed
+      # an EIP-712 hash over it.
+      {:ok, ""} -> {:error, :empty_response}
+      {:ok, raw} -> {:ok, raw}
+      :error -> {:error, :malformed_response}
+    end
+  end
+
+  def decode_call_body(_), do: {:error, :malformed_response}
+
+  # Every read goes through this, so an undecodable call is an error the caller
+  # can record rather than a crash inside the request.
+  defp call_raw(wallet_address, data) do
+    case Client.call(%{data: data}, to: wallet_address) do
+      {:ok, body} -> decode_call_body(body)
+      {:error, _} = err -> err
     end
   end
 

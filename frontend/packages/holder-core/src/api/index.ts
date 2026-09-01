@@ -85,15 +85,27 @@ export interface JsonRpcResponse<T = unknown> {
 
 // ─── API Client ───────────────────────────────────────
 
+const REQUEST_OBJECT_TIMEOUT_MS = 10_000;
+const REQUEST_OBJECT_MAX_BYTES = 128 * 1024;
+
+/** Built by hand: React Native's `URL` does not implement `origin`. */
+function originOf(url: URL): string {
+  return `${url.protocol}//${url.host}`;
+}
+
 export interface ApiClientConfig {
   l2RpcUrl: string;
+  /** The wallet's own backend: the one origin allowed to serve http. */
+  apiBase?: string;
 }
 
 export class ApiClient {
   private l2: AxiosInstance;
+  private apiOrigin?: string;
 
   constructor(config: ApiClientConfig) {
     this.l2 = axios.create({ baseURL: config.l2RpcUrl });
+    if (config.apiBase) this.apiOrigin = originOf(new URL(config.apiBase));
   }
 
   // ─── OID4VCI ──────────────────────────────────────
@@ -150,6 +162,46 @@ export class ApiClient {
   // ─── OID4VP ───────────────────────────────────────
 
   /**
+   * Fetch a pass-by-reference authorization request object. Returned as the
+   * raw compact JWS: nothing in it can be acted on before its signature has
+   * been verified, so it is deliberately not parsed here.
+   */
+  async fetchRequestObject(requestUri: string): Promise<string> {
+    this.assertSafeOrigin(requestUri, "fetch a request object from");
+
+    const { data } = await axios.get<string>(requestUri, {
+      responseType: "text",
+      transformResponse: [(body) => body as string],
+      headers: { Accept: "application/oauth-authz-req+jwt" },
+      timeout: REQUEST_OBJECT_TIMEOUT_MS,
+      maxContentLength: REQUEST_OBJECT_MAX_BYTES,
+    });
+
+    if (data.length > REQUEST_OBJECT_MAX_BYTES) {
+      throw new Error("Request object is too large");
+    }
+    return data;
+  }
+
+  /**
+   * The QR picks both the `request_uri` and the `response_uri`, so https only
+   * — bar our own backend, which is http in dev. Applied to the inbound
+   * request-object fetch *and* to the outbound vp_token submission: the second
+   * is the one carrying the citizen's claims.
+   *
+   * This bounds the transport, not the recipient: any https host passes. What
+   * binds a `response_uri` to the verifier that asked is the signature over the
+   * request object — which is why an unsigned request may not use direct_post
+   * at all, see `PresentationProtocol.fromUnsignedRequest`.
+   */
+  private assertSafeOrigin(raw: string, action: string): void {
+    const url = new URL(raw);
+    if (url.protocol === "https:") return;
+    if (this.apiOrigin && originOf(url) === this.apiOrigin) return;
+    throw new Error(`Refusing to ${action} ${originOf(url)}`);
+  }
+
+  /**
    * Submit a holder-signed vp_token to the verifier's response_uri (the
    * direct_post target carried in the OID4VP authorization request).
    */
@@ -158,6 +210,7 @@ export class ApiClient {
     vpToken: string,
     state: string,
   ): Promise<void> {
+    this.assertSafeOrigin(responseUri, "submit a credential to");
     await axios.post(responseUri, { vp_token: vpToken, state });
   }
 

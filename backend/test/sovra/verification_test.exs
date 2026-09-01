@@ -12,6 +12,11 @@ defmodule Sovra.VerificationTest do
     %{workspace: provision_workspace(ws), organization: org}
   end
 
+  defp jar_payload(jwt) do
+    [_header, payload, _sig] = String.split(jwt, ".")
+    payload |> Base.url_decode64!(padding: false) |> Jason.decode!()
+  end
+
   defp dcql_query do
     %{
       "credentials" => [
@@ -37,10 +42,19 @@ defmodule Sovra.VerificationTest do
       assert is_binary(s.nonce)
       assert is_binary(s.state)
       assert DateTime.compare(s.expires_at, DateTime.utc_now()) == :gt
-      assert String.starts_with?(uri, "openid4vp://")
-      assert String.contains?(uri, "response_mode=direct_post")
-      assert String.contains?(uri, URI.encode_www_form(s.state))
-      assert String.contains?(uri, URI.encode_www_form(s.nonce))
+
+      # Pass-by-value carries the signed request object, plus the `client_id`
+      # OID4VP requires as a query parameter of its own.
+      assert %URI{scheme: "openid4vp", query: query} = URI.parse(uri)
+      params = URI.decode_query(query)
+      assert params["client_id"] == "decentralized_identifier:#{ws.did}"
+      assert params["request"] == s.request_object
+
+      payload = jar_payload(params["request"])
+      assert payload["client_id"] == params["client_id"]
+      assert payload["response_mode"] == "direct_post"
+      assert payload["nonce"] == s.nonce
+      assert payload["state"] == s.state
     end
 
     test "returns :invalid_dcql_query when DCQL is empty" do

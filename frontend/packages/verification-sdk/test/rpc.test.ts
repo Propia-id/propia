@@ -147,4 +147,25 @@ describe("decodeResolveResult", () => {
     expect(bytesToHex(result.methods[0].pubKeyX, false)).toBe("11".repeat(32));
     expect(bytesToHex(result.methods[0].pubKeyY, false)).toBe("22".repeat(32));
   });
+
+  // A short count word parsed anyway — "00" gave a count of 0, the loop did
+  // not run, and a truncated read was reported as a DID that publishes no
+  // keys. `Number.isInteger` cannot tell the two apart.
+  it("rejects a response that ends inside the verification method count", () => {
+    const slot = (hex: string) => hex.padStart(64, "0");
+
+    const data =
+      "0x" +
+      slot((6 * 32).toString(16)) + // methods offset
+      slot((6 * 32 + 32).toString(16)) + // services offset
+      slot("65e1f400") + // created
+      slot("65e1f400") + // updated
+      slot("1") + // versionId
+      slot("0") + // deactivated
+      "00"; // the count word, cut after two characters
+
+    expect(() => decodeResolveResult(data)).toThrow(
+      /ends before the verification method count/,
+    );
+  });
 });

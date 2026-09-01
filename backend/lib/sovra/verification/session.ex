@@ -11,6 +11,8 @@ defmodule Sovra.Verification.Session do
     field :dcql_query, :map
     field :nonce, :string
     field :state, :string
+    field :client_id, :string
+    field :request_object, :string
     field :status, :string, default: "pending"
     field :holder_did, :string
     field :presentation_data, :map
@@ -23,11 +25,11 @@ defmodule Sovra.Verification.Session do
     timestamps(type: :utc_datetime)
   end
 
-  @required ~w(workspace_id dcql_query nonce state expires_at)a
+  @required ~w(workspace_id dcql_query nonce state client_id expires_at)a
 
   def create_changeset(record \\ %__MODULE__{}, attrs) do
     record
-    |> cast(attrs, @required ++ [:status])
+    |> cast(attrs, @required ++ [:status, :request_object])
     |> validate_required(@required)
     |> validate_inclusion(:status, @statuses)
     |> assoc_constraint(:workspace)

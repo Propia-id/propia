@@ -163,7 +163,7 @@ defmodule Sovra.Verification.VerifierTest do
   defp default_kb_payload(ctx, overrides \\ %{}) do
     %{
       "iss" => ctx.holder_did,
-      "aud" => "verifier:#{ctx.verifier_ws.id}",
+      "aud" => ctx.session.client_id,
       "nonce" => ctx.session.nonce,
       "iat" => System.system_time(:second),
       "sd_hash" => ctx.sd_hash
@@ -258,7 +258,7 @@ defmodule Sovra.Verification.VerifierTest do
       ctx = setup_session()
 
       payload =
-        default_kb_payload(ctx, %{"aud" => "verifier:00000000-0000-0000-0000-000000000000"})
+        default_kb_payload(ctx, %{"aud" => "decentralized_identifier:did:sovra:0xdeadbeef"})
 
       assert {:ok, session} = submit(ctx, payload, revocation_registry: StubRegistryOk)
       assert session.status == "failed"
@@ -353,7 +353,7 @@ defmodule Sovra.Verification.VerifierTest do
 
       kb_payload = %{
         "iss" => holder_did,
-        "aud" => "verifier:#{verifier_ws.id}",
+        "aud" => session.client_id,
         "nonce" => session.nonce,
         "iat" => System.system_time(:second),
         "sd_hash" => sd_hash
@@ -390,7 +390,7 @@ defmodule Sovra.Verification.VerifierTest do
 
       kb_payload = %{
         "iss" => ctx.holder_did,
-        "aud" => "verifier:#{ctx.verifier_ws.id}",
+        "aud" => session.client_id,
         "nonce" => session.nonce,
         "iat" => System.system_time(:second),
         "sd_hash" => sd_hash
@@ -609,7 +609,7 @@ defmodule Sovra.Verification.VerifierTest do
 
       kb_payload = %{
         "iss" => ctx.holder_did,
-        "aud" => "verifier:#{ctx.verifier_ws.id}",
+        "aud" => ctx.session.client_id,
         "nonce" => ctx.session.nonce,
         "iat" => System.system_time(:second),
         "sd_hash" => ctx.sd_hash
@@ -635,7 +635,7 @@ defmodule Sovra.Verification.VerifierTest do
 
       kb_payload = %{
         "iss" => ctx.holder_did,
-        "aud" => "verifier:#{ctx.verifier_ws.id}",
+        "aud" => ctx.session.client_id,
         "nonce" => ctx.session.nonce,
         "iat" => System.system_time(:second),
         "sd_hash" => ctx.sd_hash
@@ -667,7 +667,7 @@ defmodule Sovra.Verification.VerifierTest do
 
       kb_payload = %{
         "iss" => ctx.holder_did,
-        "aud" => "verifier:#{ctx.verifier_ws.id}",
+        "aud" => ctx.session.client_id,
         "nonce" => ctx.session.nonce,
         "iat" => System.system_time(:second),
         "sd_hash" => ctx.sd_hash

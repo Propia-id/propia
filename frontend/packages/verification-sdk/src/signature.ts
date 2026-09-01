@@ -5,6 +5,7 @@ import {
   base64urlEncode,
   concatBytes,
   hexToBytes,
+  p256Verify,
 } from "@sovrahq/holder-core/utils";
 
 /**
@@ -20,21 +21,12 @@ export function verifyES256(
   const signingInput = jwtRaw.slice(0, lastDot);
   const sigB64 = jwtRaw.slice(lastDot + 1);
 
-  const messageHash = sha256(new TextEncoder().encode(signingInput));
-  const sigBytes = base64urlDecode(sigB64);
-
-  if (sigBytes.length !== 64) {
-    return false;
-  }
-
-  const pubKey = concatBytes(new Uint8Array([0x04]), pubKeyX, pubKeyY);
-
-  try {
-    return p256.verify(sigBytes, messageHash, pubKey, { lowS: true, format: "compact" });
-  } catch (e) {
-    console.warn("[verification-sdk] ES256 verify error:", e);
-    return false;
-  }
+  return p256Verify(
+    sha256(new TextEncoder().encode(signingInput)),
+    base64urlDecode(sigB64),
+    pubKeyX,
+    pubKeyY,
+  );
 }
 
 // ─── WebAuthn (passkey) KB-JWT verification ──────────────

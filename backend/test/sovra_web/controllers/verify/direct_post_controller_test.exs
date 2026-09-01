@@ -126,7 +126,7 @@ defmodule SovraWeb.Verify.DirectPostControllerTest do
   defp valid_vp_token(ctx) do
     payload = %{
       "iss" => ctx.holder_did,
-      "aud" => "verifier:#{ctx.verifier_ws.id}",
+      "aud" => ctx.session.client_id,
       "nonce" => ctx.session.nonce,
       "iat" => System.system_time(:second),
       "sd_hash" => ctx.sd_hash
@@ -192,7 +192,7 @@ defmodule SovraWeb.Verify.DirectPostControllerTest do
 
       payload = %{
         "iss" => ctx.holder_did,
-        "aud" => "verifier:#{ctx.verifier_ws.id}",
+        "aud" => ctx.session.client_id,
         "nonce" => ctx.session.nonce,
         "iat" => System.system_time(:second),
         "sd_hash" => ctx.sd_hash

@@ -312,11 +312,18 @@ defmodule SovraWeb.Router do
     get "/did/:did", PresentationController, :resolve_did
   end
 
-  # Wallet direct_post submission and request retrieval (rate-limited)
+  # Wallet direct_post submission (rate-limited)
   scope "/wallet/verifier", SovraWeb.Verify do
     pipe_through [:api, :offer_rate_limited]
 
     post "/direct_post/:session_id", DirectPostController, :submit
+  end
+
+  # Pass-by-reference request object. Outside :api on purpose: wallets ask for
+  # `application/oauth-authz-req+jwt`, which `plug :accepts, ["json"]` 406s.
+  scope "/wallet/verifier", SovraWeb.Verify do
+    pipe_through :offer_rate_limited
+
     get "/request/:session_id", RequestController, :show
   end
 
