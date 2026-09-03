@@ -41,10 +41,41 @@ config :sovra, SovraWeb.Endpoint,
   pubsub_server: Sovra.PubSub,
   live_view: [signing_salt: "3pH4iC/3"]
 
-# Configure Elixir's Logger
+# Configure Elixir's Logger.
+#
+# `metadata:` governs the console/journald formatter ONLY. New Relic receives
+# every Logger metadata key regardless of this list — NewRelic.LogsInContext
+# reads `log.meta` directly — so this is about what a human tailing logs sees,
+# not about what is queryable in NRDB. Keys come from Sovra.Log.put_context/1
+# (set in the auth plugs) and from Sovra.Log.event/3 call sites.
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
-  metadata: [:request_id]
+  metadata: [
+    :request_id,
+    :event,
+    :org_id,
+    :workspace_id,
+    :user_id,
+    :api_key_id,
+    :auth_method,
+    :email_fp,
+    :email,
+    :email_domain,
+    :ip_fp,
+    :ip,
+    :sovra_address,
+    :credential_id,
+    :verification_id,
+    :delivery_id,
+    :document_id,
+    :tx_hash,
+    :op,
+    :stage,
+    :step,
+    :did,
+    :reason,
+    :oban_job_id
+  ]
 
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason

@@ -13,30 +13,56 @@ defmodule Sovra.Webhooks.DeliveryJob do
   """
 
   use Oban.Worker, queue: :webhooks, max_attempts: 8
+  use Sovra.Log
 
   alias Sovra.Crypto.HmacKeyStore
   alias Sovra.Repo
   alias Sovra.Workspaces.Workspace
 
-  require Logger
-
   @impl Oban.Worker
-  def perform(%Oban.Job{
-        args: %{"workspace_id" => workspace_id, "event" => event, "payload" => payload}
-      }) do
+  def perform(
+        %Oban.Job{
+          args: %{"workspace_id" => workspace_id, "event" => event, "payload" => payload} = args
+        } = job
+      ) do
+    Log.adopt_job_context(job)
+
+    Log.put_context(
+      workspace_id: workspace_id,
+      event_type: event,
+      delivery_id: args["delivery_id"]
+    )
+
     case Repo.get(Workspace, workspace_id) do
       nil ->
-        {:discard, :workspace_not_found}
+        discard(:workspace_not_found)
 
       %Workspace{webhook_url: nil} ->
+        # Not a failure: the workspace has no destination configured, which is
+        # the documented no-op. Logged so a customer asking "why no webhooks"
+        # has an answer.
+        Log.event(:info, "webhook skipped, no destination configured",
+          event: "webhook.skipped",
+          reason: :no_webhook_url
+        )
+
         :ok
 
       %Workspace{webhook_secret_key_id: nil} ->
-        {:discard, :webhook_secret_not_configured}
+        discard(:webhook_secret_not_configured)
 
       %Workspace{webhook_url: url, webhook_secret_key_id: key_id} ->
         deliver(url, key_id, event, payload)
     end
+  end
+
+  defp discard(reason) do
+    Log.event(:warning, "webhook discarded",
+      event: "webhook.discarded",
+      reason: reason
+    )
+
+    {:discard, reason}
   end
 
   defp deliver(url, key_id, event, payload) do
@@ -68,20 +94,51 @@ defmodule Sovra.Webhooks.DeliveryJob do
         %{event: event, status: resp.status}
       )
 
-      classify(resp.status, event)
+      classify(resp.status, duration_ms(duration))
     else
       {:error, reason} ->
-        Logger.warning("Webhook delivery transport error: #{inspect(reason)}")
+        Log.event(:warning, "webhook delivery transport error",
+          event: "webhook.failed",
+          reason: Log.reason(reason)
+        )
+
         {:error, reason}
     end
   end
 
-  defp classify(status, _event) when status in 200..299, do: :ok
+  defp duration_ms(native), do: System.convert_time_unit(native, :native, :millisecond)
 
-  defp classify(status, event) when status in 400..499 do
-    Logger.warning("Webhook delivery got #{status} for event #{event}; discarding")
+  defp classify(status, ms) when status in 200..299 do
+    Log.event(:info, "webhook delivered",
+      event: "webhook.delivered",
+      status: status,
+      duration_ms: ms
+    )
+
+    :ok
+  end
+
+  # A 4xx is the consumer's bug and retrying cannot help, so the event is the
+  # only record that the customer's endpoint rejected us.
+  defp classify(status, ms) when status in 400..499 do
+    Log.event(:warning, "webhook delivery rejected by consumer",
+      event: "webhook.discarded",
+      reason: :client_error,
+      status: status,
+      duration_ms: ms
+    )
+
     {:discard, {:client_error, status}}
   end
 
-  defp classify(status, _event), do: {:error, {:remote_error, status}}
+  defp classify(status, ms) do
+    Log.event(:warning, "webhook delivery failed, will retry",
+      event: "webhook.failed",
+      reason: :remote_error,
+      status: status,
+      duration_ms: ms
+    )
+
+    {:error, {:remote_error, status}}
+  end
 end

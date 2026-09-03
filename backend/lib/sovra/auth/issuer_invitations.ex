@@ -9,6 +9,8 @@ defmodule Sovra.Auth.IssuerInvitations do
   email is the channel, as in `Sovra.Auth.PasswordReset`.
   """
 
+  use Sovra.Log
+
   import Ecto.Query
 
   alias Sovra.Accounts
@@ -42,16 +44,30 @@ defmodule Sovra.Auth.IssuerInvitations do
         })
       )
       |> Oban.insert(:email, fn %{invitation: invitation} ->
-        MailerJob.new(%{
-          kind: "issuer_invitation",
-          email: invitation.email,
-          encrypted_token: ArgsCrypto.encrypt(token)
-        })
+        MailerJob.new(
+          Log.job_args(%{
+            kind: "issuer_invitation",
+            email: invitation.email,
+            encrypted_token: ArgsCrypto.encrypt(token)
+          })
+        )
       end)
       |> Repo.transaction()
       |> case do
-        {:ok, %{invitation: invitation}} -> {:ok, invitation}
-        {:error, _step, reason, _changes} -> {:error, reason}
+        {:ok, %{invitation: invitation}} ->
+          # The invitation flow is one of the two paths that create an
+          # organization, and it was entirely unlogged.
+          Log.event(:info, "invitation created",
+            event: "invitation.created",
+            invitation_id: invitation.id,
+            invited_by: invited_by_user_id,
+            email: invitation.email
+          )
+
+          {:ok, invitation}
+
+        {:error, _step, reason, _changes} ->
+          {:error, reason}
       end
     end
   end
@@ -81,16 +97,27 @@ defmodule Sovra.Auth.IssuerInvitations do
         )
       )
       |> Oban.insert(:email, fn %{invitation: invitation} ->
-        MailerJob.new(%{
-          kind: "issuer_invitation_code",
-          email: invitation.email,
-          encrypted_code: ArgsCrypto.encrypt(code)
-        })
+        MailerJob.new(
+          Log.job_args(%{
+            kind: "issuer_invitation_code",
+            email: invitation.email,
+            encrypted_code: ArgsCrypto.encrypt(code)
+          })
+        )
       end)
       |> Repo.transaction()
       |> case do
-        {:ok, _changes} -> {:ok, %{email: invitation.email}}
-        {:error, _step, reason, _changes} -> {:error, reason}
+        {:ok, _changes} ->
+          Log.event(:info, "invitation code requested",
+            event: "invitation.code_requested",
+            invitation_id: invitation.id,
+            email: invitation.email
+          )
+
+          {:ok, %{email: invitation.email}}
+
+        {:error, _step, reason, _changes} ->
+          {:error, reason}
       end
     end
   end
@@ -107,8 +134,37 @@ defmodule Sovra.Auth.IssuerInvitations do
   def accept(token, code, %{full_name: _, organization_name: _, password: _} = attrs) do
     with {:ok, invitation} <- fetch_pending(token),
          :ok <- verify_code(invitation, code) do
-      claim_and_register(invitation, attrs)
+      case claim_and_register(invitation, attrs) do
+        {:ok, result} ->
+          Log.event(:info, "invitation accepted",
+            event: "invitation.accepted",
+            invitation_id: invitation.id,
+            user_id: result.user.id,
+            org_id: result.organization.id
+          )
+
+          {:ok, result}
+
+        {:error, reason} ->
+          reject_invitation(reason, invitation.id)
+      end
+    else
+      {:error, reason} -> reject_invitation(reason, nil)
     end
+  end
+
+  # Code attempts are capped (@max_code_attempts) and every rejection reason is
+  # distinct, so a brute-force attempt on one invitation is countable.
+  defp reject_invitation(reason, invitation_id) do
+    # `reason` can be an Ecto.Changeset from the registration inside
+    # claim_and_register/2, whose changes hold the submitted email and name.
+    Log.event(:warning, "invitation rejected",
+      event: "invitation.rejected",
+      reason: Log.reason(reason),
+      invitation_id: invitation_id
+    )
+
+    {:error, reason}
   end
 
   @doc "Invitations still redeemable, newest first."
@@ -140,6 +196,17 @@ defmodule Sovra.Auth.IssuerInvitations do
         invitation
         |> IssuerInvitation.revoke_changeset(now())
         |> Repo.update()
+        |> tap(fn
+          {:ok, _} ->
+            Log.event(:info, "invitation revoked",
+              event: "invitation.revoked",
+              invitation_id: invitation.id,
+              email: invitation.email
+            )
+
+          {:error, _} ->
+            :ok
+        end)
       end
     else
       _ -> {:error, :not_found}

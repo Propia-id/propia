@@ -6,6 +6,8 @@ defmodule Sovra.Workspaces.ApiKeys do
   so historical `last_used_at` audits survive.
   """
 
+  use Sovra.Log
+
   import Ecto.Query
 
   alias Sovra.Issuer.TokenHash
@@ -30,8 +32,21 @@ defmodule Sovra.Workspaces.ApiKeys do
       })
 
     case Repo.insert(changeset) do
-      {:ok, record} -> {:ok, %{api_key: plaintext, record: record}}
-      {:error, _} = error -> error
+      {:ok, record} ->
+        # An API key is a bearer credential for the whole workspace, so its
+        # creation and revocation are the audit trail for who could issue
+        # credentials and when. The actor comes from the request's log context.
+        Log.event(:info, "API key created",
+          event: "workspace.api_key.created",
+          workspace_id: workspace_id,
+          api_key_id: record.id,
+          api_key_name: name
+        )
+
+        {:ok, %{api_key: plaintext, record: record}}
+
+      {:error, _} = error ->
+        error
     end
   end
 
@@ -54,6 +69,19 @@ defmodule Sovra.Workspaces.ApiKeys do
     record
     |> ApiKey.revoke_changeset()
     |> Repo.update()
+    |> tap(fn
+      {:ok, _} ->
+        Log.event(:info, "API key revoked",
+          event: "workspace.api_key.revoked",
+          workspace_id: record.workspace_id,
+          api_key_id: record.id,
+          api_key_name: record.name,
+          last_used_at: record.last_used_at
+        )
+
+      {:error, _} ->
+        :ok
+    end)
   end
 
   @doc """

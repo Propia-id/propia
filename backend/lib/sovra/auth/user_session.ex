@@ -5,7 +5,7 @@ defmodule Sovra.Auth.UserSession do
   via the token denylist.
   """
 
-  require Logger
+  use Sovra.Log
 
   alias Sovra.Auth.TokenDenylist
 
@@ -69,7 +69,13 @@ defmodule Sovra.Auth.UserSession do
       end
     rescue
       e in [ArgumentError, FunctionClauseError, ErlangError] ->
-        Logger.warning("User session verification failed: #{inspect(e)}")
+        Log.event(:warning, "session token rejected",
+          event: "auth.session.rejected",
+          token_kind: :dashboard,
+          reason: :verification_raised,
+          detail: Log.reason(e)
+        )
+
         {:error, :invalid}
     end
   end

@@ -10,9 +10,9 @@ defmodule Sovra.Auth.RefreshTokens do
   user is revoked (theft response).
   """
 
-  import Ecto.Query
+  use Sovra.Log
 
-  require Logger
+  import Ecto.Query
 
   alias Sovra.Auth.RefreshToken
   alias Sovra.Repo
@@ -81,8 +81,12 @@ defmodule Sovra.Auth.RefreshTokens do
         # Either unknown, expired, or already revoked. Distinguish:
         case Repo.one(from(rt in RefreshToken, where: rt.token_hash == ^hashed, limit: 1)) do
           %RefreshToken{revoked_at: revoked_at, user_id: user_id} when not is_nil(revoked_at) ->
-            Logger.warning(
-              "Refresh-token reuse detected for user #{user_id} — revoking entire family"
+            # A revoked token being presented again means either a stolen
+            # cookie or a broken client. Either way the whole family is
+            # revoked, which logs the user out everywhere — worth an alert.
+            Log.event(:warning, "refresh token reuse detected",
+              event: "auth.refresh_token.reuse_detected",
+              user_id: user_id
             )
 
             :ok = revoke_all_for_user(user_id)

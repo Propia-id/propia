@@ -19,7 +19,7 @@ defmodule Sovra.DID.QuarkidSovraMethod do
   retries.
   """
 
-  require Logger
+  use Sovra.Log
 
   alias Sovra.DID.DocumentCache
 
@@ -86,11 +86,26 @@ defmodule Sovra.DID.QuarkidSovraMethod do
         end
 
       {:ok, %{status: status}} ->
-        Logger.warning("Quarkid resolver returned status #{status} for #{did}")
+        # A holder DID that will not resolve is the leading cause of the
+        # verifier's `holder_did_unresolvable` failures, so the two are meant
+        # to be joined on `did`.
+        Log.event(:error, "DID resolver returned an error status",
+          event: "did.resolution.failed",
+          did_method: :quarkid,
+          did: did,
+          status: status
+        )
+
         {:error, :did_unresolvable}
 
       {:error, reason} ->
-        Logger.warning("Quarkid resolver transport error for #{did}: #{inspect(reason)}")
+        Log.event(:error, "DID resolver transport error",
+          event: "did.resolution.failed",
+          did_method: :quarkid,
+          did: did,
+          reason: Log.reason(reason)
+        )
+
         {:error, :did_unresolvable}
     end
   end

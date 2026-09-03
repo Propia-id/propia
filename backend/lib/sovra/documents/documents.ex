@@ -7,6 +7,8 @@ defmodule Sovra.Documents do
   do not store it, it exists nowhere.
   """
 
+  use Sovra.Log
+
   alias Sovra.Documents.Attestation
   alias Sovra.Documents.DocumentLayout
   alias Sovra.Documents.SignedDocument
@@ -19,8 +21,6 @@ defmodule Sovra.Documents do
   alias Sovra.Workspaces
 
   import Ecto.Query
-
-  require Logger
 
   @doc """
   Signs and stores a document for `schema_id` with `claims`, then anchors the
@@ -57,13 +57,28 @@ defmodule Sovra.Documents do
         {:ok, document} ->
           # Never log the credential itself: it carries the claim values, and
           # anyone holding it can present the document.
-          Logger.info("[Documents] signed id=#{document.id} digest=#{hex(document.digest)}")
+          Log.event(:info, "document signed",
+            event: "document.signed",
+            document_id: document.id,
+            workspace_id: workspace.id,
+            schema_id: schema.id,
+            digest: hex(document.digest),
+            visibility: document.visibility
+          )
 
           document = anchor(document, workspace, schema)
           {:ok, Repo.preload(document, [:schema, :workspace])}
 
         {:error, changeset} ->
-          Logger.warning("[Documents] insert failed: #{inspect(changeset.errors)}")
+          # Field NAMES only. `inspect(changeset.errors)` used to be here, and
+          # an Ecto error tuple can carry the submitted value with it.
+          Log.event(:warning, "document insert failed",
+            event: "document.rejected",
+            workspace_id: workspace.id,
+            schema_id: schema.id,
+            reason: Log.reason(changeset)
+          )
+
           {:error, changeset}
       end
     end
@@ -100,7 +115,13 @@ defmodule Sovra.Documents do
 
     case signature_registry().record(workspace.eoa_address, type_id, document.digest, r, s) do
       {:ok, tx_hash} ->
-        Logger.info("[Documents] anchored id=#{document.id} tx=#{tx_hash}")
+        Log.event(:info, "document anchored",
+          event: "document.anchored",
+          document_id: document.id,
+          workspace_id: workspace.id,
+          tx_hash: tx_hash,
+          digest: hex(document.digest)
+        )
 
         set_status(document, %{
           status: "anchored",
@@ -110,10 +131,17 @@ defmodule Sovra.Documents do
 
       {:error, reason} ->
         # Signer and type id go here rather than on the happy path: a revert is
-        # almost always one of the two not matching the registries.
-        Logger.error(
-          "[Documents] anchoring failed id=#{document.id} signer=#{workspace.eoa_address} " <>
-            "type_id=#{hex(type_id)} reason=#{inspect(reason)}"
+        # almost always one of the two not matching the registries. A verifier
+        # rejects an unanchored document, so this row is unusable and has to be
+        # reissued — which is why it is an error, not a warning.
+        Log.event(:error, "document anchoring failed",
+          event: "document.anchoring_failed",
+          document_id: document.id,
+          workspace_id: workspace.id,
+          eoa_address: workspace.eoa_address,
+          type_id: hex(type_id),
+          digest: hex(document.digest),
+          reason: Log.reason(reason)
         )
 
         set_status(document, %{status: "failed"})
@@ -175,6 +203,21 @@ defmodule Sovra.Documents do
       document
       |> SignedDocument.visibility_changeset(visibility)
       |> Repo.update()
+      |> tap(fn
+        {:ok, updated} ->
+          # `public` means holding the id is the whole authorization, so this
+          # is the moment a document becomes readable by anyone with the link.
+          Log.event(:info, "document visibility changed",
+            event: "document.visibility.changed",
+            document_id: updated.id,
+            workspace_id: workspace_id,
+            previous_visibility: document.visibility,
+            visibility: updated.visibility
+          )
+
+        {:error, _} ->
+          :ok
+      end)
     end
   end
 

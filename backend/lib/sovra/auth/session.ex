@@ -4,7 +4,7 @@ defmodule Sovra.Auth.Session do
   Tokens are HMAC-SHA256 signed, 15-minute expiry, stateless.
   """
 
-  require Logger
+  use Sovra.Log
 
   @session_ttl 900
 
@@ -54,7 +54,13 @@ defmodule Sovra.Auth.Session do
       end
     rescue
       e in [ArgumentError, FunctionClauseError, ErlangError] ->
-        Logger.warning("Session verification failed: #{inspect(e)}")
+        Log.event(:warning, "session token rejected",
+          event: "auth.session.rejected",
+          token_kind: :guardian,
+          reason: :verification_raised,
+          detail: Log.reason(e)
+        )
+
         {:error, :invalid}
     end
   end

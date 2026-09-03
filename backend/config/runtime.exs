@@ -86,6 +86,21 @@ if newrelic_app_name && newrelic_license_key do
     logs_in_context: :direct
 end
 
+# --- Log fingerprint key (both roles) --------------------------------------
+# Sovra.Log.fingerprint/1 tags pre-authentication events (a failed login, a
+# reset request for an unknown address) with a keyed digest of the email or
+# OAuth subject instead of the value itself, because these logs leave the host
+# for New Relic. See Sovra.Log and docs/plans/backend-logging.md.
+#
+# Must be IDENTICAL on every node and STABLE across deploys, or the same
+# address yields different fingerprints and stops correlating. Must not be
+# reused from any signing or webhook HMAC key. When unset (local dev, tests)
+# the attribute is simply omitted.
+case env.("LOG_FINGERPRINT_KEY") do
+  key when is_binary(key) -> config :sovra, :log_fingerprint_key, key
+  nil -> :ok
+end
+
 # One release, two roles (see Sovra.Application). SERVICE=signer boots the KMS
 # signer service (no DB / endpoint); anything else is a full API node.
 service = System.get_env("SERVICE", "api")

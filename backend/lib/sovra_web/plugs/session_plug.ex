@@ -8,6 +8,8 @@ defmodule SovraWeb.Plugs.SessionPlug do
       seconds of now (step-up / fresh-auth check). Returns 403 if stale.
   """
 
+  use Sovra.Log
+
   import Plug.Conn
   import Phoenix.Controller, only: [json: 2]
 
@@ -19,6 +21,8 @@ defmodule SovraWeb.Plugs.SessionPlug do
     with ["Bearer " <> token] <- get_req_header(conn, "authorization"),
          {:ok, %{sovra_address: address, iat: iat}} <- Sovra.Auth.Session.verify(token),
          :ok <- check_freshness(iat, max_age) do
+      Log.put_context(sovra_address: address, auth_method: :guardian_session)
+
       assign(conn, :current_holder, %{sovra_address: address})
     else
       [] ->

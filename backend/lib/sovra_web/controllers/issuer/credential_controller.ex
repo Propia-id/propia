@@ -1,6 +1,7 @@
 defmodule SovraWeb.Issuer.CredentialController do
   use SovraWeb, :controller
   use OpenApiSpex.ControllerSpecs
+  use Sovra.Log
 
   alias Sovra.Issuer
 
@@ -161,7 +162,16 @@ defmodule SovraWeb.Issuer.CredentialController do
           conn |> put_status(429) |> json(%{error: "too_many_attempts"})
 
         {:error, reason} ->
-          conn |> put_status(500) |> json(%{error: inspect(reason)})
+          # Every expected failure is matched above, so anything reaching here
+          # is ours. It used to return `inspect(reason)` to the wallet and log
+          # nothing at all — leaking internals outward and telling us nothing.
+          Log.event(:error, "credential issuance failed unexpectedly",
+            event: "credential.issuance.errored",
+            stage: "token",
+            reason: Log.reason(reason)
+          )
+
+          conn |> put_status(500) |> json(%{error: "server_error"})
       end
     end
   end
@@ -194,7 +204,13 @@ defmodule SovraWeb.Issuer.CredentialController do
           conn |> put_status(400) |> json(%{error: "credential_already_issued"})
 
         {:error, reason} ->
-          conn |> put_status(500) |> json(%{error: inspect(reason)})
+          Log.event(:error, "credential issuance failed unexpectedly",
+            event: "credential.issuance.errored",
+            stage: "credential",
+            reason: Log.reason(reason)
+          )
+
+          conn |> put_status(500) |> json(%{error: "server_error"})
       end
     end
   end

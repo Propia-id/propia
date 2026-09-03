@@ -45,6 +45,12 @@ config :sovra, :stored_keys_encryption_key, String.duplicate("insecure-dev-key",
 # provider — otherwise it polls the EC2 metadata endpoint on boot.
 config :aws_credentials, credential_providers: [:aws_credentials_env]
 
+# ...and it narrates the resulting "no credentials" outcome on every poll. Those
+# lines come from its own process, so ExUnit's per-test capture never sees them
+# and they land straight in the suite's output. Silenced by application rather
+# than by lifting the primary level, which would also hide Sovra.Log events.
+config :logger, :aws_credentials_level, :none
+
 # KMS signer — stub the AWS KMS backend (in-memory real P-256 keys) so
 # Sovra.Signer.Kms / Router tests exercise the DER/low-s/SPKI paths without AWS.
 config :sovra, :kms_backend, SovraTest.Crypto.StubKms
@@ -79,7 +85,12 @@ config :sovra, Sovra.Mailer, adapter: Swoosh.Adapters.Test
 config :bcrypt_elixir, log_rounds: 4
 
 # Print only warnings and errors during test
-config :logger, level: :warning
+# :info, not :warning — Sovra.Log business events are emitted at :info and the
+# primary level gates events before any handler sees them, so :warning would
+# make every event assertion in test/support/log_helpers.ex unfalsifiable.
+# ExUnit.start(capture_log: true) keeps the output quiet: logs are buffered per
+# test and printed only for failures.
+config :logger, level: :info
 
 # Never report from the suite, even if NEW_RELIC_* is exported in a shell.
 config :new_relic_agent, harvest_enabled: false

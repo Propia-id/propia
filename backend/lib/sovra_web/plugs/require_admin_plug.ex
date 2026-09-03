@@ -4,6 +4,8 @@ defmodule SovraWeb.Plugs.RequireAdminPlug do
   Must be used after UserSessionPlug.
   """
 
+  use Sovra.Log
+
   import Plug.Conn
   import Phoenix.Controller, only: [json: 2]
 
@@ -14,7 +16,14 @@ defmodule SovraWeb.Plugs.RequireAdminPlug do
       %{is_admin: true} ->
         conn
 
-      _ ->
+      other ->
+        Log.event(:warning, "platform admin required",
+          event: "authz.denied",
+          reason: if(other, do: :insufficient_role, else: :no_session),
+          required_role: "platform_admin",
+          path: conn.request_path
+        )
+
         conn |> put_status(403) |> json(%{error: "admin_required"}) |> halt()
     end
   end

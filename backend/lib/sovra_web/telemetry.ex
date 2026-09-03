@@ -1,93 +1,89 @@
 defmodule SovraWeb.Telemetry do
-  use Supervisor
-  import Telemetry.Metrics
+  @moduledoc """
+  The bridge from this app's own `:telemetry` events to New Relic metrics.
 
-  def start_link(arg) do
-    Supervisor.start_link(__MODULE__, arg, name: __MODULE__)
+  ## What consumes telemetry here
+
+  Almost nothing needs wiring, because `new_relic_agent` attaches its own
+  instrumenters at boot:
+
+    * Phoenix endpoint and router events become `Transaction` events, carrying
+      `path`, `status` and `duration` — which is why the alert conditions read
+      `Transaction` rather than any metric defined here.
+    * Ecto query events become `Transaction` and `Span` attributes.
+    * Oban job events become `Transaction` events carrying `oban.worker`,
+      `oban.queue` and `oban.job.result`.
+    * BEAM statistics arrive on their own 15s cycle as `ElixirSample` with
+      `category = 'BeamStat'` (memory, run queue, process count). Those come
+      from the agent's **own** sampler (`NewRelic.Sampler.Beam`, which calls
+      `:erlang.statistics/1` directly) — it consumes no `:telemetry` events, so
+      nothing here needs to feed it.
+
+  This module previously declared 20 `Telemetry.Metrics` definitions and
+  attached no reporter, so they measured nothing and duplicated the list above.
+  It also supervised a `:telemetry_poller` configured with `measurements: []`,
+  which polled nothing and which nothing read. Both are gone, along with the
+  `telemetry_metrics` and `telemetry_poller` dependencies that existed only to
+  serve them, and this module is no longer a supervisor — `attach_handlers/0`
+  is called from `Sovra.Application` at boot.
+
+  ## What does need wiring
+
+  The application's own `:telemetry` events, which no library knows about.
+  `attach_handlers/0` bridges them to New Relic custom metrics, so a rate or a
+  latency distribution is a metric rather than something to `count(*)` over
+  logs. Business *events* stay in the log (see `Sovra.Log`) — the two are
+  complementary: the log answers "what happened to this credential", the metric
+  answers "how often, and how slowly".
+
+  Reporting is skipped when the agent is dormant (no `NEW_RELIC_LICENSE_KEY`),
+  which is every local and test run.
+  """
+
+  @webhook_delivery [:sovra, :webhook, :delivery]
+
+  @doc """
+  Attaches the handlers that bridge this app's `:telemetry` events to New Relic.
+
+  Idempotent: re-attaching the same handler id is a no-op, which matters when
+  the application restarts inside one VM (releases, `iex -S mix`).
+  """
+  def attach_handlers do
+    :telemetry.attach(
+      "sovra-webhook-delivery-metrics",
+      @webhook_delivery,
+      &__MODULE__.handle_webhook_delivery/4,
+      %{}
+    )
+    |> case do
+      :ok -> :ok
+      {:error, :already_exists} -> :ok
+    end
   end
 
-  @impl true
-  def init(_arg) do
-    children = [
-      # Telemetry poller will execute the given period measurements
-      # every 10_000ms. Learn more here: https://hexdocs.pm/telemetry_metrics
-      {:telemetry_poller, measurements: periodic_measurements(), period: 10_000}
-      # Add reporters as children of your supervision tree.
-      # {Telemetry.Metrics.ConsoleReporter, metrics: metrics()}
-    ]
+  @doc false
+  def handle_webhook_delivery(@webhook_delivery, %{duration: duration}, metadata, _config) do
+    if reporting?() do
+      ms = System.convert_time_unit(duration, :native, :millisecond)
 
-    Supervisor.init(children, strategy: :one_for_one)
+      NewRelic.report_custom_metric("Custom/Webhook/DeliveryDuration", ms)
+      NewRelic.increment_custom_metric("Custom/Webhook/Delivery/#{status_class(metadata)}")
+    end
+
+    :ok
   end
 
-  def metrics do
-    [
-      # Phoenix Metrics
-      summary("phoenix.endpoint.start.system_time",
-        unit: {:native, :millisecond}
-      ),
-      summary("phoenix.endpoint.stop.duration",
-        unit: {:native, :millisecond}
-      ),
-      summary("phoenix.router_dispatch.start.system_time",
-        tags: [:route],
-        unit: {:native, :millisecond}
-      ),
-      summary("phoenix.router_dispatch.exception.duration",
-        tags: [:route],
-        unit: {:native, :millisecond}
-      ),
-      summary("phoenix.router_dispatch.stop.duration",
-        tags: [:route],
-        unit: {:native, :millisecond}
-      ),
-      summary("phoenix.socket_connected.duration",
-        unit: {:native, :millisecond}
-      ),
-      sum("phoenix.socket_drain.count"),
-      summary("phoenix.channel_joined.duration",
-        unit: {:native, :millisecond}
-      ),
-      summary("phoenix.channel_handled_in.duration",
-        tags: [:event],
-        unit: {:native, :millisecond}
-      ),
+  # A per-status-code metric would be unbounded; the class is what a dashboard
+  # actually plots.
+  defp status_class(%{status: status}) when status in 200..299, do: "ok"
+  defp status_class(%{status: status}) when status in 400..499, do: "client_error"
+  defp status_class(%{status: status}) when status in 500..599, do: "server_error"
+  defp status_class(_metadata), do: "other"
 
-      # Database Metrics
-      summary("sovra.repo.query.total_time",
-        unit: {:native, :millisecond},
-        description: "The sum of the other measurements"
-      ),
-      summary("sovra.repo.query.decode_time",
-        unit: {:native, :millisecond},
-        description: "The time spent decoding the data received from the database"
-      ),
-      summary("sovra.repo.query.query_time",
-        unit: {:native, :millisecond},
-        description: "The time spent executing the query"
-      ),
-      summary("sovra.repo.query.queue_time",
-        unit: {:native, :millisecond},
-        description: "The time spent waiting for a database connection"
-      ),
-      summary("sovra.repo.query.idle_time",
-        unit: {:native, :millisecond},
-        description:
-          "The time the connection spent waiting before being checked out for the query"
-      ),
-
-      # VM Metrics
-      summary("vm.memory.total", unit: {:byte, :kilobyte}),
-      summary("vm.total_run_queue_lengths.total"),
-      summary("vm.total_run_queue_lengths.cpu"),
-      summary("vm.total_run_queue_lengths.io")
-    ]
-  end
-
-  defp periodic_measurements do
-    [
-      # A module, function and arguments to be invoked periodically.
-      # This function must call :telemetry.execute/3 and a metric must be added above.
-      # {SovraWeb, :count_users, []}
-    ]
+  defp reporting? do
+    case Application.get_env(:new_relic_agent, :license_key) do
+      key when is_binary(key) and key != "" -> true
+      _ -> false
+    end
   end
 end

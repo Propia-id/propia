@@ -15,7 +15,11 @@ defmodule Sovra.Ethereum.IssuerRegistry do
   """
   def register_issuer(issuer_address, credential_type_ids) do
     IssuerRegistryContract.register_issuer(issuer_address, credential_type_ids)
-    |> Client.send_transaction(to: contract_address())
+    |> Client.send_transaction(
+      to: contract_address(),
+      op: :issuer_register,
+      subject_id: issuer_address
+    )
   end
 
   @doc """
@@ -23,7 +27,11 @@ defmodule Sovra.Ethereum.IssuerRegistry do
   """
   def add_credential_types(issuer_address, credential_type_ids) do
     IssuerRegistryContract.add_credential_types(issuer_address, credential_type_ids)
-    |> Client.send_transaction(to: contract_address())
+    |> Client.send_transaction(
+      to: contract_address(),
+      op: :credential_type_register,
+      subject_id: issuer_address
+    )
   end
 
   @doc """

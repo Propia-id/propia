@@ -24,7 +24,11 @@ defmodule Sovra.Ethereum.SignatureRegistry do
   """
   def record(signer_address, type_id, digest, r, s) do
     SignatureRegistryContract.record(signer_address, type_id, digest, r, s)
-    |> Client.send_transaction(to: contract_address())
+    |> Client.send_transaction(
+      to: contract_address(),
+      op: :document_anchor,
+      subject_id: Base.encode16(digest, case: :lower)
+    )
   end
 
   @doc """

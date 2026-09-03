@@ -4,9 +4,11 @@ defmodule Sovra.Guardian do
   blind hash co-signing, key rotation, and recovery.
   """
 
-  alias Sovra.Guardian.HolderRecord
-  alias Sovra.Crypto.Key
+  use Sovra.Log
+
   alias Sovra.Auth.Session
+  alias Sovra.Crypto.Key
+  alias Sovra.Guardian.HolderRecord
   alias Sovra.Repo
 
   def onboard(sovra_address, oauth_token) do
@@ -17,6 +19,19 @@ defmodule Sovra.Guardian do
           # Same Google account on a different device — login instead of onboard
           {:ok, session_token} = Session.create(sovra_address)
 
+          # `requested_sovra_address` is logged whenever it differs from the
+          # holder's own: this branch mints the session for the *requested*
+          # address while returning the *existing* one, so a mismatch means
+          # the session is bound to an address with no holder record behind it.
+          Log.event(:info, "guardian authenticated on a new device",
+            event: "guardian.authenticated",
+            via: :onboard,
+            sovra_address: existing_holder.sovra_address,
+            requested_sovra_address:
+              if(existing_holder.sovra_address != sovra_address, do: sovra_address),
+            oauth_subject: sub
+          )
+
           {:ok,
            %{
              sovra_address: existing_holder.sovra_address,
@@ -26,6 +41,18 @@ defmodule Sovra.Guardian do
         {:error, :holder_not_found} ->
           create_new_holder(sovra_address, sub)
       end
+    else
+      {:error, reason} ->
+        Log.event(:warning, "guardian onboarding rejected",
+          event: "guardian.onboard.rejected",
+          sovra_address: sovra_address,
+          reason: Log.reason(reason)
+        )
+
+        {:error, reason}
+
+      other ->
+        other
     end
   end
 
@@ -45,6 +72,13 @@ defmodule Sovra.Guardian do
 
     case Repo.insert(changeset) do
       {:ok, _record} ->
+        Log.event(:info, "guardian holder onboarded",
+          event: "guardian.onboarded",
+          sovra_address: sovra_address,
+          recovery_key_id: key_id,
+          oauth_subject: oauth_subject
+        )
+
         {:ok, session_token} = Session.create(sovra_address)
 
         {:ok,
@@ -57,6 +91,16 @@ defmodule Sovra.Guardian do
          }}
 
       {:error, changeset} ->
+        # The recovery key was already generated and is NOT deleted on this
+        # path, unlike rotate_recovery_key/1 — so the key id is recorded here
+        # as the only trace of an orphaned key.
+        Log.event(:error, "guardian onboarding failed after key generation",
+          event: "guardian.onboard.rejected",
+          sovra_address: sovra_address,
+          orphaned_recovery_key_id: key_id,
+          reason: Log.reason(changeset)
+        )
+
         {:error, {:changeset, changeset}}
     end
   end
@@ -65,9 +109,27 @@ defmodule Sovra.Guardian do
     with {:ok, %{sub: sub}} <- auth_provider().verify_id_token(oauth_token),
          {:ok, holder} <- get_holder_by_oauth_subject(sub),
          {:ok, session_token} <- Session.create(holder.sovra_address) do
+      Log.event(:info, "guardian authenticated",
+        event: "guardian.authenticated",
+        via: :id_token,
+        sovra_address: holder.sovra_address,
+        oauth_subject: sub
+      )
+
       expires_at = System.system_time(:second) + 900
 
       {:ok, %{session_token: session_token, expires_at: expires_at}}
+    else
+      {:error, reason} ->
+        Log.event(:warning, "guardian authentication rejected",
+          event: "guardian.auth.rejected",
+          reason: Log.reason(reason)
+        )
+
+        {:error, reason}
+
+      other ->
+        other
     end
   end
 
@@ -83,12 +145,58 @@ defmodule Sovra.Guardian do
   end
 
   def handle_auth_callback(code, state) do
-    with {:ok, sovra_address} <- decode_state(state),
-         {:ok, %{sub: sub, provider: _provider}} <- auth_provider().handle_callback(code),
-         {:ok, holder} <- get_active_holder(sovra_address),
-         :ok <- verify_oauth_binding(holder, sub) do
-      Session.create(holder.sovra_address)
+    # Split from the rest of the chain so the OAuth-binding check below can log
+    # the address it was made against: a `with/else` cannot see the bindings
+    # made inside its own chain.
+    with {:ok, sovra_address} <- decode_state(state) do
+      do_auth_callback(code, sovra_address)
+    else
+      {:error, reason} -> reject_oauth_callback(nil, reason)
+      other -> other
     end
+  end
+
+  defp do_auth_callback(code, sovra_address) do
+    with {:ok, %{sub: sub, provider: _provider}} <- auth_provider().handle_callback(code),
+         {:ok, holder} <- get_active_holder(sovra_address) do
+      case verify_oauth_binding(holder, sub) do
+        :ok ->
+          Log.event(:info, "guardian authenticated via OAuth callback",
+            event: "guardian.oauth.authenticated",
+            sovra_address: holder.sovra_address,
+            oauth_subject: sub
+          )
+
+          Session.create(holder.sovra_address)
+
+        {:error, :oauth_mismatch} ->
+          # Someone authenticated as one Google account and asked to act on a
+          # holder record bound to a different one. Both fingerprints are
+          # recorded, so one identity probing many accounts is visible as a
+          # repeated `presented_oauth_subject_fp`.
+          Log.event(:error, "guardian OAuth binding mismatch",
+            event: "guardian.oauth_binding.mismatch",
+            sovra_address: sovra_address,
+            expected_oauth_subject: holder.oauth_subject,
+            presented_oauth_subject: sub
+          )
+
+          {:error, :oauth_mismatch}
+      end
+    else
+      {:error, reason} -> reject_oauth_callback(sovra_address, reason)
+      other -> other
+    end
+  end
+
+  defp reject_oauth_callback(sovra_address, reason) do
+    Log.event(:warning, "guardian OAuth callback rejected",
+      event: "guardian.oauth.rejected",
+      sovra_address: sovra_address,
+      reason: Log.reason(reason)
+    )
+
+    {:error, reason}
   end
 
   def rotate_recovery_key(sovra_address) do
@@ -107,6 +215,16 @@ defmodule Sovra.Guardian do
 
       case Repo.update(changeset) do
         {:ok, _updated} ->
+          # A rotation is only half done here: the previous key still exists
+          # and is destroyed by confirm_rotation/1. Both ids are recorded so a
+          # rotation that never gets confirmed is traceable to its keys.
+          Log.event(:info, "guardian recovery key rotation started",
+            event: "guardian.recovery_key.rotation_started",
+            sovra_address: sovra_address,
+            recovery_key_id: new_key_id,
+            previous_recovery_key_id: holder.recovery_key_id
+          )
+
           {:ok,
            %{
              new_recovery_public_key: %{
@@ -118,8 +236,30 @@ defmodule Sovra.Guardian do
 
         {:error, changeset} ->
           Key.delete_key(new_key_id)
+
+          Log.event(:error, "guardian recovery key rotation failed",
+            event: "guardian.recovery_key.rotation_failed",
+            stage: :persist_new_key,
+            sovra_address: sovra_address,
+            discarded_recovery_key_id: new_key_id,
+            reason: Log.reason(changeset)
+          )
+
           {:error, {:changeset, changeset}}
       end
+    else
+      {:error, reason} ->
+        Log.event(:error, "guardian recovery key rotation failed",
+          event: "guardian.recovery_key.rotation_failed",
+          stage: :generate_or_sign,
+          sovra_address: sovra_address,
+          reason: Log.reason(reason)
+        )
+
+        {:error, reason}
+
+      other ->
+        other
     end
   end
 
@@ -133,12 +273,37 @@ defmodule Sovra.Guardian do
         |> Ecto.Changeset.change(previous_recovery_key_id: nil)
 
       case Repo.update(changeset) do
-        {:ok, _} -> :ok
-        {:error, changeset} -> {:error, {:changeset, changeset}}
+        {:ok, _} ->
+          # Destroys key material irreversibly, so this is the line that says
+          # which key stopped existing and when.
+          Log.event(:info, "guardian recovery key rotation confirmed",
+            event: "guardian.recovery_key.rotation_confirmed",
+            sovra_address: sovra_address,
+            recovery_key_id: holder.recovery_key_id,
+            destroyed_recovery_key_id: previous_key_id
+          )
+
+          :ok
+
+        {:error, changeset} ->
+          # The delete already happened: the record still points at a key that
+          # no longer exists, and no retry can undo that.
+          Log.event(:error, "guardian recovery key rotation left a dangling reference",
+            event: "guardian.recovery_key.rotation_failed",
+            stage: :clear_previous_key,
+            sovra_address: sovra_address,
+            destroyed_recovery_key_id: previous_key_id,
+            reason: Log.reason(changeset)
+          )
+
+          {:error, {:changeset, changeset}}
       end
     else
-      nil -> {:error, :no_pending_rotation}
-      error -> error
+      nil ->
+        {:error, :no_pending_rotation}
+
+      error ->
+        error
     end
   end
 
@@ -157,27 +322,80 @@ defmodule Sovra.Guardian do
              key_to_replace
            ),
          {:ok, sig} <- Key.sign(holder.recovery_key_id, message_hash) do
-      {:ok,
-       %{
-         signature: format_signature(sig),
-         message_hash: "0x" <> Base.encode16(message_hash, case: :lower)
-       }}
+      hex_hash = "0x" <> Base.encode16(message_hash, case: :lower)
+
+      # The backend does not enforce the timelock — Guardian.Policy.evaluate/1
+      # is a stub and the timelock lives in the wallet contract. What it does is
+      # co-sign, so `message_hash` is the link between our signature and the
+      # on-chain operation it authorized: the one part of this audit trail that
+      # survives outside our database.
+      Log.event(:info, "guardian recovery initiated",
+        event: "guardian.recovery.initiated",
+        sovra_address: sovra_address,
+        message_hash: hex_hash,
+        key_to_replace: key_to_replace,
+        recovery_key_id: holder.recovery_key_id
+      )
+
+      {:ok, %{signature: format_signature(sig), message_hash: hex_hash}}
+    else
+      {:error, reason} -> reject_recovery(:initiate, sovra_address, reason)
+      other -> other
     end
   end
 
-  def initiate_recovery(_sovra_address, _params), do: {:error, :invalid_params}
+  def initiate_recovery(sovra_address, _params) do
+    reject_recovery(:initiate, sovra_address, :invalid_params)
+  end
 
   def finalize_recovery(sovra_address) do
     with {:ok, holder} <- get_active_holder(sovra_address),
          {:ok, message_hash} <-
            Sovra.Ethereum.WalletReader.build_finalize_recovery_hash(sovra_address),
          {:ok, sig} <- Key.sign(holder.recovery_key_id, message_hash) do
-      {:ok,
-       %{
-         signature: format_signature(sig),
-         message_hash: "0x" <> Base.encode16(message_hash, case: :lower)
-       }}
+      hex_hash = "0x" <> Base.encode16(message_hash, case: :lower)
+
+      # Pairs with guardian.recovery.initiated on `sovra_address`; the gap
+      # between the two is the record of whether the contract's timelock was
+      # honoured.
+      Log.event(:info, "guardian recovery finalized",
+        event: "guardian.recovery.finalized",
+        sovra_address: sovra_address,
+        message_hash: hex_hash,
+        recovery_key_id: holder.recovery_key_id
+      )
+
+      {:ok, %{signature: format_signature(sig), message_hash: hex_hash}}
+    else
+      {:error, reason} -> reject_recovery(:finalize, sovra_address, reason)
+      other -> other
     end
+  end
+
+  # A holder problem is the caller's (warning); anything else means the hash
+  # build or the KMS signature failed, which is ours (error).
+  @holder_reasons [:holder_not_found, :holder_deactivated, :invalid_params]
+
+  defp reject_recovery(stage, sovra_address, reason) when reason in @holder_reasons do
+    Log.event(:warning, "guardian recovery rejected",
+      event: "guardian.recovery.rejected",
+      stage: stage,
+      sovra_address: sovra_address,
+      reason: reason
+    )
+
+    {:error, reason}
+  end
+
+  defp reject_recovery(stage, sovra_address, reason) do
+    Log.event(:error, "guardian recovery failed",
+      event: "guardian.recovery.errored",
+      stage: stage,
+      sovra_address: sovra_address,
+      reason: Log.reason(reason)
+    )
+
+    {:error, reason}
   end
 
   # Private helpers

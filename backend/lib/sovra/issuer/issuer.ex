@@ -6,6 +6,8 @@ defmodule Sovra.Issuer do
   This module only deals with the act of issuing credentials from a workspace.
   """
 
+  use Sovra.Log
+
   alias Sovra.Issuer.{
     CredentialSchema,
     CredentialDesign,
@@ -28,8 +30,6 @@ defmodule Sovra.Issuer do
 
   import Ecto.Query
 
-  require Logger
-
   @c_nonce_expires_in 86400
 
   # ── Schema Management ──────────────────────────────────
@@ -40,16 +40,52 @@ defmodule Sovra.Issuer do
     with {:ok, workspace} <- Workspaces.get_workspace(workspace_id),
          :ok <- Workspaces.assert_provisioned(workspace),
          {:ok, schema} <- CredentialSchema.create_changeset(attrs) |> Repo.insert() do
+      # No schema_version: create_schema/2 always produces version 1 — the
+      # controller never passes one and revisions go through
+      # credential.schema.revised, which does carry both versions.
+      Log.event(:info, "credential schema created",
+        event: "credential.schema.created",
+        workspace_id: workspace_id,
+        schema_id: schema.id,
+        schema_ref: schema.schema_id,
+        credential_type: schema.credential_type,
+        kind: schema.kind,
+        claim_count: length(schema.claims || [])
+      )
+
       case register_credential_type_on_chain(workspace.eoa_address, schema.credential_type) do
         :ok ->
           :ok
 
         {:error, reason} ->
-          Logger.warning("On-chain credential type registration failed: #{inspect(reason)}")
+          # Non-fatal: the schema exists and can issue, but the credential type
+          # is not on the registry, so third-party verifiers cannot resolve it.
+          Log.event(:error, "on-chain credential type registration failed",
+            event: "credential.schema.chain_registration_failed",
+            workspace_id: workspace_id,
+            schema_id: schema.id,
+            credential_type: schema.credential_type,
+            eoa_address: workspace.eoa_address,
+            reason: Log.reason(reason)
+          )
       end
 
       {:ok, schema}
+    else
+      {:error, reason} -> reject_schema(:create, workspace_id, nil, reason)
     end
+  end
+
+  defp reject_schema(stage, workspace_id, schema_ref, reason) do
+    Log.event(:warning, "credential schema operation rejected",
+      event: "credential.schema.rejected",
+      stage: stage,
+      workspace_id: workspace_id,
+      schema_ref: schema_ref,
+      reason: Log.reason(reason)
+    )
+
+    {:error, reason}
   end
 
   def get_schema(workspace_id, schema_id) do
@@ -122,6 +158,26 @@ defmodule Sovra.Issuer do
             Repo.rollback(:schema_revision_conflict)
         end
       end)
+      |> case do
+        {:ok, new_schema} ->
+          # base_version and the new version together are the whole story of a
+          # revision, including the optimistic-concurrency conflicts below.
+          Log.event(:info, "credential schema revised",
+            event: "credential.schema.revised",
+            workspace_id: workspace_id,
+            schema_id: new_schema.id,
+            schema_ref: schema_id,
+            base_version: base_version,
+            schema_version: new_schema.version
+          )
+
+          {:ok, new_schema}
+
+        {:error, reason} ->
+          reject_schema(:revise, workspace_id, schema_id, reason)
+      end
+    else
+      {:error, reason} -> reject_schema(:revise, workspace_id, schema_id, reason)
     end
   end
 
@@ -206,7 +262,25 @@ defmodule Sovra.Issuer do
   # any FK violation that still surfaces (custom triggers, future tables).
   def delete_schema(workspace_id, id) do
     with {:ok, _workspace} <- Workspaces.get_active_workspace(workspace_id) do
-      do_delete_schema(workspace_id, id)
+      case do_delete_schema(workspace_id, id) do
+        {:ok, %{schema_id: schema_ref, deleted_versions: count} = result} ->
+          Log.event(:info, "credential schema deleted",
+            event: "credential.schema.deleted",
+            workspace_id: workspace_id,
+            schema_ref: schema_ref,
+            deleted_versions: count
+          )
+
+          {:ok, result}
+
+        {:error, reason} ->
+          # :schema_in_use is the deletion guard — offers or issued credentials
+          # still reference a version. From the UI it looks like a plain
+          # failure, so the reason is what makes it explicable.
+          reject_schema(:delete, workspace_id, nil, reason)
+      end
+    else
+      {:error, reason} -> reject_schema(:delete, workspace_id, nil, reason)
     end
   end
 
@@ -280,16 +354,29 @@ defmodule Sovra.Issuer do
 
       attrs = Map.put(attrs, key, schema.id)
 
-      case Repo.get_by(CredentialDesign, credential_schema_id: schema.id) do
-        nil ->
-          attrs
-          |> CredentialDesign.create_changeset(schema_claims: schema.claims)
-          |> Repo.insert()
+      result =
+        case Repo.get_by(CredentialDesign, credential_schema_id: schema.id) do
+          nil ->
+            attrs
+            |> CredentialDesign.create_changeset(schema_claims: schema.claims)
+            |> Repo.insert()
 
-        design ->
-          design
-          |> CredentialDesign.update_changeset(attrs, schema_claims: schema.claims)
-          |> Repo.update()
+          design ->
+            design
+            |> CredentialDesign.update_changeset(attrs, schema_claims: schema.claims)
+            |> Repo.update()
+        end
+
+      with {:ok, design} <- result do
+        Log.event(:info, "credential design updated",
+          event: "credential.design.updated",
+          workspace_id: issuer_id,
+          schema_id: schema.id,
+          schema_ref: schema_id,
+          design_id: design.id
+        )
+
+        {:ok, design}
       end
     end
   end
@@ -306,8 +393,24 @@ defmodule Sovra.Issuer do
   def delete_design(issuer_id, schema_id) do
     with {:ok, schema} <- get_schema(issuer_id, schema_id) do
       case Repo.get_by(CredentialDesign, credential_schema_id: schema.id) do
-        nil -> {:error, :design_not_found}
-        design -> Repo.delete(design)
+        nil ->
+          {:error, :design_not_found}
+
+        design ->
+          Repo.delete(design)
+          |> tap(fn
+            {:ok, _} ->
+              Log.event(:info, "credential design deleted",
+                event: "credential.design.deleted",
+                workspace_id: issuer_id,
+                schema_id: schema.id,
+                schema_ref: schema_id,
+                design_id: design.id
+              )
+
+            {:error, _} ->
+              :ok
+          end)
       end
     end
   end
@@ -369,6 +472,26 @@ defmodule Sovra.Issuer do
 
       case insert_offer_with_retry(workspace, attrs_base) do
         {:ok, offer} ->
+          # claim COUNT, never the claims: they are government-issued PII
+          # (names, document numbers, dates of birth) and New Relic would
+          # flatten a claims map straight into queryable attributes.
+          # offer.id is the credential_id for the whole flow that follows.
+          #
+          # Trimmed to fit the agent's 10-attribute ceiling (see Sovra.Log):
+          # credential_type, tx_code_required and expires_at are all columns
+          # one join from credential_id, and status_purpose is hardcoded
+          # "revocation" at this call site. claim_count stays because deriving
+          # it means reading the claims column itself.
+          Log.event(:info, "credential offer created",
+            event: "credential.offer.created",
+            credential_id: offer.id,
+            workspace_id: workspace_id,
+            schema_id: schema.id,
+            schema_ref: schema.schema_id,
+            status_list_index: offer.status_list_index,
+            claim_count: map_size(claims)
+          )
+
           offer_uri = build_offer_uri(plaintext_code, offer, schema, workspace)
 
           credential_preview =
@@ -384,9 +507,27 @@ defmodule Sovra.Issuer do
              credential: credential_preview
            }}
 
-        {:error, _} = error ->
-          error
+        {:error, reason} ->
+          Log.event(:warning, "credential offer creation failed",
+            event: "credential.request.rejected",
+            stage: :offer,
+            workspace_id: workspace_id,
+            schema_id: schema.id,
+            reason: Log.reason(reason)
+          )
+
+          {:error, reason}
       end
+    else
+      {:error, reason} ->
+        Log.event(:warning, "credential offer creation rejected",
+          event: "credential.request.rejected",
+          stage: :offer,
+          workspace_id: workspace_id,
+          reason: Log.reason(reason)
+        )
+
+        {:error, reason}
     end
   end
 
@@ -398,19 +539,30 @@ defmodule Sovra.Issuer do
     do_insert_with_retry(workspace, attrs, status_list.width, 0, 0)
   end
 
-  defp do_insert_with_retry(_workspace, _attrs, _width, _attempt, widens)
+  defp do_insert_with_retry(workspace, attrs, width, _attempt, widens)
        when widens > @max_widens_per_call do
-    {:error, :bitmap_exhausted}
+    exhausted(workspace, attrs, width, :widen_limit_reached, widens)
   end
 
   defp do_insert_with_retry(workspace, attrs, width, attempt, widens)
        when attempt >= @max_allocation_attempts do
     case widen_status_list(workspace.id, attrs.status_purpose, width) do
       {:ok, new_width} ->
+        # Rare and worth seeing: the status list doubles, which changes the
+        # bitmap every third-party verifier fetches.
+        Log.event(:info, "status list widened",
+          event: "issuance.status_index.widened",
+          workspace_id: workspace.id,
+          status_purpose: attrs.status_purpose,
+          previous_width: width,
+          width: new_width,
+          widens_this_call: widens + 1
+        )
+
         do_insert_with_retry(workspace, attrs, new_width, 0, widens + 1)
 
       {:error, :bitmap_exhausted} ->
-        {:error, :bitmap_exhausted}
+        exhausted(workspace, attrs, width, :max_width_reached, widens)
     end
   end
 
@@ -431,6 +583,25 @@ defmodule Sovra.Issuer do
           end
       end
     end
+  end
+
+  # Nothing else reports this: offer creation simply starts failing for the
+  # workspace, and no new credential of that purpose can be issued until the
+  # cause is understood.
+  defp exhausted(workspace, attrs, width, reason, widens) do
+    # The two bounds are compile-time constants (3 and 16) and live in the
+    # issuance_status_index_exhausted alert description rather than on every
+    # record.
+    Log.event(:error, "status list index allocation exhausted",
+      event: "issuance.status_index.exhausted",
+      workspace_id: workspace.id,
+      status_purpose: attrs.status_purpose,
+      width: width,
+      reason: reason,
+      widens_this_call: widens
+    )
+
+    {:error, :bitmap_exhausted}
   end
 
   defp fetch_status_list!(workspace_id, purpose) do
@@ -508,12 +679,14 @@ defmodule Sovra.Issuer do
 
     case Repo.get_by(CredentialOffer, pre_authorized_code_hash: code_hash) do
       nil ->
-        {:error, :invalid_code}
+        # No offer, so no credential_id to correlate on — the only signal that
+        # a wallet (or a scanner) presented a code we do not know.
+        reject_request(:token, nil, nil, :invalid_code)
 
       %{status: "pending"} = offer ->
         cond do
           DateTime.compare(DateTime.utc_now(), offer.expires_at) == :gt ->
-            {:error, :offer_expired}
+            reject_request(:token, offer.id, offer.issuer_id, :offer_expired)
 
           offer.tx_code != nil and offer.tx_code != tx_code ->
             check_tx_code_lockout(offer)
@@ -530,6 +703,17 @@ defmodule Sovra.Issuer do
 
             case Repo.update(changeset) do
               {:ok, _} ->
+                # The wallet's half of the flow was anonymous in the logs until
+                # here: only the token hash is presented, so the offer has to be
+                # resolved to recover the credential_id that joins this to the
+                # offer and to the issuance that follows.
+                Log.event(:info, "credential token exchanged",
+                  event: "credential.token.exchanged",
+                  credential_id: offer.id,
+                  workspace_id: offer.issuer_id,
+                  schema_id: offer.schema_id
+                )
+
                 {:ok,
                  %{
                    access_token: plaintext_token,
@@ -538,14 +722,29 @@ defmodule Sovra.Issuer do
                    expires_in: 86400
                  }}
 
-              {:error, _} = error ->
-                error
+              {:error, reason} ->
+                reject_request(:token, offer.id, offer.issuer_id, reason)
             end
         end
 
-      _other ->
-        {:error, :code_already_used}
+      other ->
+        reject_request(:token, other.id, other.issuer_id, :code_already_used)
     end
+  end
+
+  # Every expected 4xx on the wallet rail. Warning, not error: these are the
+  # holder's or the client's, and the level is what keeps them out of the
+  # issuance-broken alert.
+  defp reject_request(stage, credential_id, workspace_id, reason) do
+    Log.event(:warning, "credential request rejected",
+      event: "credential.request.rejected",
+      stage: stage,
+      credential_id: credential_id,
+      workspace_id: workspace_id,
+      reason: Log.reason(reason)
+    )
+
+    {:error, reason}
   end
 
   defp check_tx_code_lockout(offer) do
@@ -556,6 +755,15 @@ defmodule Sovra.Issuer do
         {:error, :invalid_tx_code}
 
       {:deny, _limit} ->
+        # The transaction code is the only thing standing between a leaked
+        # offer QR and a credential, so exhausting its attempts is a signal
+        # worth keeping. offer.id is the credential_id for the whole flow.
+        Log.event(:warning, "offer locked after too many tx_code attempts",
+          event: "issuance.tx_code.locked_out",
+          credential_id: offer.id,
+          workspace_id: offer.issuer_id
+        )
+
         {:error, :offer_locked}
     end
   end
@@ -567,21 +775,24 @@ defmodule Sovra.Issuer do
 
     case Repo.get_by(CredentialOffer, access_token_hash: token_hash) do
       nil ->
-        {:error, :invalid_token}
+        reject_request(:credential, nil, nil, :invalid_token)
 
       %{status: "token_exchanged"} = offer ->
         if DateTime.compare(DateTime.utc_now(), offer.expires_at) == :gt do
-          {:error, :offer_expired}
+          reject_request(:credential, offer.id, offer.issuer_id, :offer_expired)
         else
           with {:ok, schema} <- get_schema_by_id(offer.schema_id),
                :ok <- ensure_configuration_matches(schema, credential_configuration_id),
                {:ok, %{holder_did: holder_did}} <- verify_proof(proof, offer.c_nonce) do
             deliver_credential(offer, holder_did)
+          else
+            {:error, reason} ->
+              reject_request(:credential, offer.id, offer.issuer_id, reason)
           end
         end
 
-      _other ->
-        {:error, :credential_already_issued}
+      other ->
+        reject_request(:credential, other.id, other.issuer_id, :credential_already_issued)
     end
   end
 
@@ -629,6 +840,19 @@ defmodule Sovra.Issuer do
           {:ok, cred} ->
             case Repo.update(CredentialOffer.issued_changeset(offer)) do
               {:ok, _} ->
+                # Same name as the webhook, so support can pivot between what
+                # we told the customer and what we did on one identifier.
+                # No expires_at: it is a column on the row this event names.
+                Log.event(:info, "credential issued",
+                  event: "credential.issued",
+                  credential_id: cred.id,
+                  workspace_id: cred.issuer_id,
+                  schema_id: cred.schema_id,
+                  credential_type: schema.credential_type,
+                  holder_did: cred.holder_did,
+                  status_list_index: cred.status_list_index
+                )
+
                 {:ok, _} =
                   Sovra.Webhooks.enqueue(offer.issuer_id, "credential.issued", %{
                     "credential_id" => cred.id,
@@ -771,10 +995,31 @@ defmodule Sovra.Issuer do
          {:ok, workspace} <- Workspaces.get_workspace(workspace_id),
          :ok <- Workspaces.assert_provisioned(workspace),
          :ok <- validate_status_transition(cred, new_status),
-         :ok <- maybe_sync_chain_status(chain_call, workspace_id, cred.status_list_index),
+         {:ok, tx_hash} <-
+           maybe_sync_chain_status(chain_call, workspace_id, cred.status_list_index),
          {:ok, updated} <-
            cred |> IssuedCredential.status_changeset(new_status) |> Repo.update() do
       {:ok, schema} = get_schema_by_id(updated.schema_id)
+
+      # `event` is already the webhook's event name, so the log and the webhook
+      # carry the same vocabulary for free. Revocation is the mutation with
+      # legal weight and the one most likely to be disputed, and it left no
+      # trace outside the database until now — tx_hash is what ties it to the
+      # on-chain status list a third-party verifier will read.
+      # No `status`: the event name is the outcome. credential.revoked ->
+      # "revoked", .suspended -> "suspended", .unsuspended -> "issued", and
+      # previous_status is the half the name cannot carry — issued -> revoked
+      # and suspended -> revoked are different stories. schema_id and
+      # credential_type are on credential.issued under the same credential_id.
+      Log.event(:info, "credential status changed",
+        event: event,
+        credential_id: updated.id,
+        workspace_id: workspace_id,
+        holder_did: updated.holder_did,
+        previous_status: cred.status,
+        status_list_index: updated.status_list_index,
+        tx_hash: tx_hash
+      )
 
       {:ok, _job} =
         Sovra.Webhooks.enqueue(workspace_id, event, %{
@@ -785,6 +1030,17 @@ defmodule Sovra.Issuer do
         })
 
       {:ok, updated}
+    else
+      {:error, reason} ->
+        Log.event(:warning, "credential status change rejected",
+          event: "credential.status_change.rejected",
+          credential_id: credential_id,
+          workspace_id: workspace_id,
+          status: new_status,
+          reason: Log.reason(reason)
+        )
+
+        {:error, reason}
     end
   end
 
@@ -799,14 +1055,16 @@ defmodule Sovra.Issuer do
     end
   end
 
+  # Returns the transaction hash so the caller can record which on-chain write
+  # carried the status change; `{:ok, nil}` when there is no chain configured.
   defp maybe_sync_chain_status(chain_call, workspace_id, index) do
     if ethereum_configured?() do
       case chain_call.(get_workspace_eoa(workspace_id), index) do
-        {:ok, _tx} -> :ok
+        {:ok, tx_hash} -> {:ok, tx_hash}
         {:error, _} = error -> error
       end
     else
-      :ok
+      {:ok, nil}
     end
   end
 

@@ -19,7 +19,11 @@ defmodule Sovra.Ethereum.RevocationRegistry do
   """
   def initialize_bitmap(issuer_address, purpose \\ @revocation) do
     RevocationRegistryContract.initialize_bitmap(issuer_address, purpose)
-    |> Client.send_transaction(to: contract_address())
+    |> Client.send_transaction(
+      to: contract_address(),
+      op: :bitmap_initialize,
+      subject_id: issuer_address
+    )
   end
 
   @doc """
@@ -27,7 +31,11 @@ defmodule Sovra.Ethereum.RevocationRegistry do
   """
   def revoke(issuer_address, index) do
     RevocationRegistryContract.set_status(issuer_address, @revocation, index)
-    |> Client.send_transaction(to: contract_address())
+    |> Client.send_transaction(
+      to: contract_address(),
+      op: :credential_revoke,
+      subject_id: index
+    )
   end
 
   @doc """
@@ -35,7 +43,11 @@ defmodule Sovra.Ethereum.RevocationRegistry do
   """
   def suspend(issuer_address, index) do
     RevocationRegistryContract.set_status(issuer_address, @suspension, index)
-    |> Client.send_transaction(to: contract_address())
+    |> Client.send_transaction(
+      to: contract_address(),
+      op: :credential_suspend,
+      subject_id: index
+    )
   end
 
   @doc """
@@ -43,7 +55,11 @@ defmodule Sovra.Ethereum.RevocationRegistry do
   """
   def unsuspend(issuer_address, index) do
     RevocationRegistryContract.clear_status(issuer_address, @suspension, index)
-    |> Client.send_transaction(to: contract_address())
+    |> Client.send_transaction(
+      to: contract_address(),
+      op: :credential_unsuspend,
+      subject_id: index
+    )
   end
 
   @doc """
@@ -51,7 +67,11 @@ defmodule Sovra.Ethereum.RevocationRegistry do
   """
   def batch_revoke(issuer_address, indices) do
     RevocationRegistryContract.batch_set_status(issuer_address, @revocation, indices)
-    |> Client.send_transaction(to: contract_address())
+    |> Client.send_transaction(
+      to: contract_address(),
+      op: :credential_batch_revoke,
+      subject_id: issuer_address
+    )
   end
 
   @doc """

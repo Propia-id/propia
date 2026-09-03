@@ -11,16 +11,16 @@ defmodule Sovra.Verification.ExpiredSessionsSweeper do
   """
 
   use Oban.Worker, queue: :verification, max_attempts: 3
+  use Sovra.Log
 
   import Ecto.Query
 
   alias Sovra.Repo
   alias Sovra.Verification.Session
 
-  require Logger
-
   @impl Oban.Worker
-  def perform(%Oban.Job{}) do
+  def perform(%Oban.Job{} = job) do
+    Log.adopt_job_context(job)
     now = DateTime.utc_now() |> DateTime.truncate(:second)
 
     {count, _} =
@@ -29,7 +29,15 @@ defmodule Sovra.Verification.ExpiredSessionsSweeper do
       )
       |> Repo.update_all(set: [status: "expired", completed_at: now, updated_at: now])
 
-    if count > 0, do: Logger.info("Marked #{count} verification sessions as expired")
+    # Abandoned QRs are the shape of the funnel: a jump here without a matching
+    # jump in presentation.received means wallets are not completing the flow.
+    if count > 0 do
+      Log.event(:info, "verification sessions marked expired",
+        event: "presentation.request.expired",
+        count: count
+      )
+    end
+
     :ok
   end
 end

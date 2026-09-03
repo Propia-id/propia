@@ -8,6 +8,8 @@ defmodule Sovra.Verification do
   to the response endpoint, which is handled in a later phase.
   """
 
+  use Sovra.Log
+
   alias Sovra.Issuer.ClaimUtils
   alias Sovra.Repo
   alias Sovra.Verification.RequestObject
@@ -120,12 +122,29 @@ defmodule Sovra.Verification do
          draft = draft_session(workspace, dcql_query, ttl),
          {:ok, request_object} <- RequestObject.sign(workspace, draft),
          {:ok, session} <- insert_session(draft, workspace, request_object) do
+      Log.event(:info, "presentation request created",
+        event: "presentation.request.created",
+        verification_id: session.id,
+        workspace_id: workspace_id,
+        dcql_credential_count: length(Map.get(dcql_query, "credentials", [])),
+        expires_at: session.expires_at
+      )
+
       {:ok,
        %{
          session: session,
          authorization_request_uri: build_authorization_request_uri(session),
          authorization_request_uri_ref: build_authorization_request_uri_ref(session)
        }}
+    else
+      {:error, reason} ->
+        Log.event(:warning, "presentation request rejected",
+          event: "presentation.request.rejected",
+          workspace_id: workspace_id,
+          reason: Log.reason(reason)
+        )
+
+        {:error, reason}
     end
   end
 

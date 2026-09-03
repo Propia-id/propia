@@ -7,9 +7,9 @@ defmodule Sovra.Accounts do
   caller.
   """
 
-  import Ecto.Query
+  use Sovra.Log
 
-  require Logger
+  import Ecto.Query
 
   alias Sovra.Accounts.User
   alias Sovra.Auth.MailerJob
@@ -69,13 +69,15 @@ defmodule Sovra.Accounts do
   end
 
   defp enqueue_email(args) do
-    case args |> MailerJob.new() |> Oban.insert() do
+    case args |> Log.job_args() |> MailerJob.new() |> Oban.insert() do
       {:ok, _job} ->
         :ok
 
       {:error, reason} ->
-        Logger.warning(
-          "Failed to enqueue auth email (kind=#{args[:kind] || args["kind"]}): #{inspect(reason)}"
+        Log.event(:error, "auth email enqueue failed",
+          event: "email.enqueue_failed",
+          kind: args[:kind] || args["kind"],
+          reason: Log.reason(reason)
         )
 
         :ok

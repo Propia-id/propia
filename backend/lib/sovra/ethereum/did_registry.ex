@@ -34,7 +34,11 @@ defmodule Sovra.Ethereum.DIDRegistry do
     service = build_service_endpoint(service_endpoint)
 
     DIDRegistryContract.create(issuer_eoa, [method], [service])
-    |> Client.send_transaction(to: contract_address())
+    |> Client.send_transaction(
+      to: contract_address(),
+      op: :did_register,
+      subject_id: issuer_eoa
+    )
     |> handle_registration_result()
   end
 

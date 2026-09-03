@@ -15,6 +15,8 @@ defmodule Sovra.Signer.Client do
   hex (`0x` optional) binaries the signer speaks.
   """
 
+  use Sovra.Log
+
   @spec post(String.t(), map()) :: {:ok, Req.Response.t()} | {:error, term()}
   def post(path, body), do: request(:post, path, json: body)
 
@@ -35,10 +37,43 @@ defmodule Sovra.Signer.Client do
           receive_timeout: config[:receive_timeout] || 15_000
         ] ++ extra ++ (config[:req_options] || [])
 
+      started = System.monotonic_time(:millisecond)
+
       case Req.request(options) do
-        {:ok, resp} -> {:ok, resp}
-        {:error, reason} -> {:error, {:signer_unreachable, reason}}
+        {:ok, resp} ->
+          # Every credential signature crosses this boundary, and only the
+          # signer side logged its own 5xx — from the API node's point of view
+          # a broken signer was indistinguishable from broken issuance.
+          if resp.status >= 400 do
+            Log.event(:error, "signer request failed",
+              event: "signer.request.failed",
+              path: path,
+              status: resp.status,
+              duration_ms: System.monotonic_time(:millisecond) - started
+            )
+          end
+
+          {:ok, resp}
+
+        {:error, reason} ->
+          Log.event(:error, "signer unreachable",
+            event: "signer.unreachable",
+            path: path,
+            reason: Log.reason(reason),
+            duration_ms: System.monotonic_time(:millisecond) - started
+          )
+
+          {:error, {:signer_unreachable, reason}}
       end
+    else
+      {:error, reason} ->
+        Log.event(:error, "signer not configured",
+          event: "signer.misconfigured",
+          path: path,
+          reason: reason
+        )
+
+        {:error, reason}
     end
   end
 

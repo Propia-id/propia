@@ -15,6 +15,8 @@ defmodule Sovra.Verification.Verifier do
     * `{:error, reason}` — system error (DB unavailable, etc.)
   """
 
+  use Sovra.Log
+
   alias Ecto.Multi
   alias Sovra.Credentials.SDJWT
   alias Sovra.Repo
@@ -32,18 +34,39 @@ defmodule Sovra.Verification.Verifier do
       when is_binary(session_state) and is_binary(vp_token) do
     case Repo.get_by(Session, state: session_state) do
       nil ->
-        {:error, :session_not_found}
+        # No session to record a failure against, so this is the only trace: a
+        # wallet (or a scanner) posted a state we have never issued.
+        reject_presentation(nil, nil, :session_not_found)
 
       %Session{status: "pending"} = session ->
+        Log.event(:info, "presentation received",
+          event: "presentation.received",
+          verification_id: session.id,
+          workspace_id: session.workspace_id
+        )
+
         if expired?(session) do
           finalize_failure(fail(session, "session_expired", nil))
         else
           run_pipeline(session, vp_token, opts)
         end
 
-      %Session{} ->
-        {:error, :session_not_pending}
+      %Session{} = session ->
+        # A completed or failed session being posted to again — a retry, or a
+        # replayed vp_token.
+        reject_presentation(session.id, session.workspace_id, :session_not_pending)
     end
+  end
+
+  defp reject_presentation(verification_id, workspace_id, reason) do
+    Log.event(:warning, "presentation rejected before verification",
+      event: "presentation.rejected",
+      verification_id: verification_id,
+      workspace_id: workspace_id,
+      reason: reason
+    )
+
+    {:error, reason}
   end
 
   defp run_pipeline(session, vp_token, opts) do
@@ -335,8 +358,21 @@ defmodule Sovra.Verification.Verifier do
     end)
     |> Repo.transaction()
     |> case do
-      {:ok, %{session: s}} -> {:ok, s}
-      {:error, _, reason, _} -> {:error, reason}
+      {:ok, %{session: s}} ->
+        # Same name as the webhook, and logged after the transaction commits so
+        # a rolled-back verification never claims to have succeeded.
+        Log.event(:info, "presentation verified",
+          event: "presentation.verified",
+          verification_id: s.id,
+          workspace_id: s.workspace_id,
+          holder_did: s.holder_did,
+          credential_count: length(credentials)
+        )
+
+        {:ok, s}
+
+      {:error, _, reason, _} ->
+        {:error, reason}
     end
   end
 
@@ -366,10 +402,57 @@ defmodule Sovra.Verification.Verifier do
     end)
     |> Repo.transaction()
     |> case do
-      {:ok, %{session: s}} -> {:done, s}
-      {:error, _, reason, _} -> {:error, reason}
+      {:ok, %{session: s}} ->
+        {reason, reason_detail} = split_tag(tag)
+
+        # One funnel for every rejection, so the level has to be derived rather
+        # than chosen per call site — see level_for/1.
+        Log.event(level_for(reason), "presentation failed",
+          event: "presentation.failed",
+          verification_id: s.id,
+          workspace_id: s.workspace_id,
+          holder_did: holder_did,
+          reason: reason,
+          reason_detail: reason_detail
+        )
+
+        {:done, s}
+
+      {:error, _, reason, _} ->
+        {:error, reason}
     end
   end
+
+  # Two tags embed an unbounded value — a claim path or a requested format —
+  # which is useless as an alert facet and unbounded in NRDB cardinality. The
+  # stored `session.error` and the webhook payload keep the full tag, because
+  # those are a public contract; only the log splits it.
+  defp split_tag(tag) do
+    case String.split(tag, ":", parts: 2) do
+      [reason, detail] -> {reason, detail}
+      [reason] -> {reason, nil}
+    end
+  end
+
+  # Our dependencies failed: DID resolution is down, or the revocation registry
+  # could not be read. These are the only tags that mean somebody should look
+  # at our infrastructure.
+  @our_fault ~w(holder_did_unresolvable status_check_failed)
+
+  # The credential is genuinely unusable and the verifier was told so
+  # correctly. Not a problem with anything.
+  @credential_state ~w(credential_expired credential_revoked credential_suspended)
+
+  defp level_for(reason) when reason in @our_fault, do: :error
+  defp level_for(reason) when reason in @credential_state, do: :info
+
+  # Everything else is the holder's or the verifier's: a malformed token, a
+  # nonce mismatch, a claim the credential does not carry. `unknown_issuer` and
+  # `credential_signature_invalid` sit here too, deliberately — the common
+  # cause of both is a credential we were never meant to accept or one that was
+  # tampered with, neither of which is ours to fix. A spike in either is still
+  # caught by the faceted alert condition.
+  defp level_for(_reason), do: :warning
 
   defp finalize_failure({:done, session}), do: {:ok, session}
   defp finalize_failure({:error, _} = err), do: err

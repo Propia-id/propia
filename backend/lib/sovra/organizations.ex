@@ -7,6 +7,8 @@ defmodule Sovra.Organizations do
   inside an organization are `owner`, `admin`, `member`.
   """
 
+  use Sovra.Log
+
   import Ecto.Query
 
   alias Sovra.Accounts.User
@@ -40,6 +42,15 @@ defmodule Sovra.Organizations do
     |> Repo.transaction()
     |> case do
       {:ok, %{organization: org, membership: mem}} ->
+        # user_id is passed explicitly rather than read from the log context:
+        # registration creates an organization before any session exists, so
+        # there is no ambient actor on that path.
+        Log.event(:info, "organization created",
+          event: "org.created",
+          org_id: org.id,
+          owner_user_id: user_id
+        )
+
         {:ok, %{organization: org, membership: mem}}
 
       {:error, :organization, changeset, _} ->
@@ -85,6 +96,19 @@ defmodule Sovra.Organizations do
     org
     |> Organization.status_changeset("deactivated")
     |> Repo.update()
+    |> tap(fn
+      {:ok, _} ->
+        # Deactivation stops every workspace under the org from issuing, so it
+        # is the first thing to check when a tenant reports a total outage.
+        Log.event(:info, "organization deactivated",
+          event: "org.deactivated",
+          org_id: org.id,
+          previous_status: org.status
+        )
+
+      {:error, _} ->
+        :ok
+    end)
   end
 
   @doc """
@@ -118,5 +142,17 @@ defmodule Sovra.Organizations do
       role: role
     })
     |> Repo.insert()
+    |> tap(fn
+      {:ok, _} ->
+        Log.event(:info, "organization member added",
+          event: "org.member.added",
+          org_id: org_id,
+          member_user_id: user_id,
+          member_role: role
+        )
+
+      {:error, _} ->
+        :ok
+    end)
   end
 end

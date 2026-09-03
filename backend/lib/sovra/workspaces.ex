@@ -9,6 +9,8 @@ defmodule Sovra.Workspaces do
   the `workspace_members` join table with role `admin` or `member`.
   """
 
+  use Sovra.Log
+
   import Ecto.Query
 
   alias Sovra.Accounts.User
@@ -65,11 +67,22 @@ defmodule Sovra.Workspaces do
         StatusList.create_changeset(%{workspace_id: ws.id, status_purpose: "suspension"})
       end)
       |> Oban.insert(:provisioning_job, fn %{workspace: ws} ->
-        WorkspaceProvisioningJob.new(%{workspace_id: ws.id})
+        WorkspaceProvisioningJob.new(Log.job_args(%{workspace_id: ws.id}))
       end)
       |> Repo.transaction()
       |> case do
         {:ok, %{workspace: workspace}} ->
+          # The keys, DID and on-chain registration are produced by
+          # WorkspaceProvisioningJob; Phase 6 logs those steps. This is the
+          # record that the workspace was asked for, and by whom.
+          Log.event(:info, "workspace created",
+            event: "workspace.created",
+            workspace_id: workspace.id,
+            org_id: organization_id,
+            owner_user_id: owner_user_id,
+            webhook_configured: not is_nil(workspace.webhook_url)
+          )
+
           {:ok, %{workspace: workspace, webhook_secret: webhook_secret}}
 
         {:error, _step, changeset, _} ->
@@ -147,7 +160,7 @@ defmodule Sovra.Workspaces do
           Ecto.Multi.new()
           |> Ecto.Multi.update(:workspace, Workspace.provisioning_retry_changeset(workspace))
           |> Oban.insert(:provisioning_job, fn %{workspace: ws} ->
-            WorkspaceProvisioningJob.new(%{workspace_id: ws.id})
+            WorkspaceProvisioningJob.new(Log.job_args(%{workspace_id: ws.id}))
           end)
           |> Repo.transaction()
           |> case do
@@ -272,6 +285,40 @@ defmodule Sovra.Workspaces do
     workspace
     |> Workspace.update_changeset(attrs)
     |> Repo.update()
+    |> tap(fn
+      {:ok, updated} -> log_webhook_url_change(workspace, updated)
+      {:error, _} -> :ok
+    end)
+  end
+
+  # Changing this URL redirects the workspace's entire credential event stream
+  # to a new destination, so the change is recorded: "our webhooks stopped
+  # arriving" is otherwise indistinguishable from a delivery failure.
+  #
+  # HOST ONLY, never the full URL. A webhook URL routinely carries a shared
+  # secret in its path or query (`/hooks/sovra?token=…`), and these logs leave
+  # the host for New Relic. The host answers the question the event exists for
+  # — did the destination move — and `workspaces.webhook_url` has the rest for
+  # anyone with database access.
+  defp log_webhook_url_change(%Workspace{webhook_url: same}, %Workspace{webhook_url: same}),
+    do: :ok
+
+  defp log_webhook_url_change(%Workspace{} = before, %Workspace{} = updated) do
+    Log.event(:info, "workspace webhook URL changed",
+      event: "workspace.webhook_url.changed",
+      workspace_id: updated.id,
+      previous_webhook_host: webhook_host(before.webhook_url),
+      webhook_host: webhook_host(updated.webhook_url)
+    )
+  end
+
+  defp webhook_host(nil), do: nil
+
+  defp webhook_host(url) when is_binary(url) do
+    case URI.parse(url) do
+      %URI{host: host} when is_binary(host) -> host
+      _ -> "unparseable"
+    end
   end
 
   @doc """
@@ -279,6 +326,8 @@ defmodule Sovra.Workspaces do
   exactly once.
   """
   def regenerate_webhook_secret(%Workspace{} = workspace) do
+    had_previous? = not is_nil(workspace.webhook_secret_key_id)
+
     case workspace.webhook_secret_key_id do
       nil ->
         with {:ok, %{key_id: key_id, plaintext: plaintext}} <- HmacKeyStore.generate_hmac_key(),
@@ -286,18 +335,33 @@ defmodule Sovra.Workspaces do
                workspace
                |> Workspace.webhook_secret_changeset(key_id)
                |> Repo.update() do
+          log_secret_regenerated(workspace.id, had_previous?)
           {:ok, %{workspace: updated, webhook_secret: plaintext}}
         end
 
       key_id ->
         case HmacKeyStore.rotate(key_id) do
           {:ok, %{plaintext: plaintext}} ->
+            log_secret_regenerated(workspace.id, had_previous?)
             {:ok, %{workspace: workspace, webhook_secret: plaintext}}
 
           {:error, _} = error ->
             error
         end
     end
+  end
+
+  # After the rotation lands, not before: the key store or the update can fail,
+  # and an event claiming the secret changed when it did not would send someone
+  # looking for a cause that never happened.
+  defp log_secret_regenerated(workspace_id, had_previous?) do
+    # Invalidates the customer's signature verification until they store the
+    # new secret, so a burst of webhook signature complaints traces back here.
+    Log.event(:info, "workspace webhook secret regenerated",
+      event: "workspace.webhook_secret.regenerated",
+      workspace_id: workspace_id,
+      had_previous_secret: had_previous?
+    )
   end
 
   # ── Membership ─────────────────────────────────────────
@@ -327,6 +391,18 @@ defmodule Sovra.Workspaces do
       role: role
     })
     |> Repo.insert()
+    |> tap(fn
+      {:ok, _} ->
+        Log.event(:info, "workspace member added",
+          event: "workspace.member.added",
+          workspace_id: workspace_id,
+          member_user_id: user_id,
+          member_role: role
+        )
+
+      {:error, _} ->
+        :ok
+    end)
   end
 
   def update_member_role(workspace_id, user_id, new_role) do
@@ -337,6 +413,21 @@ defmodule Sovra.Workspaces do
       member
       |> WorkspaceMember.role_changeset(new_role)
       |> Repo.update()
+      |> tap(fn
+        {:ok, _} ->
+          Log.event(:info, "workspace member role changed",
+            event: "workspace.member.role_changed",
+            workspace_id: workspace_id,
+            member_user_id: user_id,
+            previous_role: member.role,
+            member_role: new_role
+          )
+
+        {:error, _} ->
+          :ok
+      end)
+    else
+      {:error, reason} -> log_member_change_rejected(workspace_id, user_id, :role_change, reason)
     end
   end
 
@@ -346,7 +437,36 @@ defmodule Sovra.Workspaces do
              {:error, :not_a_member},
          :ok <- ensure_not_last_admin_removal(workspace_id, member) do
       Repo.delete(member)
+      |> tap(fn
+        {:ok, _} ->
+          Log.event(:info, "workspace member removed",
+            event: "workspace.member.removed",
+            workspace_id: workspace_id,
+            member_user_id: user_id,
+            previous_role: member.role
+          )
+
+        {:error, _} ->
+          :ok
+      end)
+    else
+      {:error, reason} -> log_member_change_rejected(workspace_id, user_id, :removal, reason)
     end
+  end
+
+  # `:last_admin` is the guard that stops a workspace being locked out of its
+  # own administration. Worth a line: from the UI it looks like the change just
+  # silently failed.
+  defp log_member_change_rejected(workspace_id, user_id, change, reason) do
+    Log.event(:warning, "workspace member change rejected",
+      event: "workspace.member.change_rejected",
+      workspace_id: workspace_id,
+      member_user_id: user_id,
+      change: change,
+      reason: Log.reason(reason)
+    )
+
+    {:error, reason}
   end
 
   defp ensure_not_last_admin_demotion(_workspace_id, %WorkspaceMember{role: "admin"}, "admin"),

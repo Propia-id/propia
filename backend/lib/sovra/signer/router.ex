@@ -15,9 +15,9 @@ defmodule Sovra.Signer.Router do
   for Ethereum transaction assembly.
   """
 
-  use Plug.Router
+  use Sovra.Log
 
-  require Logger
+  use Plug.Router
 
   alias Sovra.Signer.{Kms, Relayer}
 
@@ -138,7 +138,15 @@ defmodule Sovra.Signer.Router do
   defp send_error(conn, reason) do
     status = error_status(reason)
     message = error_message(reason)
-    if status >= 500, do: Logger.warning("sovra signer request failed (#{status}): #{message}")
+
+    if status >= 500 do
+      Log.event(:warning, "signer request failed",
+        event: "signer.response.errored",
+        status: status,
+        detail: message
+      )
+    end
+
     send_json(conn, status, %{error: message})
   end
 

@@ -81,8 +81,11 @@ config :sovra, :ethereum,
 # env-var provider — otherwise it polls the EC2 metadata endpoint on boot.
 config :aws_credentials, credential_providers: [:aws_credentials_env]
 
-# Do not include metadata nor timestamps in development logs
-config :logger, :default_formatter, format: "[$level] $message\n"
+# No timestamps in development logs, but DO include metadata: the correlation
+# keys in config.exs's metadata list (event, workspace_id, credential_id, …) are
+# the whole point of Sovra.Log, and a bare "$message" hides them locally while
+# they still ship to New Relic — so local behaviour would not match prod.
+config :logger, :default_formatter, format: "$metadata[$level] $message\n"
 
 # Set a higher stacktrace during development. Avoid configuring such
 # in production as building large stacktraces may be expensive.

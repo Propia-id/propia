@@ -16,6 +16,8 @@ defmodule Sovra.DataCase do
 
   use ExUnit.CaseTemplate
 
+  require Logger
+
   using do
     quote do
       alias Sovra.Repo
@@ -50,6 +52,13 @@ defmodule Sovra.DataCase do
   """
   def provision_workspace(%Sovra.Workspaces.Workspace{} = workspace) do
     Oban.drain_queue(queue: :provisioning, with_safety: false)
+
+    # drain_queue/1 runs the job inline in the test process, so the context
+    # Sovra.Log.adopt_job_context/1 sets would stay on this process and tag
+    # every later line in the test. Production is unaffected — Oban runs each
+    # attempt in its own task.
+    Logger.metadata(oban_job_id: nil, oban_attempt: nil)
+
     Sovra.Repo.reload!(workspace)
   end
 

@@ -1,8 +1,7 @@
 defmodule SovraWeb.AuthController do
   use SovraWeb, :controller
   use OpenApiSpex.ControllerSpecs
-
-  require Logger
+  use Sovra.Log
 
   alias Sovra.Accounts
   alias Sovra.Auth.PasswordReset
@@ -213,6 +212,13 @@ defmodule SovraWeb.AuthController do
         # one-time API secret. Users rotate via the workspace settings UI.
         workspaces = Workspaces.list_workspaces_for_user(user.id)
 
+        Log.event(:info, "user registered",
+          event: "auth.registered",
+          user_id: user.id,
+          workspace_id: workspace.id,
+          email: user.email
+        )
+
         conn
         |> set_auth_cookies(user, workspace.id)
         |> put_status(201)
@@ -224,8 +230,15 @@ defmodule SovraWeb.AuthController do
 
       {:error, %Ecto.Changeset{errors: errors} = changeset} ->
         if email_taken?(errors) do
-          # Don't disclose existence — respond with a generic message that
-          # doesn't tell the caller whether the email is registered.
+          # The response deliberately does not disclose that the address is
+          # taken; the log may, because it never leaves for the client. The
+          # fingerprint is what tells a duplicate signup from a probe sweep.
+          Log.event(:warning, "registration rejected",
+            event: "auth.registration.rejected",
+            reason: :email_taken,
+            email: params["email"]
+          )
+
           conn
           |> put_status(422)
           |> json(%{
@@ -239,13 +252,27 @@ defmodule SovraWeb.AuthController do
           # endpoint to disclose email-existence via field-level errors.
           details = changeset |> changeset_errors() |> Map.delete(:email)
 
+          # Field NAMES only — the values are what the user typed.
+          Log.event(:warning, "registration rejected",
+            event: "auth.registration.rejected",
+            reason: :validation_error,
+            invalid_fields: details |> Map.keys() |> Enum.map_join(",", &to_string/1),
+            email: params["email"]
+          )
+
           conn
           |> put_status(422)
           |> json(%{error: "validation_error", details: details})
         end
 
       {:error, reason} ->
-        Logger.error("register_user failed with non-changeset reason: #{inspect(reason)}")
+        Log.event(:error, "registration failed unexpectedly",
+          event: "auth.registration.rejected",
+          reason: :internal_error,
+          detail: Log.reason(reason),
+          email: params["email"]
+        )
+
         conn |> put_status(422) |> json(%{error: "registration_failed"})
     end
   end
@@ -263,7 +290,12 @@ defmodule SovraWeb.AuthController do
         workspaces = Workspaces.list_workspaces_for_user(user.id)
         current_workspace_id = workspaces |> List.first() |> get_in([Access.key(:id)])
 
-        Logger.info("[Auth] login ok user_id=#{user.id} workspace=#{current_workspace_id}")
+        Log.event(:info, "login succeeded",
+          event: "auth.login.succeeded",
+          user_id: user.id,
+          workspace_id: current_workspace_id,
+          email: user.email
+        )
 
         conn
         |> set_auth_cookies(user, current_workspace_id)
@@ -274,8 +306,15 @@ defmodule SovraWeb.AuthController do
         })
 
       {:error, :invalid_credentials} ->
-        # No email here: these logs leave the host for New Relic.
-        Logger.info("[Auth] login failed reason=invalid_credentials")
+        # No address here — these logs leave the host for New Relic. The keyed
+        # fingerprint is what makes "seventeen attempts on one account"
+        # visible without shipping the identifier.
+        Log.event(:warning, "login failed",
+          event: "auth.login.failed",
+          reason: :invalid_credentials,
+          email: email
+        )
+
         conn |> put_status(401) |> json(%{error: "invalid_credentials"})
     end
   end
@@ -291,6 +330,8 @@ defmodule SovraWeb.AuthController do
       RefreshTokens.revoke(refresh)
     end
 
+    Log.event(:info, "logged out", event: "auth.logged_out")
+
     conn
     |> delete_access_cookies()
     |> delete_resp_cookie(@refresh_cookie, path: @refresh_cookie_path)
@@ -302,6 +343,11 @@ defmodule SovraWeb.AuthController do
 
     case conn.cookies[@refresh_cookie] do
       nil ->
+        Log.event(:warning, "session refresh rejected",
+          event: "auth.session.refresh_rejected",
+          reason: :no_refresh_cookie
+        )
+
         conn |> put_status(401) |> json(%{error: "invalid_refresh"})
 
       plaintext ->
@@ -309,12 +355,24 @@ defmodule SovraWeb.AuthController do
           {:ok, user_id, new_refresh, _new_record} ->
             case Accounts.get_user(user_id) do
               nil ->
+                Log.event(:warning, "session refresh rejected",
+                  event: "auth.session.refresh_rejected",
+                  reason: :user_not_found,
+                  user_id: user_id
+                )
+
                 conn |> put_status(401) |> json(%{error: "invalid_refresh"})
 
               user ->
                 workspaces = Workspaces.list_workspaces_for_user(user.id)
                 current_workspace_id = workspaces |> List.first() |> get_in([Access.key(:id)])
                 {:ok, access} = UserSession.create(user.id, current_workspace_id, user.is_admin)
+
+                Log.event(:info, "session refreshed",
+                  event: "auth.session.refreshed",
+                  user_id: user.id,
+                  workspace_id: current_workspace_id
+                )
 
                 conn
                 |> put_access_cookies(access)
@@ -326,7 +384,14 @@ defmodule SovraWeb.AuthController do
                 })
             end
 
-          {:error, _reason} ->
+          {:error, reason} ->
+            # `:reuse_detected` is the interesting one and is logged in detail
+            # by RefreshTokens.rotate/1, which revokes the whole family.
+            Log.event(:warning, "session refresh rejected",
+              event: "auth.session.refresh_rejected",
+              reason: Log.reason(reason)
+            )
+
             # Clear cookies so a compromised or stale client can't keep retrying.
             conn
             |> delete_access_cookies()
@@ -339,6 +404,15 @@ defmodule SovraWeb.AuthController do
 
   def password_reset_request(conn, %{"email" => email}) when is_binary(email) do
     :ok = PasswordReset.request(email)
+
+    # Deliberately logged whether or not the address matches a user, mirroring
+    # the response: PasswordReset.request/1 hides that distinction to prevent
+    # enumeration, and inferring it from our own logs would reintroduce it.
+    Log.event(:info, "password reset requested",
+      event: "auth.password_reset.requested",
+      email: email
+    )
+
     json(conn, %{ok: true})
   end
 
@@ -349,15 +423,32 @@ defmodule SovraWeb.AuthController do
   def password_reset_confirm(conn, %{"token" => token, "password" => password})
       when is_binary(token) and is_binary(password) do
     case PasswordReset.confirm(token, password) do
-      {:ok, _user} ->
+      {:ok, user} ->
+        Log.event(:info, "password reset completed",
+          event: "auth.password_reset.completed",
+          user_id: user.id
+        )
+
         json(conn, %{ok: true})
 
       {:error, %Ecto.Changeset{} = changeset} ->
+        Log.event(:warning, "password reset rejected",
+          event: "auth.password_reset.rejected",
+          reason: :validation_error,
+          invalid_fields:
+            changeset |> changeset_errors() |> Map.keys() |> Enum.map_join(",", &to_string/1)
+        )
+
         conn
         |> put_status(422)
         |> json(%{error: "validation_error", details: changeset_errors(changeset)})
 
-      {:error, _} ->
+      {:error, reason} ->
+        Log.event(:warning, "password reset rejected",
+          event: "auth.password_reset.rejected",
+          reason: Log.reason(reason)
+        )
+
         conn |> put_status(422) |> json(%{error: "invalid_or_expired_token"})
     end
   end

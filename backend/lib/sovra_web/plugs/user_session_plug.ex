@@ -4,6 +4,8 @@ defmodule SovraWeb.Plugs.UserSessionPlug do
   Reads from `session` cookie first, falls back to `Authorization: Bearer` header.
   """
 
+  use Sovra.Log
+
   import Plug.Conn
   import Phoenix.Controller, only: [json: 2]
 
@@ -33,6 +35,15 @@ defmodule SovraWeb.Plugs.UserSessionPlug do
     if token do
       case Sovra.Auth.UserSession.verify(token) do
         {:ok, %{user_id: user_id, workspace_id: workspace_id, is_admin: is_admin}} ->
+          # Set here rather than in a pipeline plug: every route that
+          # authenticates goes through this call, so the tenant cannot be
+          # missing from a new route's logs by omission.
+          Log.put_context(
+            user_id: user_id,
+            workspace_id: workspace_id,
+            auth_method: :session
+          )
+
           conn
           |> assign(:current_user, %{
             user_id: user_id,

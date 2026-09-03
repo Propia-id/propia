@@ -2,6 +2,8 @@ defmodule Sovra.Verification.VerifierTest do
   use Sovra.DataCase, async: false
   use Oban.Testing, repo: Sovra.Repo
 
+  import Sovra.LogHelpers
+
   alias Sovra.Crypto.P256
   alias Sovra.Issuer
   alias Sovra.Verification
@@ -19,6 +21,13 @@ defmodule Sovra.Verification.VerifierTest do
   defmodule StubRegistrySuspended do
     def is_revoked(_addr, _idx), do: {:ok, false}
     def is_suspended(_addr, _idx), do: {:ok, true}
+  end
+
+  # An unreadable registry, which is the difference between "this credential is
+  # revoked" and "we could not find out" — the latter is our problem.
+  defmodule StubRegistryUnreadable do
+    def is_revoked(_addr, _idx), do: {:error, :rpc_timeout}
+    def is_suspended(_addr, _idx), do: {:error, :rpc_timeout}
   end
 
   # Process-dictionary-backed resolver stub. Each test calls
@@ -591,6 +600,142 @@ defmodule Sovra.Verification.VerifierTest do
 
       assert {:error, :session_not_pending} =
                submit(ctx, default_kb_payload(ctx), revocation_registry: StubRegistryOk)
+    end
+  end
+
+  # The verification pipeline funnels every rejection through fail/3, so the
+  # level cannot be chosen per call site — it is derived from the tag. These
+  # pin down that derivation, because getting it wrong means either paging on
+  # ordinary holder error or staying silent while our own dependencies fail.
+  describe "log events" do
+    test "a verified presentation records the credential count" do
+      ctx = setup_session()
+
+      {{:ok, session}, events} =
+        capture_events(fn ->
+          submit(ctx, default_kb_payload(ctx), revocation_registry: StubRegistryOk)
+        end)
+
+      assert session.status == "completed"
+
+      assert_event(events, "presentation.received",
+        verification_id: ctx.session.id,
+        workspace_id: ctx.verifier_ws.id
+      )
+
+      event =
+        assert_event(events, "presentation.verified",
+          verification_id: ctx.session.id,
+          holder_did: ctx.holder_did,
+          credential_count: 1
+        )
+
+      assert event.level == :info
+    end
+
+    test "a revoked credential is info: the verifier was told the truth" do
+      ctx = setup_session(status_list_index: 5)
+
+      {{:ok, _}, events} =
+        capture_events(fn ->
+          submit(ctx, default_kb_payload(ctx), revocation_registry: StubRegistryRevoked)
+        end)
+
+      event = assert_event(events, "presentation.failed", reason: "credential_revoked")
+      assert event.level == :info
+    end
+
+    test "a holder mistake is a warning" do
+      ctx = setup_session()
+
+      {{:ok, _}, events} =
+        capture_events(fn ->
+          submit(ctx, default_kb_payload(ctx, %{"nonce" => "wrong"}),
+            revocation_registry: StubRegistryOk
+          )
+        end)
+
+      event = assert_event(events, "presentation.failed", reason: "holder_nonce_mismatch")
+      assert event.level == :warning
+    end
+
+    test "DID resolution failing is an error: that one is ours" do
+      ctx = setup_session()
+      StubResolver.configure({:error, :did_unresolvable})
+
+      {{:ok, _}, events} =
+        capture_events(fn ->
+          submit(ctx, default_kb_payload(ctx), revocation_registry: StubRegistryOk)
+        end)
+
+      event = assert_event(events, "presentation.failed", reason: "holder_did_unresolvable")
+      assert event.level == :error
+    end
+
+    test "an unreadable revocation registry is an error, unlike a revocation" do
+      ctx = setup_session(status_list_index: 5)
+
+      {{:ok, session}, events} =
+        capture_events(fn ->
+          submit(ctx, default_kb_payload(ctx), revocation_registry: StubRegistryUnreadable)
+        end)
+
+      assert session.error == "status_check_failed"
+      event = assert_event(events, "presentation.failed", reason: "status_check_failed")
+      assert event.level == :error
+    end
+
+    test "an unbounded tag is split into reason and reason_detail" do
+      # The claim path would otherwise make metadata.reason unbounded in
+      # cardinality and useless as an alert facet. The stored session.error and
+      # the webhook payload keep the full tag — those are a public contract.
+      ctx = setup_session()
+
+      {:ok, sd_jwt} =
+        Sovra.Issuer.SDJWT.build(
+          ctx.issuer_ws,
+          create_schema(ctx.issuer_ws.id),
+          %{"studentName" => "Alice"},
+          ctx.holder_did
+        )
+
+      {issuer_jwt, disclosures} = parts_of(sd_jwt)
+      sd_hash = Sovra.Credentials.SDJWT.compute_sd_hash(issuer_jwt, disclosures)
+      ctx = %{ctx | sd_jwt: sd_jwt, sd_hash: sd_hash}
+
+      {{:ok, session}, events} =
+        capture_events(fn ->
+          submit(ctx, default_kb_payload(ctx), revocation_registry: StubRegistryOk)
+        end)
+
+      assert session.error == "missing_required_claim:degree"
+
+      assert_event(events, "presentation.failed",
+        reason: "missing_required_claim",
+        reason_detail: "degree"
+      )
+    end
+
+    test "posting to an unknown or spent session is rejected, with no session to fail" do
+      {{:error, :session_not_found}, events} =
+        capture_events(fn -> Verification.submit_presentation("no-such-state", "anything") end)
+
+      event = assert_event(events, "presentation.rejected", reason: :session_not_found)
+      assert event.level == :warning
+      refute_event(events, "presentation.failed")
+
+      ctx = setup_session()
+      {:ok, _} = submit(ctx, default_kb_payload(ctx), revocation_registry: StubRegistryOk)
+
+      {{:error, :session_not_pending}, events} =
+        capture_events(fn ->
+          submit(ctx, default_kb_payload(ctx), revocation_registry: StubRegistryOk)
+        end)
+
+      assert_event(events, "presentation.rejected",
+        reason: :session_not_pending,
+        verification_id: ctx.session.id
+      )
     end
   end
 

@@ -1,6 +1,7 @@
 defmodule SovraWeb.Issuer.AdminController do
   use SovraWeb, :controller
   use OpenApiSpex.ControllerSpecs
+  use Sovra.Log
 
   alias Sovra.Accounts
   alias Sovra.Documents
@@ -368,7 +369,17 @@ defmodule SovraWeb.Issuer.AdminController do
            full_name: full_name,
            workspace_name: issuer_name
          }) do
-      {:ok, %{workspace: workspace} = result} ->
+      {:ok, %{workspace: workspace, user: user} = result} ->
+        # A platform admin minting an account for someone else — distinct from
+        # self-service registration, and the actor is the admin, which the log
+        # context already carries from RequireAdminPlug.
+        Log.event(:info, "issuer account created by admin",
+          event: "admin.issuer_account.created",
+          workspace_id: workspace.id,
+          created_user_id: user.id,
+          email: email
+        )
+
         conn
         |> put_status(201)
         |> json(%{

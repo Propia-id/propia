@@ -22,6 +22,8 @@ defmodule Sovra.Workspaces.WorkspaceProvisioningJob do
       states: [:available, :scheduled, :executing, :retryable]
     ]
 
+  use Sovra.Log
+
   alias Sovra.Crypto.Key
   alias Sovra.Issuer.ClaimUtils
   alias Sovra.Repo
@@ -29,14 +31,17 @@ defmodule Sovra.Workspaces.WorkspaceProvisioningJob do
   alias Sovra.Workspaces
   alias Sovra.Workspaces.Workspace
 
-  require Logger
-
   @impl Oban.Worker
-  def perform(%Oban.Job{
-        args: %{"workspace_id" => workspace_id},
-        attempt: attempt,
-        max_attempts: max_attempts
-      }) do
+  def perform(
+        %Oban.Job{
+          args: %{"workspace_id" => workspace_id},
+          attempt: attempt,
+          max_attempts: max_attempts
+        } = job
+      ) do
+    Log.adopt_job_context(job)
+    Log.put_context(workspace_id: workspace_id)
+
     case Repo.get(Workspace, workspace_id) do
       nil ->
         {:cancel, :workspace_not_found}
@@ -49,23 +54,102 @@ defmodule Sovra.Workspaces.WorkspaceProvisioningJob do
     end
   end
 
+  # Each step is logged separately because they are only partly reversible: a
+  # KMS signing key exists before the EOA does, and the EOA before the DID, so
+  # "the job failed" is not enough to know what state the workspace is in. The
+  # pre-existing Oban alert says a provisioning job failed; only these say
+  # which step.
   defp run(workspace, attempt, max_attempts) do
-    with {:ok, workspace} <- ensure_signing_key(workspace),
-         {:ok, workspace} <- ensure_eoa(workspace),
-         {:ok, workspace} <- ensure_did(workspace),
-         :ok <- register_on_chain(workspace),
+    with {:ok, workspace} <- step(:signing_key, workspace, &ensure_signing_key/1),
+         {:ok, workspace} <- step(:eoa, workspace, &ensure_eoa/1),
+         {:ok, workspace} <- step(:did, workspace, &ensure_did/1),
+         {:ok, workspace} <- step(:chain_registration, workspace, &register_on_chain_step/1),
          {:ok, workspace} <- mark_done(workspace) do
+      Log.event(:info, "workspace provisioned",
+        event: "workspace.provisioning.completed",
+        workspace_id: workspace.id,
+        did: workspace.did,
+        eoa_address: workspace.eoa_address,
+        attempt: attempt
+      )
+
       {:ok, _job} = emit_webhook(workspace)
       :ok
     else
+      {:error, step, reason} ->
+        # `attempt` and `max_attempts` are what distinguish "will retry" from
+        # "gave up", which is the difference between noise and an incident.
+        final? = attempt >= max_attempts
+
+        Log.event(:error, "workspace provisioning step failed",
+          event: "workspace.provisioning.step_failed",
+          workspace_id: workspace.id,
+          step: step,
+          reason: Log.reason(reason),
+          attempt: attempt,
+          max_attempts: max_attempts,
+          final: final?
+        )
+
+        if final? do
+          Workspaces.mark_provisioning_failed(workspace.id, format_error(reason))
+          {:cancel, reason}
+        else
+          {:error, reason}
+        end
+
       {:error, reason} ->
-        if attempt >= max_attempts do
+        final? = attempt >= max_attempts
+
+        Log.event(:error, "workspace provisioning failed",
+          event: "workspace.provisioning.step_failed",
+          workspace_id: workspace.id,
+          step: :mark_done,
+          reason: Log.reason(reason),
+          attempt: attempt,
+          max_attempts: max_attempts,
+          final: final?
+        )
+
+        if final? do
           Workspaces.mark_provisioning_failed(workspace.id, format_error(reason))
           {:cancel, reason}
         else
           {:error, reason}
         end
     end
+  end
+
+  # Steps are idempotent — each returns early when its field is already set —
+  # so a retry logs only the work it actually redoes.
+  defp step(name, workspace, fun) do
+    already_done? = step_done?(name, workspace)
+
+    case fun.(workspace) do
+      {:ok, updated} ->
+        unless already_done? do
+          Log.event(:info, "workspace provisioning step completed",
+            event: "workspace.provisioning.step_completed",
+            workspace_id: updated.id,
+            step: name
+          )
+        end
+
+        {:ok, updated}
+
+      {:error, reason} ->
+        {:error, name, reason}
+    end
+  end
+
+  defp step_done?(:signing_key, ws), do: is_binary(ws.signing_key_id)
+  defp step_done?(:eoa, ws), do: is_binary(ws.eoa_address)
+  defp step_done?(:did, ws), do: is_binary(ws.did)
+  defp step_done?(_step, _ws), do: false
+
+  # register_on_chain/1 returns :ok; the step pipeline threads the workspace.
+  defp register_on_chain_step(%Workspace{} = ws) do
+    with :ok <- register_on_chain(ws), do: {:ok, ws}
   end
 
   defp ensure_signing_key(%Workspace{signing_key_id: key_id} = ws) when is_binary(key_id),

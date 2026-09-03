@@ -13,7 +13,14 @@ defmodule Sovra.Application do
     # HTTP service only — no Repo, no Oban, no Phoenix endpoint) so the dedicated
     # signer box carries the least possible surface. Everything else (default) is
     # the full API node.
-    children = children(System.get_env("SERVICE", "api"))
+    service = System.get_env("SERVICE", "api")
+
+    if service != "signer" do
+      attach_oban_logger()
+      SovraWeb.Telemetry.attach_handlers()
+    end
+
+    children = children(service)
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
@@ -27,7 +34,6 @@ defmodule Sovra.Application do
 
   defp children(_api) do
     [
-      SovraWeb.Telemetry,
       Sovra.Repo,
       {DNSCluster, query: Application.get_env(:sovra, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Sovra.PubSub},
@@ -42,6 +48,28 @@ defmodule Sovra.Application do
   end
 
   defp signer_port, do: Application.get_env(:sovra, :signer_service, [])[:port] || 4001
+
+  # Per-job detail for `journalctl -u sovra`, and deliberately NOT for New Relic:
+  # the same facts are already on Transaction events as `oban.worker`,
+  # `oban.queue` and `oban.job.result`, which is what the provisioning and
+  # mailer alert conditions read.
+  #
+  # `encode: false` is what keeps them out. Oban's default logger otherwise
+  # emits its payload as a JSON string; New Relic parses that into attributes
+  # and, since the payload carries no `message` key, files thousands of
+  # blank-message records — two per job, plus two a minute forever from the
+  # ExpiredSessionsSweeper cron whether or not anything is happening. With
+  # `encode: false` the log is a `{:report, map}` whose domain is
+  # `[:elixir, :oban]`, and NewRelic.LogsInContext only forwards a report when
+  # the domain is exactly `[:elixir]` — so these stay on the box, while the
+  # default handler still formats them into journald.
+  defp attach_oban_logger do
+    :ok = Oban.Telemetry.attach_default_logger(level: :info, encode: false)
+  rescue
+    # attach_default_logger/1 raises if the handler is already attached, which
+    # happens when the app restarts inside one VM (releases, `iex -S mix`).
+    ArgumentError -> :ok
+  end
 
   # Tell Phoenix to update the endpoint configuration
   # whenever the application is updated.

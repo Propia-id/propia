@@ -8,6 +8,8 @@ defmodule SovraWeb.Plugs.OriginCheckPlug do
   via preflight.
   """
 
+  use Sovra.Log
+
   import Plug.Conn
   import Phoenix.Controller, only: [json: 2]
 
@@ -26,12 +28,27 @@ defmodule SovraWeb.Plugs.OriginCheckPlug do
         if origin in allowed_origins() do
           conn
         else
-          conn |> put_status(403) |> json(%{error: "origin_not_allowed"}) |> halt()
+          reject(conn, origin, :not_allowed)
         end
 
       _ ->
-        conn |> put_status(403) |> json(%{error: "origin_not_allowed"}) |> halt()
+        reject(conn, nil, :multiple_origin_headers)
     end
+  end
+
+  # `origin` is logged because a rejection is far more often a stale
+  # ISSUER_FRONTEND_URL than an attack, and the value is the only way to tell
+  # the two apart.
+  defp reject(conn, origin, reason) do
+    Log.event(:warning, "origin rejected",
+      event: "auth.origin.rejected",
+      reason: reason,
+      origin: origin,
+      method: conn.method,
+      path: conn.request_path
+    )
+
+    conn |> put_status(403) |> json(%{error: "origin_not_allowed"}) |> halt()
   end
 
   defp allowed_origins, do: SovraWeb.AllowedOrigins.list()
