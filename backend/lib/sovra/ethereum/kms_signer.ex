@@ -6,10 +6,14 @@ defmodule Sovra.Ethereum.KmsSigner do
   via AWS KMS). No key material or AWS credentials on this node.
 
   HTTP transport and config (`config :sovra, :signer`) live in
-  `Sovra.Signer.Client`. The relayer address derives from the immutable KMS
-  relayer key, so it is fetched once and cached in `:persistent_term` for the
-  node's lifetime (mirroring the signer service's own pubkey cache in
-  `Sovra.Signer.Relayer`).
+  `Sovra.Signer.Client`. The address is fetched on every `accounts/1` call and
+  deliberately NOT cached here: a rotated `RELAYER_KMS_KEY_ID` restarts the
+  signer but not the API nodes, so a node-lifetime memo would keep building
+  transactions with a `from` that no longer matches the signing key — wrong
+  nonce, mismatched signature. `send_transaction/2` calls `accounts/1` once per
+  transaction, so this costs one HTTP hop on a path that already waits on block
+  inclusion. Read-only callers that can tolerate a stale answer use
+  `Sovra.Ethereum.Relayer.cached_address/0`, which bounds it with a TTL.
   """
 
   @behaviour Ethers.Signer
@@ -38,7 +42,7 @@ defmodule Sovra.Ethereum.KmsSigner do
 
   @impl true
   def accounts(_opts) do
-    case relayer_address() do
+    case fetch_relayer_address() do
       {:ok, address} -> {:ok, [address]}
       {:error, _} = err -> err
     end
@@ -57,19 +61,6 @@ defmodule Sovra.Ethereum.KmsSigner do
       {:ok, %{status: status, body: body}} -> {:error, {:signer_error, status, body}}
       false -> {:error, :bad_recovery_id}
       {:error, _} = err -> err
-    end
-  end
-
-  defp relayer_address do
-    case :persistent_term.get({__MODULE__, :relayer_address}, nil) do
-      nil ->
-        with {:ok, address} <- fetch_relayer_address() do
-          :persistent_term.put({__MODULE__, :relayer_address}, address)
-          {:ok, address}
-        end
-
-      address ->
-        {:ok, address}
     end
   end
 

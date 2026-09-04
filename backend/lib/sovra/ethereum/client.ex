@@ -4,7 +4,11 @@ defmodule Sovra.Ethereum.Client do
   using the admin private key configured via environment.
   """
 
+  @behaviour Sovra.Ethereum.BalanceReader
+
   use Sovra.Log
+
+  alias Sovra.Ethereum.Chains
 
   # Receipt polling window. Defaults cover a public testnet (Sepolia blocks
   # are ~12s, and a tx may take a few blocks to confirm): 45 polls × 2s ≈ 90s.
@@ -32,10 +36,10 @@ defmodule Sovra.Ethereum.Client do
   """
   def send_transaction(tx_data, opts \\ []) do
     config = ethereum_config()
-    {signer, signer_opts} = relayer_signer(config)
     context = Keyword.take(opts, [:op, :subject_id, :workspace_id])
 
-    with {:ok, [from_address]} <- signer.accounts(signer_opts) do
+    with {:ok, {signer, signer_opts}} <- relayer_signer(),
+         {:ok, [from_address]} <- signer.accounts(signer_opts) do
       send_opts =
         [
           to: opts[:to],
@@ -66,14 +70,69 @@ defmodule Sovra.Ethereum.Client do
     has_relayer and Keyword.get(config, :did_registry_address) not in [nil, ""]
   end
 
-  # Local (in-process ADMIN_PRIVATE_KEY) for dev/test/local; KMS signer service
-  # (no key material on this node) in production.
-  defp relayer_signer(config) do
+  @doc """
+  The configured `Ethers.Signer` for the relayer, as `{module, opts}`.
+
+  Local (in-process `ADMIN_PRIVATE_KEY`) for dev/test/local; the KMS signer
+  service (no key material on this node) in production. Public because
+  `Sovra.Ethereum.Relayer` resolves the relayer's address through the same
+  signer the submit path signs with — the two must not be able to disagree.
+
+  `Keyword.get`, not `fetch!`: an unconfigured local relayer must surface as
+  `Ethers.Signer.Local`'s `{:error, :no_private_key}` rather than raising, so
+  read-only callers (monitoring) can report it instead of crashing.
+  """
+  @spec relayer_signer() :: {:ok, {module(), keyword()}} | {:error, term()}
+  def relayer_signer do
+    config = ethereum_config()
+
     case Keyword.get(config, :relayer_backend, :local) do
-      :kms -> {Sovra.Ethereum.KmsSigner, []}
-      _ -> {Ethers.Signer.Local, [private_key: Keyword.fetch!(config, :admin_private_key)]}
+      :kms -> {:ok, {Sovra.Ethereum.KmsSigner, []}}
+      _ -> {:ok, {Ethers.Signer.Local, [private_key: Keyword.get(config, :admin_private_key)]}}
     end
   end
+
+  @doc """
+  Native-token balance of `address` at the latest block, in wei.
+
+  Resolved through `Sovra.Ethereum.Chains`, not `configured?/0`: the relayer
+  holds a balance on the chain whether or not the registry contracts are set.
+  """
+  @impl true
+  @spec get_balance(pos_integer(), <<_::160>>) :: {:ok, non_neg_integer()} | {:error, term()}
+  def get_balance(chain_id, <<_::binary-size(20)>> = address) do
+    with {:ok, url} <- rpc_url_for(chain_id),
+         {:ok, hex} <-
+           Ethereumex.HttpClient.eth_get_balance(hex0x(address), "latest", url: url) do
+      decode_uint(hex)
+    end
+  end
+
+  # `:unknown_chain` means not the configured chain; `:chain_rpc_not_configured`
+  # means configured without an RPC URL. The monitor labels them the same way,
+  # but the log line has to be able to tell them apart.
+  defp rpc_url_for(chain_id) do
+    case Chains.get(chain_id) do
+      {:ok, %{rpc_url: url}} when is_binary(url) and url != "" -> {:ok, url}
+      {:ok, %{}} -> {:error, :chain_rpc_not_configured}
+      {:error, _} = err -> err
+    end
+  end
+
+  defp hex0x(bin), do: "0x" <> Base.encode16(bin, case: :lower)
+
+  # Strict on purpose: a malformed response must not read as a legitimate zero,
+  # or a drained relayer and a broken RPC endpoint become indistinguishable.
+  defp decode_uint("0x"), do: {:ok, 0}
+
+  defp decode_uint("0x" <> hex) when hex != "" do
+    case Integer.parse(hex, 16) do
+      {n, ""} when n >= 0 -> {:ok, n}
+      _ -> {:error, :invalid_uint_response}
+    end
+  end
+
+  defp decode_uint(_), do: {:error, :invalid_uint_response}
 
   def call(tx_data, opts \\ []) do
     config = ethereum_config()

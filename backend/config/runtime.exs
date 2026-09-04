@@ -161,12 +161,20 @@ config :sovra, :explorer_url, System.get_env("EXPLORER_URL", "https://explorer.t
 
 admin_pk = System.get_env("ADMIN_PRIVATE_KEY")
 
+# Hoisted out of the cond below because the relayer balance floors are keyed by
+# chain id, and both branches must agree on it. CHAIN_NAME is a display label
+# only — it becomes the `chain_name` metric label, which is what lets a balance
+# alert name the network; Sovra.Ethereum.Chains falls back to "chain-<id>".
+chain_id = String.to_integer(env.("CHAIN_ID") || "65536999")
+
+config :sovra, :ethereum, chain_name: env.("CHAIN_NAME")
+
 cond do
   admin_pk not in [nil, ""] ->
     config :sovra, :ethereum,
       relayer_backend: :local,
       rpc_url: System.get_env("L2_RPC_URL", "http://127.0.0.1:1729"),
-      chain_id: String.to_integer(env.("CHAIN_ID") || "65536999"),
+      chain_id: chain_id,
       admin_private_key: admin_pk,
       did_registry_address: System.fetch_env!("DID_REGISTRY_ADDRESS"),
       issuer_registry_address: System.fetch_env!("ISSUER_REGISTRY_ADDRESS"),
@@ -177,7 +185,7 @@ cond do
     config :sovra, :ethereum,
       relayer_backend: :kms,
       rpc_url: System.get_env("L2_RPC_URL", "http://127.0.0.1:1729"),
-      chain_id: String.to_integer(env.("CHAIN_ID") || "65536999"),
+      chain_id: chain_id,
       did_registry_address: System.fetch_env!("DID_REGISTRY_ADDRESS"),
       issuer_registry_address: System.fetch_env!("ISSUER_REGISTRY_ADDRESS"),
       revocation_registry_address: System.get_env("REVOCATION_REGISTRY_ADDRESS"),
@@ -185,6 +193,65 @@ cond do
 
   true ->
     :ok
+end
+
+# --- Relayer balance monitoring --------------------------------------------
+# Floors are declared in ETH (RELAYER_BALANCE_{WARN,CRIT}_ETH, both optional)
+# and converted to wei with Decimal, never a float, so the result is exact for
+# ANY operator-supplied decimal. The floors shipped today happen to survive the
+# float path, but plenty of neighbouring values do not: 1.1 * 1.0e18 is off by
+# +128 wei in float64, 2.3 by -256, 0.57 by -64. They are keyed by chain id and
+# exported as a metric, so one generic alert rule pair covers this chain and any
+# added later.
+wei_per_eth = Decimal.new(1_000_000_000_000_000_000)
+
+eth_to_wei = fn
+  nil ->
+    nil
+
+  eth ->
+    case Decimal.parse(String.trim(eth)) do
+      {dec, ""} ->
+        dec |> Decimal.mult(wei_per_eth) |> Decimal.round(0, :floor) |> Decimal.to_integer()
+
+      _ ->
+        raise "invalid relayer balance floor #{inspect(eth)} — expected a decimal like 0.05"
+    end
+end
+
+relayer_balance_thresholds = %{
+  chain_id =>
+    [
+      warning: eth_to_wei.(env.("RELAYER_BALANCE_WARN_ETH")),
+      critical: eth_to_wei.(env.("RELAYER_BALANCE_CRIT_ETH"))
+    ]
+    |> Enum.reject(fn {_severity, wei} -> is_nil(wei) end)
+    |> Map.new()
+}
+
+config :sovra, :relayer_balance_thresholds, relayer_balance_thresholds
+
+# Skipped under MIX_ENV=test: this file runs after test.exs, so a stray export
+# would otherwise enable the poller in the suite.
+if config_env() != :test do
+  case System.get_env("RELAYER_BALANCE_MONITOR_ENABLED") do
+    v when v in ~w(true 1) ->
+      config :sovra, Sovra.Ethereum.Relayer.BalanceMonitor, enabled: true
+
+    v when v in ~w(false 0) ->
+      config :sovra, Sovra.Ethereum.Relayer.BalanceMonitor, enabled: false
+
+    _ ->
+      :ok
+  end
+end
+
+if interval = env.("RELAYER_BALANCE_POLL_INTERVAL_MS") do
+  config :sovra, Sovra.Ethereum.Relayer.BalanceMonitor, interval_ms: String.to_integer(interval)
+end
+
+if metrics_port = env.("METRICS_PORT") do
+  config :sovra, :metrics_server, port: String.to_integer(metrics_port)
 end
 
 # Holder identity source for DID resolution. "aligned" reads the holder's

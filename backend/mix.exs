@@ -52,6 +52,10 @@ defmodule Sovra.MixProject do
       {:phoenix_ecto, "~> 4.5"},
       {:ecto_sql, "~> 3.13"},
       {:postgrex, ">= 0.0.0"},
+      # Prometheus exporter. Held at 1.11: 1.12 requires ecto >= 3.14. Brings
+      # telemetry_metrics + telemetry_poller back as transitive deps — they are
+      # hard requirements of prom_ex, so they are no longer declared here.
+      {:prom_ex, "~> 1.11.0"},
       {:gettext, "~> 1.0"},
       {:jason, "~> 1.2"},
       {:jose, "~> 1.11"},

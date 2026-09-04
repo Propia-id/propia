@@ -19,6 +19,10 @@ config :sovra,
   ethereum: [
     rpc_url: "http://127.0.0.1:1729",
     chain_id: 65_536_999,
+    # Human label for the chain, carried as the `chain_name` metric label so an
+    # alert notification can name the network. CHAIN_NAME in runtime.exs;
+    # Sovra.Ethereum.Chains falls back to "chain-<id>".
+    chain_name: nil,
     admin_private_key: nil,
     did_registry_address: nil,
     issuer_registry_address: nil
@@ -88,6 +92,25 @@ config :hammer,
 # doesn't silently alter password hashing cost. log_rounds: 12 is bcrypt_elixir's
 # current default (~250ms per hash on modern hardware).
 config :bcrypt_elixir, log_rounds: 12
+
+# ---- Metrics -----------------------------------------------------------------
+# Dashboards and alert rules are file-provisioned, so PromEx's Grafana keys and
+# its own metrics server stay unset. No sockets or channels here.
+config :sovra, Sovra.PromEx,
+  drop_metrics_groups: [:phoenix_channel_event_metrics, :phoenix_socket_event_metrics]
+
+# The `/metrics` listener — a separate port from the public endpoint.
+config :sovra, :metrics_server, enabled: true, port: 9569, path: "/metrics"
+
+# Off by default; `runtime.exs` enables it from RELAYER_BALANCE_MONITOR_ENABLED.
+config :sovra, Sovra.Ethereum.Relayer.BalanceMonitor,
+  enabled: false,
+  interval_ms: 60_000,
+  chain_timeout_ms: 10_000
+
+# Per-chain floors in wei, exported as a metric so one alert rule pair covers
+# every chain. Filled from the environment in `runtime.exs`.
+config :sovra, :relayer_balance_thresholds, %{}
 
 # Oban job runner (webhooks, mailers, verification housekeeping)
 config :sovra, Oban,

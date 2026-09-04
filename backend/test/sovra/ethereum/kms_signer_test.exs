@@ -42,12 +42,31 @@ defmodule Sovra.Ethereum.KmsSignerTest do
     assert KmsSigner.accounts([]) == Ethers.Signer.Local.accounts(private_key: @priv)
   end
 
-  test "caches the relayer address: a second lookup works with the signer down" do
-    assert {:ok, [address]} = KmsSigner.accounts([])
+  # Deliberately NOT cached: the submit path builds a transaction whose `from`
+  # comes from here, so a memo would keep signing with a rotated key while
+  # claiming the old address. Monitoring, which can tolerate a stale answer,
+  # uses Sovra.Ethereum.Relayer.cached_address/0 and its bounded TTL instead.
+  test "resolves the relayer address live, so a rotated key is picked up" do
+    assert {:ok, [first]} = KmsSigner.accounts([])
+
+    rotated = String.duplicate(<<0x22>>, 32)
+
+    Req.Test.stub(:sovra_signer, fn conn ->
+      {:ok, pub} = ExSecp256k1.create_public_key(rotated)
+      json(conn, 200, %{address: Ethers.Utils.public_key_to_address(pub)})
+    end)
+
+    assert {:ok, [second]} = KmsSigner.accounts([])
+    refute second == first
+    assert {:ok, [^second]} = Ethers.Signer.Local.accounts(private_key: rotated)
+  end
+
+  test "surfaces a signer failure rather than serving a stale address" do
+    assert {:ok, [_address]} = KmsSigner.accounts([])
 
     Req.Test.stub(:sovra_signer, fn conn -> json(conn, 500, %{error: "down"}) end)
 
-    assert {:ok, [^address]} = KmsSigner.accounts([])
+    assert {:error, {:signer_error, 500, _}} = KmsSigner.accounts([])
   end
 
   test "sign_transaction is byte-identical to the local signer for the same key" do

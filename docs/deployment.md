@@ -281,9 +281,27 @@ Optional (on-chain features -- set the registry addresses to enable; the relayer
 |---|---|
 | `ADMIN_PRIVATE_KEY` | Local relayer key for signing on-chain writes (dev/local only; omit in prod to use the KMS relayer) |
 | `L2_RPC_URL` | SovraChain RPC endpoint (default: `http://127.0.0.1:1729`) |
+| `CHAIN_ID` | Chain id of the target network (default: `65536999`) |
+| `CHAIN_NAME` | Display label for the chain, used as the `chain_name` metric label so a relayer balance alert can name the network (default: `chain-<id>`) |
 | `DID_REGISTRY_ADDRESS` | Deployed DID registry contract address |
 | `ISSUER_REGISTRY_ADDRESS` | Deployed issuer registry contract address |
 | `REVOCATION_REGISTRY_ADDRESS` | Deployed revocation registry contract address |
+
+Optional (metrics — Prometheus exporter and relayer gas balance monitoring):
+
+The API serves `/metrics` on its own listener, never on the public endpoint, and
+Prometheus scrapes it as `job="api"` over Tailscale. The balance floors are declared
+in ETH and converted to wei by the app, which exports them as a metric — so one
+generic alert rule pair covers every chain and a floor change needs only an api
+reconfig, not an observability redeploy. See [infra/ALERTS.md](../infra/ALERTS.md).
+
+| Variable | Description |
+|---|---|
+| `METRICS_PORT` | Port for the `/metrics` listener (default: 9569) |
+| `RELAYER_BALANCE_MONITOR_ENABLED` | `true`/`1` starts the relayer balance poller; off by default (never enabled under `MIX_ENV=test`) |
+| `RELAYER_BALANCE_POLL_INTERVAL_MS` | Poll cadence (default: 60000; `RelayerBalanceStale` assumes ≤ 120000) |
+| `RELAYER_BALANCE_WARN_ETH` | Warning gas balance floor in ETH, e.g. `0.01`. Optional; absent means no warning alert |
+| `RELAYER_BALANCE_CRIT_ETH` | Critical gas balance floor in ETH, e.g. `0.002`. Optional, but absent means **no balance alert at all** — `RelayerThresholdMisconfigured` reports that |
 
 Optional (tuning):
 

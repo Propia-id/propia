@@ -33,18 +33,51 @@ defmodule Sovra.Application do
   end
 
   defp children(_api) do
-    [
-      Sovra.Repo,
-      {DNSCluster, query: Application.get_env(:sovra, :dns_cluster_query) || :ignore},
-      {Phoenix.PubSub, name: Sovra.PubSub},
-      {Finch, name: Sovra.Finch},
-      {Task.Supervisor, name: Sovra.TaskSupervisor},
-      {Oban, Application.fetch_env!(:sovra, Oban)},
-      Sovra.Auth.TokenDenylist,
-      Sovra.DID.DocumentCache,
-      SovraWeb.Endpoint
-    ]
-    |> maybe_add_key_store()
+    # Sovra.PromEx first: it registers its metrics synchronously, so the
+    # handlers are attached before the Repo and Endpoint emit anything.
+    children =
+      [Sovra.PromEx] ++
+        metrics_server() ++
+        [
+          Sovra.Repo,
+          {DNSCluster, query: Application.get_env(:sovra, :dns_cluster_query) || :ignore},
+          {Phoenix.PubSub, name: Sovra.PubSub},
+          {Finch, name: Sovra.Finch},
+          {Task.Supervisor, name: Sovra.TaskSupervisor},
+          {Oban, Application.fetch_env!(:sovra, Oban)},
+          Sovra.Auth.TokenDenylist,
+          Sovra.DID.DocumentCache,
+          # Read-only balance polling. `init/1` does no I/O, so it cannot fail boot.
+          Sovra.Ethereum.Relayer.BalanceMonitor,
+          SovraWeb.Endpoint
+        ]
+
+    maybe_add_key_store(children)
+  end
+
+  # `/metrics` on its own listener, never on the public endpoint. Bandit rather
+  # than PromEx's `:metrics_server`, which would pull in Plug.Cowboy.
+  defp metrics_server do
+    config = Application.get_env(:sovra, :metrics_server, [])
+
+    if config[:enabled] do
+      plug_opts = %{
+        path: config[:path] || "/metrics",
+        prom_ex_module: Sovra.PromEx
+      }
+
+      [
+        Supervisor.child_spec(
+          {Bandit,
+           plug: {PromEx.MetricsServer.Plug, plug_opts},
+           scheme: :http,
+           port: config[:port] || 9569},
+          id: :metrics_server
+        )
+      ]
+    else
+      []
+    end
   end
 
   defp signer_port, do: Application.get_env(:sovra, :signer_service, [])[:port] || 4001

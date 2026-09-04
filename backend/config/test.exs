@@ -74,6 +74,20 @@ config :sovra, :signer,
   token: "test-signer-token",
   req_options: [plug: {Req.Test, :sovra_signer}]
 
+# ---- Metrics -----------------------------------------------------------------
+# No metrics in the suite; tests that need the exporter start their own.
+config :sovra, Sovra.PromEx, disabled: true
+
+# Bind no port.
+config :sovra, :metrics_server, enabled: false
+
+# Tests start the monitor explicitly, with a stub reader.
+config :sovra, Sovra.Ethereum.Relayer.BalanceMonitor, enabled: false
+
+# The stub, not the flag above, is what keeps the suite off the network:
+# `runtime.exs` runs after this file and can re-enable the monitor.
+config :sovra, :relayer_balance_reader, Sovra.Ethereum.BalanceReader.Stub
+
 # Oban — manual mode so jobs don't run unless asserted on
 config :sovra, Oban, testing: :manual
 
