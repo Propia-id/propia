@@ -1,6 +1,8 @@
 defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
   use SovraWeb.ConnCase, async: false
 
+  import Sovra.LogHelpers
+
   alias Sovra.Auth.UserSession
   alias Sovra.Organizations
   alias Sovra.Workspaces
@@ -224,6 +226,31 @@ defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
       # The new session cookie must be scoped to /dashboard so subsequent
       # dashboard requests carry it.
       assert %{path: "/dashboard"} = conn.resp_cookies["session"]
+    end
+
+    # The revoke of the old session is the last thing to touch the context.
+    test "logs the workspace switched to, not the one left", %{conn: conn} do
+      owner = user("owner")
+      organization = org()
+
+      {:ok, %{workspace: ws_a}} =
+        Workspaces.create_workspace(organization.id, %{name: "A"}, owner.id)
+
+      {:ok, %{workspace: ws_b}} =
+        Workspaces.create_workspace(organization.id, %{name: "B"}, owner.id)
+
+      {conn, events} =
+        capture_events(fn ->
+          conn
+          |> authed(owner, ws_a.id)
+          |> post("/dashboard/workspaces/#{ws_b.id}/switch")
+        end)
+
+      assert conn.status == 200
+
+      request = assert_event(events, "http.request")
+      assert request.metadata[:workspace_id] == ws_b.id
+      assert request.metadata[:user_id] == owner.id
     end
 
     test "non-member 403", %{conn: conn} do

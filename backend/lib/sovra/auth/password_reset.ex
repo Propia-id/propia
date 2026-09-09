@@ -86,6 +86,9 @@ defmodule Sovra.Auth.PasswordReset do
             {:error, :invalid_or_expired}
 
           user ->
+            # The one credential-backed action that mints no session.
+            Log.put_context(user_id: user.id)
+
             result =
               Repo.transaction(fn ->
                 # Atomic single-use claim: a conditional UPDATE that only

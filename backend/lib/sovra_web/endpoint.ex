@@ -20,7 +20,9 @@ defmodule SovraWeb.Endpoint do
   end
 
   plug Plug.RequestId
-  plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
+  # `log: false` silences Phoenix's own two lines; the event still fires, and
+  # `SovraWeb.RequestLog` logs it with the request's context attached.
+  plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint], log: false
 
   plug Plug.Parsers,
     parsers: [:urlencoded, :multipart, :json],

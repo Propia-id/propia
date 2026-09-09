@@ -34,6 +34,8 @@ defmodule Sovra.LogBudgetTest do
     # Plug.RequestId + UserSessionPlug/ApiKeyPlug. The require_* plugs add
     # org_id or workspace_id, which every event in those paths already names.
     request: ~w(request_id user_id auth_method),
+    # `http.request` names no tenant of its own, so it is charged the full set.
+    every_request: ~w(request_id user_id workspace_id org_id auth_method),
     # Log.adopt_job_context/1
     job: ~w(request_id oban_job_id oban_attempt),
     # SessionPlug, on the wallet rail
@@ -98,6 +100,7 @@ defmodule Sovra.LogBudgetTest do
 
   defp ambient_for(%{file: file}) do
     cond do
+      String.contains?(file, "request_log.ex") -> @ambient.every_request
       String.contains?(file, @job_files) -> @ambient.job
       String.contains?(file, "guardian") -> @ambient.guardian
       true -> @ambient.request

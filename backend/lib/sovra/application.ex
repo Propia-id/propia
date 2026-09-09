@@ -22,6 +22,7 @@ defmodule Sovra.Application do
     if service != "signer" do
       attach_oban_logger()
       SovraWeb.Telemetry.attach_handlers()
+      SovraWeb.RequestLog.attach()
     end
 
     children = children(service)

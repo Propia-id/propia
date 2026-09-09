@@ -132,6 +132,25 @@ defmodule SovraWeb.AuthEventsTest do
       assert event.metadata[:user_id]
     end
 
+    test "names the user on every line of the request, not just its own event", %{
+      conn: conn,
+      email: email
+    } do
+      {conn, events} =
+        capture_events(fn ->
+          post(conn, ~p"/dashboard/auth/login", %{email: email, password: @password})
+        end)
+
+      assert conn.status == 200
+
+      login = assert_event(events, "auth.login.succeeded")
+      request = assert_event(events, "http.request", route: "/dashboard/auth/login")
+
+      assert request.metadata[:user_id] == login.metadata[:user_id]
+      assert request.metadata[:workspace_id] == login.metadata[:workspace_id]
+      assert request.metadata[:status] == 200
+    end
+
     test "failure is a warning with a fingerprint, so attempts are countable", %{
       conn: conn,
       email: email

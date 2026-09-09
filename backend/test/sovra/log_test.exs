@@ -95,6 +95,7 @@ defmodule Sovra.LogTest do
       "guardian.recovery_key.rotation_failed",
       "guardian.recovery_key.rotation_started",
       "health.check.failed",
+      "http.request",
       "invitation.accepted",
       "invitation.code_requested",
       "invitation.created",

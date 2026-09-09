@@ -57,6 +57,8 @@ config :logger, :default_formatter,
   metadata: [
     :request_id,
     :event,
+    :route,
+    :status,
     :org_id,
     :workspace_id,
     :user_id,

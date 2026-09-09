@@ -3,6 +3,10 @@ defmodule Sovra.Auth.UserSession do
   Short-lived JWT access tokens for end-user authentication.
   Tokens are HMAC-SHA256 signed, 1-hour expiry, with revocation support
   via the token denylist.
+
+  `create/3` and `revoke/1` put the caller on the request's log context.
+  `UserSessionPlug` can only name a request that *presents* a session, which
+  leaves login, registration, refresh and logout unattributed.
   """
 
   use Sovra.Log
@@ -12,6 +16,8 @@ defmodule Sovra.Auth.UserSession do
   @session_ttl 3600
 
   def create(user_id, workspace_id, is_admin \\ false) do
+    Log.put_context(user_id: user_id, workspace_id: workspace_id)
+
     now = System.system_time(:second)
 
     claims = %{
@@ -86,8 +92,14 @@ defmodule Sovra.Auth.UserSession do
 
     try do
       case JOSE.JWT.verify_strict(jwk, ["HS256"], token) do
-        {true, %JOSE.JWT{fields: %{"jti" => jti, "exp" => exp}}, _jws} ->
+        {true, %JOSE.JWT{fields: %{"jti" => jti, "exp" => exp} = fields}, _jws} ->
           TokenDenylist.revoke(jti, exp)
+
+          # After the revocation: the rescue below would turn a raise in here
+          # into a silent `:ok` for a live token. No `workspace_id` either,
+          # since `WorkspaceController.switch/2` revokes the old session right
+          # after minting the new one, and the stale claim would win.
+          Log.put_context(user_id: fields["sub"])
           :ok
 
         _ ->

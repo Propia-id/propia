@@ -158,6 +158,7 @@ defmodule Sovra.Log do
     guardian.recovery_key.rotation_started
 
     health.check.failed
+    http.request
 
     invitation.accepted
     invitation.code_requested
