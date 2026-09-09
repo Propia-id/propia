@@ -78,7 +78,16 @@ config :logger, :default_formatter,
     :step,
     :did,
     :reason,
-    :oban_job_id
+    :oban_job_id,
+    # Readiness checks (health.check.failed).
+    :dependency,
+    :chain_id,
+    :duration_ms,
+    # Build identity, on `app.boot` only.
+    :role,
+    :revision,
+    :ref,
+    :version
   ]
 
 # Use Jason for JSON parsing in Phoenix
@@ -111,6 +120,18 @@ config :sovra, Sovra.Ethereum.Relayer.BalanceMonitor,
 # Per-chain floors in wei, exported as a metric so one alert rule pair covers
 # every chain. Filled from the environment in `runtime.exs`.
 config :sovra, :relayer_balance_thresholds, %{}
+
+# Readiness polling behind /ready. On by default, unlike the balance monitor:
+# a node that cannot say whether it can serve is not a useful node. `test.exs`
+# turns it off and the tests start it themselves.
+config :sovra, Sovra.Health,
+  enabled: true,
+  interval_ms: 60_000,
+  check_timeout_ms: 5_000,
+  db_timeout_ms: 2_000
+
+# The signer's KMS probe. Same cadence; only the signer role starts it.
+config :sovra, Sovra.Signer.Health, enabled: true, interval_ms: 60_000
 
 # Oban job runner (webhooks, mailers, verification housekeeping)
 config :sovra, Oban,

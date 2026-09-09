@@ -110,10 +110,15 @@ defmodule SovraWeb.Router do
     end
   end
 
-  # Health check
+  # Probes — no auth. `/health` is liveness only and must stay cheap: the
+  # Cloudflare tunnel and the deploy gate hit it. `/ready` is the dependency
+  # check; it reads a cached snapshot, so it is just as cheap to serve. Both are
+  # excluded from `force_ssl` in prod.exs so an external plain-HTTP probe gets
+  # an answer instead of a 301.
   scope "/", SovraWeb do
     pipe_through :api
     get "/health", HealthController, :index
+    get "/ready", HealthController, :ready
   end
 
   # Issuer metadata (well-known)

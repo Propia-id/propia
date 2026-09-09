@@ -4,6 +4,9 @@ defmodule Sovra.Application do
   @moduledoc false
 
   use Application
+  use Sovra.Log
+
+  alias Sovra.BuildInfo
 
   require Logger
 
@@ -14,6 +17,7 @@ defmodule Sovra.Application do
     # signer box carries the least possible surface. Everything else (default) is
     # the full API node.
     service = System.get_env("SERVICE", "api")
+    log_boot(service)
 
     if service != "signer" do
       attach_oban_logger()
@@ -28,8 +32,33 @@ defmodule Sovra.Application do
     Supervisor.start_link(children, opts)
   end
 
+  # One line per start, so both journald and New Relic carry a restart history
+  # with the revision that came up. A boot event rather than metadata on every
+  # line: the ten-key New Relic ceiling (see `Sovra.Log`) is spent on request
+  # context, and this value changes only at boot.
+  defp log_boot(role) do
+    Log.event(:info, "application started",
+      event: "app.boot",
+      role: role,
+      revision: BuildInfo.revision(),
+      ref: BuildInfo.ref(),
+      version: BuildInfo.version()
+    )
+  end
+
   defp children("signer") do
-    [{Bandit, plug: Sovra.Signer.Router, scheme: :http, port: signer_port()}]
+    [
+      # First, same reason as the API tree: handlers attached before anything
+      # emits.
+      Sovra.Signer.PromEx
+    ] ++
+      metrics_server(Sovra.Signer.PromEx) ++
+      [
+        # Before the listener, so `GET /ready` always finds its ETS table and can
+        # answer `starting` instead of `unavailable`. `init/1` does no I/O.
+        Sovra.Signer.Health,
+        {Bandit, plug: Sovra.Signer.Router, scheme: :http, port: signer_port()}
+      ]
   end
 
   defp children(_api) do
@@ -37,7 +66,7 @@ defmodule Sovra.Application do
     # handlers are attached before the Repo and Endpoint emit anything.
     children =
       [Sovra.PromEx] ++
-        metrics_server() ++
+        metrics_server(Sovra.PromEx) ++
         [
           Sovra.Repo,
           {DNSCluster, query: Application.get_env(:sovra, :dns_cluster_query) || :ignore},
@@ -49,6 +78,8 @@ defmodule Sovra.Application do
           Sovra.DID.DocumentCache,
           # Read-only balance polling. `init/1` does no I/O, so it cannot fail boot.
           Sovra.Ethereum.Relayer.BalanceMonitor,
+          # Dependency polling behind /ready. Same contract: no I/O in `init/1`.
+          Sovra.Health,
           SovraWeb.Endpoint
         ]
 
@@ -57,13 +88,13 @@ defmodule Sovra.Application do
 
   # `/metrics` on its own listener, never on the public endpoint. Bandit rather
   # than PromEx's `:metrics_server`, which would pull in Plug.Cowboy.
-  defp metrics_server do
+  defp metrics_server(prom_ex_module) do
     config = Application.get_env(:sovra, :metrics_server, [])
 
     if config[:enabled] do
       plug_opts = %{
         path: config[:path] || "/metrics",
-        prom_ex_module: Sovra.PromEx
+        prom_ex_module: prom_ex_module
       }
 
       [

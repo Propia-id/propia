@@ -5,6 +5,7 @@ defmodule Sovra.Ethereum.Client do
   """
 
   @behaviour Sovra.Ethereum.BalanceReader
+  @behaviour Sovra.Ethereum.ChainIdProbe
 
   use Sovra.Log
 
@@ -98,7 +99,7 @@ defmodule Sovra.Ethereum.Client do
   Resolved through `Sovra.Ethereum.Chains`, not `configured?/0`: the relayer
   holds a balance on the chain whether or not the registry contracts are set.
   """
-  @impl true
+  @impl Sovra.Ethereum.BalanceReader
   @spec get_balance(pos_integer(), <<_::160>>) :: {:ok, non_neg_integer()} | {:error, term()}
   def get_balance(chain_id, <<_::binary-size(20)>> = address) do
     with {:ok, url} <- rpc_url_for(chain_id),
@@ -116,6 +117,39 @@ defmodule Sovra.Ethereum.Client do
       {:ok, %{rpc_url: url}} when is_binary(url) and url != "" -> {:ok, url}
       {:ok, %{}} -> {:error, :chain_rpc_not_configured}
       {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  The chain id `rpc_url` reports, for the readiness probe.
+
+  Takes a URL rather than a chain id, because the caller is checking the
+  endpoint it was *configured* with — resolving through `Chains` first would
+  make an unconfigured chain unreachable and a misconfigured one invisible.
+
+  Every transport failure collapses to `:chain_id_unreachable`: the raw reason
+  names the endpoint, and the probe's verdict is rendered on an unauthenticated
+  route.
+  """
+  @impl Sovra.Ethereum.ChainIdProbe
+  @spec chain_id(String.t()) :: {:ok, pos_integer()} | {:error, term()}
+  def chain_id(url) when is_binary(url) and url != "" do
+    case Ethereumex.HttpClient.eth_chain_id(url: url) do
+      {:ok, hex} -> decode_chain_id(hex)
+      {:error, _reason} -> {:error, :chain_id_unreachable}
+    end
+  rescue
+    _error -> {:error, :chain_id_unreachable}
+  end
+
+  def chain_id(_url), do: {:error, :chain_rpc_not_configured}
+
+  # A chain id is a positive integer; 0 and a malformed answer are both an
+  # endpoint that cannot be trusted to say which network it is.
+  defp decode_chain_id(hex) do
+    case decode_uint(hex) do
+      {:ok, id} when id > 0 -> {:ok, id}
+      _ -> {:error, :invalid_chain_id}
     end
   end
 

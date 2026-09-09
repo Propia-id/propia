@@ -49,3 +49,6 @@ broadcast/
 .pg-socket/
 result
 result-*
+
+# Written by the deploy (see Sovra.BuildInfo); never committed
+backend/priv/build_info.json

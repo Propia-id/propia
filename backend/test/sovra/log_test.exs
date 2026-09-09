@@ -17,6 +17,7 @@ defmodule Sovra.LogTest do
     # commit. See docs/plans/backend-logging.md.
     @frozen [
       "admin.issuer_account.created",
+      "app.boot",
       "auth.api_key.rejected",
       "auth.logged_out",
       "auth.login.failed",
@@ -93,6 +94,7 @@ defmodule Sovra.LogTest do
       "guardian.recovery_key.rotation_confirmed",
       "guardian.recovery_key.rotation_failed",
       "guardian.recovery_key.rotation_started",
+      "health.check.failed",
       "invitation.accepted",
       "invitation.code_requested",
       "invitation.created",

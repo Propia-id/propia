@@ -4,8 +4,11 @@ defmodule Sovra.PromExTest do
   # `get_metrics/1` takes ours.
   use SovraWeb.ConnCase, async: false
 
+  alias Sovra.BuildInfo
   alias Sovra.Ethereum.{BalanceReader, Relayer}
   alias Sovra.Ethereum.Relayer.BalanceMonitor
+  alias Sovra.Health
+  alias Sovra.PromEx.BuildPlugin
 
   setup do
     original = Application.get_env(:sovra, Sovra.PromEx, [])
@@ -89,6 +92,68 @@ defmodule Sovra.PromExTest do
 
     assert text =~
              ~s(sovra_relayer_balance_last_success_timestamp_seconds{chain_id="#{chain_id}",chain_name="integration-chain"})
+  end
+
+  # Same seam for readiness: the alert rules in
+  # `infra/.../alerting/10-rules.yaml.j2` hard-code these names, and nothing else
+  # would notice a rename until an outage failed to page.
+  test "a real health cycle lands on the exported gauges" do
+    chain_id = 999_502
+    original = Application.get_env(:sovra, :ethereum, [])
+    original_signer = Application.get_env(:sovra, :signer, [])
+
+    Application.put_env(:sovra, :ethereum,
+      chain_id: chain_id,
+      chain_name: "health-chain",
+      rpc_url: "http://rpc.test"
+    )
+
+    Application.put_env(:sovra, :stub_chain_ids, %{"http://rpc.test" => {:ok, chain_id}})
+    # No signer service, so both signer checks are `skipped`. The suite's
+    # `Req.Test` stub is owned by the test process, which the monitor's tasks are
+    # not in the ownership chain of; `Sovra.HealthTest` covers those paths with a
+    # bare function plug instead.
+    Application.put_env(:sovra, :signer, [])
+
+    on_exit(fn ->
+      Application.put_env(:sovra, :ethereum, original)
+      Application.put_env(:sovra, :signer, original_signer)
+      Application.delete_env(:sovra, :stub_chain_ids)
+    end)
+
+    start_supervised!({Health, enabled: true, interval_ms: 60_000})
+    assert %{status: :ok} = Health.check_now()
+
+    text = scrape()
+
+    assert text =~
+             ~s(sovra_health_dependency_up{chain_id="",chain_name="",dependency="database"} 1)
+
+    assert text =~
+             ~s(sovra_health_dependency_up{chain_id="#{chain_id}",chain_name="health-chain",dependency="rpc"} 1)
+
+    assert text =~ "sovra_health_ready 1"
+    assert text =~ "sovra_health_last_check_timestamp_seconds"
+    assert text =~ "sovra_health_check_duration_milliseconds_count"
+  end
+
+  # The names the version dashboard and the drift rules hard-code.
+  test "the build stamp lands on the exported info series" do
+    BuildPlugin.execute_build_metrics()
+
+    text = scrape()
+
+    assert text =~
+             ~s(sovra_build_info{ref="#{BuildInfo.ref()}",revision="#{BuildInfo.revision()}",version="#{BuildInfo.version()}"} 1)
+
+    # Exactly the stamp, or no line at all — never 0, which would read as 1970.
+    assert text
+           |> String.split("\n")
+           |> Enum.filter(&String.starts_with?(&1, "sovra_build_timestamp_seconds ")) ==
+             Enum.map(
+               List.wrap(BuildInfo.built_at_unix()),
+               &"sovra_build_timestamp_seconds #{&1}"
+             )
   end
 
   test "drops the channel and socket groups this app does not use" do

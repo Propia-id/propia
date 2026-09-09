@@ -12,6 +12,7 @@ defmodule Sovra.Signer.Relayer do
 
   alias Sovra.Crypto.Secp256k1
   alias Sovra.Crypto.Spki
+  alias Sovra.Signer.Kms
 
   @spec sign(<<_::256>>) ::
           {:ok, %{r: binary(), s: binary(), recovery_id: 0 | 1}} | {:error, term()}
@@ -51,12 +52,19 @@ defmodule Sovra.Signer.Relayer do
     end
   end
 
-  defp key_id do
+  @doc """
+  The configured relayer KMS key id.
+
+  Public because it is the one key that exists before any workspace does, which
+  is what makes it the key `Sovra.Signer.Health` reaches for.
+  """
+  @spec key_id() :: {:ok, String.t()} | {:error, :relayer_key_not_configured}
+  def key_id do
     case Application.get_env(:sovra, :signer_service, [])[:relayer_kms_key_id] do
       id when is_binary(id) and id != "" -> {:ok, id}
       _ -> {:error, :relayer_key_not_configured}
     end
   end
 
-  defp backend, do: Application.get_env(:sovra, :kms_backend, Sovra.AWS.KMS)
+  defp backend, do: Kms.backend()
 end

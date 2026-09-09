@@ -116,7 +116,15 @@ defmodule Sovra.Signer.Kms do
     end
   end
 
-  defp backend, do: Application.get_env(:sovra, :kms_backend, Sovra.AWS.KMS)
+  @doc """
+  The configured KMS backend module.
+
+  Public so `Sovra.Signer.Health` can call KMS *uncached* — every other reader
+  on this box goes through a cache that would keep answering long after the IAM
+  role was revoked, which is exactly what the health probe exists to catch.
+  """
+  @spec backend() :: module()
+  def backend, do: Application.get_env(:sovra, :kms_backend, Sovra.AWS.KMS)
 
   defp env, do: Application.get_env(:sovra, :signer_service, [])[:env] || "dev"
 end

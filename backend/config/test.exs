@@ -77,12 +77,23 @@ config :sovra, :signer,
 # ---- Metrics -----------------------------------------------------------------
 # No metrics in the suite; tests that need the exporter start their own.
 config :sovra, Sovra.PromEx, disabled: true
+config :sovra, Sovra.Signer.PromEx, disabled: true
 
 # Bind no port.
 config :sovra, :metrics_server, enabled: false
 
 # Tests start the monitor explicitly, with a stub reader.
 config :sovra, Sovra.Ethereum.Relayer.BalanceMonitor, enabled: false
+
+# Same: the health monitors would otherwise poll the DB, the signer and every
+# configured RPC from the application supervisor for the whole suite. Tests that
+# want them start them with `enabled: true`.
+config :sovra, Sovra.Health, enabled: false
+config :sovra, Sovra.Signer.Health, enabled: false
+
+# ...and the readiness RPC probe answers from a map rather than the network,
+# for the same reason `relayer_balance_reader` does.
+config :sovra, :chain_id_probe, Sovra.Ethereum.ChainIdProbe.Stub
 
 # The stub, not the flag above, is what keeps the suite off the network:
 # `runtime.exs` runs after this file and can re-enable the monitor.

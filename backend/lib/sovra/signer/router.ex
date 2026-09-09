@@ -1,9 +1,12 @@
 defmodule Sovra.Signer.Router do
   @moduledoc """
   Internal HTTP API for the signer service (reached only by API nodes over
-  Tailscale). Every request must carry `Authorization: Bearer <SIGNER_TOKEN>`;
-  the Tailscale ACL is the outer network gate.
+  Tailscale). Every request must carry `Authorization: Bearer <SIGNER_TOKEN>`,
+  the exceptions being the two probes; the Tailscale ACL is the outer network
+  gate.
 
+    * `GET  /health`              — unauthenticated; liveness + build identity, no dependency verdict
+    * `GET  /ready`               — unauthenticated; 200 only when KMS answered its last probe
     * `POST /v1/keys`             — `{holder_id}` → `{key_id, public_key_x, public_key_y}`
     * `POST /v1/sign`             — `{key, digest}` → `{r, s}`  (P-256 workspace keys)
     * `POST /v1/keys/:id/deletion` — schedule key deletion
@@ -19,12 +22,36 @@ defmodule Sovra.Signer.Router do
 
   use Plug.Router
 
-  alias Sovra.Signer.{Kms, Relayer}
+  alias Sovra.BuildInfo
+  alias Sovra.Signer.{Health, Kms, Relayer}
 
   plug(:match)
   plug(Plug.Parsers, parsers: [:json], pass: ["application/json"], json_decoder: Jason)
   plug(:authenticate)
   plug(:dispatch)
+
+  # Two probes with deliberately different jobs, the same split the API keeps.
+  # Both are unauthenticated (see `authenticate/2`) so a monitor can probe the
+  # signer without being handed the shared bearer token.
+  #
+  # Liveness: this process is accepting requests, and nothing else. Free of any
+  # dependency verdict, so it can never fail for a reason outside this node. It
+  # carries the build identity, which `signer_deploy` asserts against the
+  # revision it just installed.
+  get "/health" do
+    send_json(conn, 200, Map.put(BuildInfo.all(), :status, "ok"))
+  end
+
+  # Readiness: 200 only when KMS answered its last probe. Served from
+  # `Sovra.Signer.Health`'s cached verdict, so a request cannot reach AWS — the
+  # route is unauthenticated, and probing it must not become a lever on our KMS
+  # rate limit. It reports a bare status and nothing else: no key id, no ARN, no
+  # region, no AWS error text.
+  get "/ready" do
+    body = ready_payload(Health.snapshot())
+
+    send_json(conn, if(body.status == "ok", do: 200, else: 503), body)
+  end
 
   post "/v1/keys" do
     with {:ok, holder_id} <- fetch_holder_id(conn.body_params["holder_id"]),
@@ -75,6 +102,13 @@ defmodule Sovra.Signer.Router do
 
   # --- auth ------------------------------------------------------------------
 
+  # `plug(:authenticate)` runs before `plug(:dispatch)`, so exempting the probes
+  # has to happen here rather than by where they are declared. Any other method
+  # on them falls through to `match _`, which still needs the token.
+  defp authenticate(%Plug.Conn{method: "GET", path_info: [probe]} = conn, _opts)
+       when probe in ["health", "ready"],
+       do: conn
+
   defp authenticate(conn, _opts) do
     if valid_token?(conn) do
       conn
@@ -96,6 +130,28 @@ defmodule Sovra.Signer.Router do
   end
 
   # --- helpers ---------------------------------------------------------------
+
+  # The monitor is not running: disabled by config, or dead between restarts (the
+  # ETS table dies with its owner). Not ready either way.
+  defp ready_payload(:unavailable), do: %{status: "unavailable", checked_at: nil, checks: %{}}
+
+  # KMS is the signer's only dependency, so the overall status and the KMS status
+  # are the same value.
+  defp ready_payload(%{status: status, checked_at: checked_at}) do
+    kms = health_label(status)
+
+    %{
+      status: kms,
+      checked_at: checked_at && DateTime.to_iso8601(checked_at),
+      checks: %{kms: %{status: kms}}
+    }
+  end
+
+  # `:unavailable` reads as an error: we cannot vouch for KMS, which is the
+  # answer a probe needs.
+  defp health_label(:ok), do: "ok"
+  defp health_label(:starting), do: "starting"
+  defp health_label(_), do: "error"
 
   defp fetch_key(key) when is_binary(key) and key != "", do: {:ok, key}
   defp fetch_key(_), do: {:error, :missing_key}
