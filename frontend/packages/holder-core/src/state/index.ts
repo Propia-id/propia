@@ -1,5 +1,5 @@
 import { createStore } from "zustand/vanilla";
-import type { SecureStorage } from "../platform/index";
+import type { SecureStorage } from "../platform/index.js";
 
 // ─── Credential Store ─────────────────────────────────
 

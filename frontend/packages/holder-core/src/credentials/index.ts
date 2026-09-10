@@ -1,11 +1,11 @@
-import type { SecureStorage } from "../platform/index";
+import type { SecureStorage } from "../platform/index.js";
 import type {
   StoredCredential,
   CredentialStore,
   CredentialDisplayMetadata,
-} from "../state/index";
-import { credentialKey } from "../state/index";
-import { sha256, base64urlDecode, base64urlEncode } from "../utils/index";
+} from "../state/index.js";
+import { credentialKey } from "../state/index.js";
+import { sha256, base64urlDecode, base64urlEncode } from "../utils/index.js";
 
 // ─── Types ────────────────────────────────────────────
 
@@ -41,7 +41,7 @@ export class CredentialManager {
 
   constructor(
     private storage: SecureStorage,
-    private credentialStore: ReturnType<typeof import("../state/index").createCredentialStore>,
+    private credentialStore: ReturnType<typeof import("../state/index.js").createCredentialStore>,
   ) {}
 
   /** Scope all subsequent credential operations to `address` (null = none). */

@@ -52,3 +52,6 @@ result-*
 
 # Written by the deploy (see Sovra.BuildInfo); never committed
 backend/priv/build_info.json
+
+# e2e vintage candidates — promoted into fixtures/ by hand.
+frontend/e2e/candidates/

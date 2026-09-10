@@ -1,6 +1,6 @@
 {
   "name": "@sovrahq/holder-core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Platform-agnostic core for a Sovra credential holder/wallet: SD-JWT VC handling, OpenID4VCI/VP protocol flows, credential storage, and P-256/EIP-712 crypto utilities.",
   "license": "MIT",
@@ -19,7 +19,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "rm -rf dist tsconfig.tsbuildinfo && tsc -p tsconfig.json",
     "prepack": "pnpm build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"

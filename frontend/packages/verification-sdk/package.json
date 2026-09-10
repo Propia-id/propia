@@ -1,6 +1,6 @@
 {
   "name": "@sovrahq/verification-sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Verify Sovra SD-JWT VC presentations and signed documents against the on-chain DID, issuer and signature registries.",
   "license": "MIT",
@@ -18,7 +18,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "rm -rf dist tsconfig.tsbuildinfo && tsc -p tsconfig.json",
     "prepack": "pnpm build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"

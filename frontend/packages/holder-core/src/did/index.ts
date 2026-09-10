@@ -4,7 +4,7 @@ import {
   encodeFunctionCall,
   bytesToHex,
   keccak256,
-} from "../utils/index";
+} from "../utils/index.js";
 
 /** A P-256 verification method resolved from a DID document. */
 export interface ResolvedKey {

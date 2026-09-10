@@ -5,10 +5,10 @@ export type {
   PasskeyResult,
   PasskeySignature,
   CameraScanner,
-} from "./platform/index";
+} from "./platform/index.js";
 
 // API client
-export { ApiClient } from "./api/index";
+export { ApiClient } from "./api/index.js";
 export type {
   ApiClientConfig,
   TokenResponse,
@@ -19,21 +19,21 @@ export type {
   ClaimDescription,
   ClaimDisplay,
   DisplayImage,
-} from "./api/index";
+} from "./api/index.js";
 
 // State stores
-export { createCredentialStore } from "./state/index";
+export { createCredentialStore } from "./state/index.js";
 export type {
   CredentialStore,
   StoredCredential,
   CredentialDisplayMetadata,
-} from "./state/index";
-export { createApprovalStore } from "./state/approval-store";
-export type { ApprovalStore } from "./state/approval-store";
+} from "./state/index.js";
+export { createApprovalStore } from "./state/approval-store.js";
+export type { ApprovalStore } from "./state/approval-store.js";
 
 // Credential manager
-export { CredentialManager } from "./credentials/index";
-export type { ParsedCredential, IssuerInfo } from "./credentials/index";
+export { CredentialManager } from "./credentials/index.js";
+export type { ParsedCredential, IssuerInfo } from "./credentials/index.js";
 
 // Protocol flows
 export {
@@ -43,14 +43,14 @@ export {
   pickCredentialDisplay,
   pickClaimLabels,
   toStoredDisplay,
-} from "./protocols/index";
+} from "./protocols/index.js";
 export type {
   CredentialOffer,
   DCQLQuery,
   VPRequest,
   ApprovalData,
   HolderSigner,
-} from "./protocols/index";
+} from "./protocols/index.js";
 
 // DID resolution
 export {
@@ -58,8 +58,8 @@ export {
   parseDidUrl,
   didSovraAddress,
   DidResolutionError,
-} from "./did/index";
-export type { ResolvedKey, EthCall } from "./did/index";
+} from "./did/index.js";
+export type { ResolvedKey, EthCall } from "./did/index.js";
 
 // Utilities
 export {
@@ -77,4 +77,4 @@ export {
   buildEIP712MessageHash,
   buildInitHash,
   buildInitializeCalldata,
-} from "./utils/index";
+} from "./utils/index.js";

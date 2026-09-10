@@ -4,16 +4,16 @@ import type {
   CredentialMetadata,
   CredentialDisplay,
   ClaimDescription,
-} from "../api/index";
-import type { CredentialManager } from "../credentials/index";
-import type { StoredCredential, CredentialDisplayMetadata } from "../state/index";
+} from "../api/index.js";
+import type { CredentialManager } from "../credentials/index.js";
+import type { StoredCredential, CredentialDisplayMetadata } from "../state/index.js";
 import {
   base64urlDecode,
   base64urlEncode,
   p256Verify,
   sha256,
-} from "../utils/index";
-import { parseDidUrl, resolveAssertionKey } from "../did/index";
+} from "../utils/index.js";
+import { parseDidUrl, resolveAssertionKey } from "../did/index.js";
 
 // ─── Holder signing seam ──────────────────────────────
 

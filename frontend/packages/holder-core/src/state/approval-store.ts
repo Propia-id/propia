@@ -1,5 +1,5 @@
 import { createStore } from "zustand/vanilla";
-import type { VPRequest, ApprovalData } from "../protocols/index";
+import type { VPRequest, ApprovalData } from "../protocols/index.js";
 
 export interface ApprovalState {
   request: VPRequest | null;

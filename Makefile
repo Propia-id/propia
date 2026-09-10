@@ -32,9 +32,9 @@ lint: backend.lint contracts.lint frontend.issuer.lint
 
 build: backend.build contracts.build frontend.issuer.build
 
-check: frontend.packages.check frontend.wallet.check frontend.verifier.check
+check: frontend.packages.check frontend.wallet.check frontend.verifier.check frontend.e2e.check
 
-test: backend.test contracts.test frontend.packages.test frontend.verifier.test
+test: backend.test contracts.test frontend.packages.test frontend.verifier.test frontend.e2e.test
 
 # ── Dev ──────────────────────────────────────────────────────────────
 
@@ -133,6 +133,22 @@ frontend.packages.verification-sdk.check:
 
 frontend.packages.verification-sdk.test:
 	$(NIX) "cd frontend && pnpm --filter @sovrahq/verification-sdk test"
+
+# ── Frontend E2E ─────────────────────────────────────────────────────
+
+.PHONY: frontend.e2e.check frontend.e2e.test frontend.e2e.test.live
+
+frontend.e2e.check:
+	$(NIX) "cd frontend && pnpm --filter @sovra/e2e typecheck"
+
+# Offline: no secrets, no network.
+frontend.e2e.test:
+	$(NIX) "cd frontend && pnpm --filter @sovra/e2e test"
+
+# Live: runs against a DEPLOYED environment. Kept out of `make test` so no
+# routine run can reach test or prod.
+frontend.e2e.test.live:
+	$(NIX) "cd frontend && pnpm --filter @sovra/e2e test:live"
 
 # ── Frontend Issuer ──────────────────────────────────────────────────
 
