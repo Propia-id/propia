@@ -64,6 +64,14 @@ export interface IssuerMetadata {
         type: string[];
       };
       credential_metadata?: CredentialMetadata;
+      /**
+       * Legacy placement. OID4VCI 1.0 nests `display` and `claims` under
+       * `credential_metadata`; earlier drafts put them directly on the
+       * configuration, and issuers still publish that shape. Declared so a
+       * reader can fall back rather than silently losing the issuer's design.
+       */
+      display?: CredentialDisplay[];
+      claims?: ClaimDescription[];
     }
   >;
   display?: CredentialDisplay[];

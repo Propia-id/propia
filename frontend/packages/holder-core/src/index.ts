@@ -39,6 +39,7 @@ export type { ParsedCredential, IssuerInfo } from "./credentials/index";
 export {
   IssuanceProtocol,
   PresentationProtocol,
+  credentialMetadataFor,
   pickCredentialDisplay,
   pickClaimLabels,
   toStoredDisplay,

@@ -210,10 +210,17 @@ defmodule SovraWeb.AuthEventsTest do
     end
 
     test "a refresh with no cookie is rejected with its own reason", %{conn: _conn} do
-      # A fresh conn, so no refresh cookie is presented at all.
+      # A fresh conn, so no refresh cookie is presented at all. It still needs
+      # its own source address the way the setup above gives every other test
+      # one: build_conn/0 defaults to 127.0.0.1, and auth_controller_test.exs
+      # posts to this same path from that address enough times to leave the
+      # 5/minute bucket with no headroom. Whether this test saw its 401 or a
+      # 429 then came down to which file ran first.
+      fresh_conn = %{Phoenix.ConnTest.build_conn() | remote_ip: unique_ip()}
+
       {conn, events} =
         capture_events(fn ->
-          Phoenix.ConnTest.build_conn() |> post(~p"/dashboard/auth/refresh")
+          post(fresh_conn, ~p"/dashboard/auth/refresh")
         end)
 
       assert conn.status == 401

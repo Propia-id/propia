@@ -1,6 +1,7 @@
 import type {
   ApiClient,
   IssuerMetadata,
+  CredentialMetadata,
   CredentialDisplay,
   ClaimDescription,
 } from "../api/index";
@@ -156,6 +157,28 @@ export function pickClaimLabels(
   return Object.keys(labels).length > 0 ? labels : undefined;
 }
 
+/**
+ * The `display` + `claims` for one credential configuration, from wherever the
+ * issuer put them.
+ *
+ * OID4VCI 1.0 nests both under `credential_metadata`; drafts before it place
+ * them directly on the configuration, and issuers in the wild still publish
+ * that shape. Reading only the 1.0 location yields `undefined` against those
+ * issuers, which is silent: the credential stores no display, so the wallet
+ * falls back to its own hashed card colour and drops the issuer's claim
+ * labels, with nothing anywhere saying why.
+ *
+ * Standard location first so a 1.0 issuer is never second-guessed.
+ */
+export function credentialMetadataFor(
+  metadata: IssuerMetadata,
+  credConfigId: string,
+): CredentialMetadata | undefined {
+  const configuration = metadata.credential_configurations_supported?.[credConfigId];
+  if (!configuration) return undefined;
+  return configuration.credential_metadata ?? configuration;
+}
+
 /** Narrow to the persisted fields; `logo`/`background_image` are dropped on purpose. */
 export function toStoredDisplay(
   display: CredentialDisplay | undefined,
@@ -257,8 +280,7 @@ export class IssuanceProtocol {
       offer.credential_issuer;
     const issuerDid = `did:sovra:${new URL(offer.credential_issuer).hostname}`;
 
-    const credentialMetadata =
-      metadata.credential_configurations_supported?.[credConfigId]?.credential_metadata;
+    const credentialMetadata = credentialMetadataFor(metadata, credConfigId);
     const display = toStoredDisplay(
       pickCredentialDisplay(credentialMetadata?.display, preferredLocale),
     );

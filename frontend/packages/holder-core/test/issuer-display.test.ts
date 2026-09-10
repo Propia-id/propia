@@ -7,7 +7,12 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { pickCredentialDisplay, pickClaimLabels, toStoredDisplay } from "../src/protocols";
+import {
+  credentialMetadataFor,
+  pickCredentialDisplay,
+  pickClaimLabels,
+  toStoredDisplay,
+} from "../src/protocols";
 import type { CredentialDisplay, ClaimDescription } from "../src/api";
 
 const EN: CredentialDisplay = {
@@ -172,5 +177,92 @@ describe("pickClaimLabels", () => {
         { path: ["age"], display: [{ name: "Age" }] },
       ]),
     ).toEqual({ age: "Age" });
+  });
+});
+
+
+/**
+ * Where the issuer puts `display` — the bug that made every credential fall
+ * back to the wallet's own card colour. The helpers above were always correct;
+ * nothing tested the LOOKUP that feeds them, so reading only the OID4VCI 1.0
+ * location went unnoticed against an issuer publishing the earlier shape.
+ */
+describe("credentialMetadataFor", () => {
+  const base = {
+    credential_issuer: "https://api.example",
+    credential_endpoint: "https://api.example/credential",
+    credential_configurations_supported: {},
+  };
+
+  it("reads the OID4VCI 1.0 location", () => {
+    const md = {
+      ...base,
+      credential_configurations_supported: {
+        UniversityDegree: {
+          format: "vc+sd-jwt",
+          credential_definition: { type: ["VerifiableCredential", "UniversityDegree"] },
+          credential_metadata: {
+            display: [{ name: "Degree", background_color: "#123456" }],
+            claims: [{ path: ["age"], display: [{ name: "Age" }] }],
+          },
+        },
+      },
+    };
+    const m = credentialMetadataFor(md as never, "UniversityDegree");
+    expect(m?.display?.[0]?.background_color).toBe("#123456");
+    expect(m?.claims?.[0]?.path).toEqual(["age"]);
+  });
+
+  it("falls back to display placed directly on the configuration", () => {
+    // Verbatim shape published by the Sovra issuer (api.sovra.io, 2026-08-31):
+    // `display` sits on the configuration, with no `credential_metadata`.
+    const md = {
+      ...base,
+      credential_configurations_supported: {
+        UniversityDegree: {
+          credential_definition: { type: ["VerifiableCredential", "UniversityDegree"] },
+          display: [
+            {
+              background_color: "#000000",
+              locale: "en-US",
+              name: "University Degree",
+              text_color: "#ffffff",
+            },
+          ],
+          format: "vc+sd-jwt",
+        },
+      },
+    };
+    const m = credentialMetadataFor(md as never, "UniversityDegree");
+    expect(m?.display?.[0]?.background_color).toBe("#000000");
+    expect(m?.display?.[0]?.text_color).toBe("#ffffff");
+    // End to end: the colours must survive into what gets persisted.
+    expect(toStoredDisplay(pickCredentialDisplay(m?.display, "en-US"))).toEqual({
+      name: "University Degree",
+      locale: "en-US",
+      backgroundColor: "#000000",
+      textColor: "#ffffff",
+    });
+  });
+
+  it("prefers the 1.0 location when an issuer publishes both", () => {
+    const md = {
+      ...base,
+      credential_configurations_supported: {
+        X: {
+          format: "vc+sd-jwt",
+          credential_definition: { type: ["X"] },
+          credential_metadata: { display: [{ name: "New", background_color: "#111111" }] },
+          display: [{ name: "Legacy", background_color: "#222222" }],
+        },
+      },
+    };
+    expect(credentialMetadataFor(md as never, "X")?.display?.[0]?.background_color).toBe(
+      "#111111",
+    );
+  });
+
+  it("returns undefined for a configuration the issuer does not offer", () => {
+    expect(credentialMetadataFor(base as never, "Nope")).toBeUndefined();
   });
 });
