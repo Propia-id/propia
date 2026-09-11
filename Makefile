@@ -162,10 +162,21 @@ frontend.issuer.build:
 
 # ── Frontend Wallet ──────────────────────────────────────────────────
 
-.PHONY: frontend.wallet.check wallet.build.android wallet.build.ios
+.PHONY: frontend.wallet.check frontend.wallet.bundle \
+	wallet.build.android wallet.build.ios
 
 frontend.wallet.check:
 	$(NIX) "cd frontend && pnpm --filter @sovra/wallet typecheck"
+
+# Bundle the wallet through Metro, which typecheck does not exercise.
+#
+# The @sovrahq/* packages are consumed from TypeScript source and carry the
+# explicit `./x/index.js` specifiers NodeNext requires, so tsc resolves them
+# happily while Metro does not — a mismatch that otherwise surfaces for the
+# first time inside gradle/xcodebuild on release day. BRAND/ENV are read by
+# brands/resolve.js, so this picks an app without writing brands/.active.
+frontend.wallet.bundle:
+	$(NIX) "cd frontend/wallet && BRAND=sovra ENV=prod pnpm exec expo export --platform android --output-dir \$$(mktemp -d)"
 
 wallet.build.android:
 	cd frontend/wallet && pnpm run build:android
