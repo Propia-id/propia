@@ -13,11 +13,17 @@ let
   };
 
   # Fetch pnpm dependencies reproducibly.
+  #
+  # This hash covers frontend/pnpm-lock.yaml, so ANY dependency change in the
+  # workspace invalidates it — including one made for a package this derivation
+  # does not build. The failure surfaces as a hash mismatch in the Frontend
+  # Issuer job, which is confusing when the change was to the wallet. The build
+  # log prints the correct replacement; paste it here.
   pnpmDeps = pkgs.pnpm.fetchDeps {
     pname = "sovra-frontend-deps";
     version = "0.1.0";
     src = ../frontend;
-    hash = "sha256-WrX4rf9y6yCZJc6DjafzQLanVdJkBDc6+EYBtNNTKWw=";
+    hash = "sha256-xAuFEUFYoRuvgLseGJS45Z/W/iUU2glqOmfI6O2XGxk=";
     fetcherVersion = 3;
   };
 
