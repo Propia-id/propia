@@ -55,3 +55,6 @@ backend/priv/build_info.json
 
 # e2e vintage candidates — promoted into fixtures/ by hand.
 frontend/e2e/candidates/
+
+# Local credentials for backend/scripts/migrate_schemas.py
+backend/scripts/migrate.env
