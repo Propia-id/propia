@@ -6,7 +6,11 @@ import type {
   ClaimDescription,
 } from "../api/index.js";
 import type { CredentialManager } from "../credentials/index.js";
-import type { StoredCredential, CredentialDisplayMetadata } from "../state/index.js";
+import type {
+  StoredCredential,
+  CredentialDisplayMetadata,
+  PendingLogo,
+} from "../state/index.js";
 import {
   base64urlDecode,
   base64urlEncode,
@@ -179,6 +183,77 @@ export function credentialMetadataFor(
   return configuration.credential_metadata ?? configuration;
 }
 
+/**
+ * Media types the wallet can actually draw, mapped to the extension its asset
+ * key carries. Anything else (a TIFF, an unknown type) is skipped rather than
+ * stored: a file no image view can decode is worse than the brand fallback.
+ */
+const LOGO_EXTENSIONS: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp",
+  "image/svg+xml": "svg",
+};
+
+/**
+ * Cap on the base64 payload accepted from an issuer, ~1.33x the bytes it
+ * encodes. The issuer console caps an uploaded logo at 256KB and the backend
+ * rejects a `uri` over 256KB, so 512KB of base64 clears both with room to
+ * spare while still refusing to write an unbounded blob to disk.
+ */
+const MAX_LOGO_BASE64_LENGTH = 512 * 1024;
+
+/**
+ * Caps on the fields kept whole on the credential. Unlike the `data:` payload
+ * these reach the credential index, which is persisted into the platform
+ * secure store (2048-byte advisory limit per value). 512 is twice the
+ * 255-character column the backend stores an organization's logo URL in; the
+ * alt text is one phrase for a screen reader, and the backend bounds it
+ * nowhere.
+ */
+const MAX_LOGO_URL_LENGTH = 512;
+const MAX_LOGO_ALT_LENGTH = 128;
+
+const DATA_URI = /^data:([a-z]+\/[a-z0-9.+-]+);base64,([a-z0-9+/=]+)$/i;
+
+/**
+ * The card logo off one `display` entry, in the form the wallet can persist.
+ *
+ * This is the issuer's own artwork — the thumbnail on the design it attached to
+ * the schema, or its organization's logo for a schema with no design. Anything
+ * unusable (an unsupported format, a malformed URI, a payload or a URL past
+ * its cap) comes back undefined and the card falls back to the app's brand
+ * mark, which is a worse card but never a wrong one. Every field an issuer
+ * controls is bounded, so a credential the holder already accepted is never
+ * lost to a value too big to persist.
+ */
+export function pickLogo(display: CredentialDisplay | undefined): PendingLogo | undefined {
+  const uri = display?.logo?.uri?.trim();
+  if (!uri) return undefined;
+  // Spread rather than assigned, so an issuer that published no alt text does
+  // not leave an `alt: undefined` key on the record. An oversize alt costs the
+  // label, not the logo — the artwork is the point.
+  const trimmedAlt = display?.logo?.alt_text?.trim();
+  const alt = trimmedAlt && trimmedAlt.length <= MAX_LOGO_ALT_LENGTH ? { alt: trimmedAlt } : {};
+
+  if (/^https:\/\/\S/i.test(uri)) {
+    return uri.length <= MAX_LOGO_URL_LENGTH ? { kind: "url", url: uri, ...alt } : undefined;
+  }
+
+  // Whitespace is legal inside a base64 body but not in a `data:` URI, and
+  // stripping it would mean re-validating the result — reject instead.
+  const match = DATA_URI.exec(uri);
+  if (!match) return undefined;
+
+  const extension = LOGO_EXTENSIONS[match[1].toLowerCase()];
+  if (!extension) return undefined;
+
+  const base64 = match[2];
+  if (base64.length > MAX_LOGO_BASE64_LENGTH) return undefined;
+
+  return { kind: "data", extension, base64, ...alt };
+}
+
 /** Narrow to the persisted fields; `logo`/`background_image` are dropped on purpose. */
 export function toStoredDisplay(
   display: CredentialDisplay | undefined,
@@ -281,9 +356,14 @@ export class IssuanceProtocol {
     const issuerDid = `did:sovra:${new URL(offer.credential_issuer).hostname}`;
 
     const credentialMetadata = credentialMetadataFor(metadata, credConfigId);
-    const display = toStoredDisplay(
-      pickCredentialDisplay(credentialMetadata?.display, preferredLocale),
+    const credentialDisplay = pickCredentialDisplay(
+      credentialMetadata?.display,
+      preferredLocale,
     );
+    const display = toStoredDisplay(credentialDisplay);
+    // The card logo the issuer designed for this credential configuration —
+    // the app's own brand mark is only the fallback.
+    const logo = pickLogo(credentialDisplay);
     const claimLabels = pickClaimLabels(credentialMetadata?.claims, preferredLocale);
 
     // 7. Store credential
@@ -291,6 +371,7 @@ export class IssuanceProtocol {
       issuerDid,
       issuerName,
       display,
+      logo,
       claimLabels,
     });
   }

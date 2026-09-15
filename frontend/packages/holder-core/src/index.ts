@@ -1,6 +1,7 @@
 // Platform interfaces
 export type {
   SecureStorage,
+  AssetStorage,
   PasskeyProvider,
   PasskeyResult,
   PasskeySignature,
@@ -22,11 +23,13 @@ export type {
 } from "./api/index.js";
 
 // State stores
-export { createCredentialStore } from "./state/index.js";
+export { createCredentialStore, logoAssetKey } from "./state/index.js";
 export type {
   CredentialStore,
   StoredCredential,
   CredentialDisplayMetadata,
+  StoredLogo,
+  PendingLogo,
 } from "./state/index.js";
 export { createApprovalStore } from "./state/approval-store.js";
 export type { ApprovalStore } from "./state/approval-store.js";
@@ -42,6 +45,7 @@ export {
   credentialMetadataFor,
   pickCredentialDisplay,
   pickClaimLabels,
+  pickLogo,
   toStoredDisplay,
 } from "./protocols/index.js";
 export type {

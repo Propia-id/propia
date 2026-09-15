@@ -1,4 +1,5 @@
 export type { SecureStorage } from "./secure-storage.js";
+export type { AssetStorage } from "./asset-storage.js";
 export type {
   PasskeyProvider,
   PasskeyResult,

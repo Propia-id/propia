@@ -1,10 +1,12 @@
-import type { SecureStorage } from "../platform/index.js";
+import type { AssetStorage, SecureStorage } from "../platform/index.js";
 import type {
   StoredCredential,
   CredentialStore,
   CredentialDisplayMetadata,
+  StoredLogo,
+  PendingLogo,
 } from "../state/index.js";
-import { credentialKey } from "../state/index.js";
+import { credentialKey, logoAssetKey } from "../state/index.js";
 import { sha256, base64urlDecode, base64urlEncode } from "../utils/index.js";
 
 // ─── Types ────────────────────────────────────────────
@@ -27,6 +29,13 @@ export interface IssuerInfo {
   issuerName: string;
   display?: CredentialDisplayMetadata;
   claimLabels?: Record<string, string>;
+  /**
+   * The card logo off the issuer's OID4VCI `display`, still carrying its
+   * bytes. Kept out of `display` because that shape is what gets persisted:
+   * inline bytes are captured into the asset store first and only the
+   * resulting reference is written.
+   */
+  logo?: PendingLogo;
 }
 
 // ─── Credential Manager ──────────────────────────────
@@ -42,6 +51,12 @@ export class CredentialManager {
   constructor(
     private storage: SecureStorage,
     private credentialStore: ReturnType<typeof import("../state/index.js").createCredentialStore>,
+    /**
+     * Where inline card art is captured. Optional: without it a credential is
+     * stored exactly as before and its card falls back to the app's brand
+     * mark, which is what a host with no filesystem (tests, web) should do.
+     */
+    private assets?: AssetStorage,
   ) {}
 
   /** Scope all subsequent credential operations to `address` (null = none). */
@@ -117,6 +132,11 @@ export class CredentialManager {
       (parsed.payload.type as string) ??
       "UnknownCredential";
 
+    const logo = await this.captureLogo(id, issuerInfo.logo);
+    const display = logo
+      ? { ...(issuerInfo.display ?? {}), logo }
+      : issuerInfo.display;
+
     const credential: StoredCredential = {
       id,
       sdJwt: sdJwtString,
@@ -126,7 +146,7 @@ export class CredentialManager {
       issuedAt: (parsed.payload.iat as number) ?? Date.now() / 1000,
       expiresAt: (parsed.payload.exp as number) ?? 0,
       claims: parsed.claims,
-      ...(issuerInfo.display ? { display: issuerInfo.display } : {}),
+      ...(display ? { display } : {}),
       ...(issuerInfo.claimLabels ? { claimLabels: issuerInfo.claimLabels } : {}),
     };
 
@@ -137,6 +157,35 @@ export class CredentialManager {
     await store.persistToStorage(this.storage, ns);
 
     return credential;
+  }
+
+  /**
+   * Persist the issuer's card logo and return the reference to store.
+   *
+   * A remote URL is kept as it stands. Inline bytes are written to the asset
+   * store, which is where the size lives — never the credential index. A
+   * failed write is swallowed: a credential the holder just accepted must not
+   * be lost over its artwork, and a card with no logo still renders on the
+   * app's brand mark.
+   */
+  private async captureLogo(
+    credentialId: string,
+    logo: PendingLogo | undefined,
+  ): Promise<StoredLogo | undefined> {
+    if (!logo) return undefined;
+    if (logo.kind === "url") {
+      return { source: "url", url: logo.url, ...(logo.alt ? { alt: logo.alt } : {}) };
+    }
+    if (!this.assets) return undefined;
+
+    const key = logoAssetKey(credentialId, logo.extension);
+    try {
+      await this.assets.put(key, logo.base64);
+    } catch (err) {
+      console.warn("Could not store the issuer's card logo:", err);
+      return undefined;
+    }
+    return { source: "asset", key, ...(logo.alt ? { alt: logo.alt } : {}) };
   }
 
   /** Select disclosure strings for the requested claim names. */
@@ -176,10 +225,17 @@ export class CredentialManager {
   /** Delete a credential from the active wallet's storage. */
   async deleteCredential(id: string): Promise<void> {
     const ns = this.requireNamespace();
+    const captured = this.credentialStore.getState().getCredential(id)?.display?.logo;
     await this.storage.delete(credentialKey(ns, id));
     const store = this.credentialStore.getState();
     store.removeCredential(id);
     await store.persistToStorage(this.storage, ns);
+
+    // Last: the credential is already gone, so a failure here leaks a file
+    // rather than leaving a card pointing at art that was deleted under it.
+    if (captured?.source === "asset" && this.assets) {
+      await this.assets.delete(captured.key).catch(() => {});
+    }
   }
 
   /**

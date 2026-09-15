@@ -92,6 +92,9 @@ describe("toStoredDisplay", () => {
     expect(Object.keys(stored ?? {})).not.toContain("backgroundColor");
   });
 
+  // The logo is not discarded, only kept out of this record: `pickLogo` takes
+  // it to the asset store and a reference comes back onto `display.logo` (see
+  // credential-logo.test.ts). `background_image` nothing renders, so it goes.
   it("drops logo and background_image so image data never reaches the index", () => {
     const stored = toStoredDisplay({
       ...EN,
