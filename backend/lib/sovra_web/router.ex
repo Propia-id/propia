@@ -201,11 +201,12 @@ defmodule SovraWeb.Router do
     put "/documents/:id/visibility/:visibility", DocumentController, :update_visibility
   end
 
-  # Verification listings on the dashboard (JWT session) — reuses the
+  # Verification sessions on the dashboard (JWT session) — reuses the
   # workspace-scoped controller actions also exposed under /api/v1/verifier/.
   scope "/dashboard/issuer", SovraWeb.Verifier do
     pipe_through [:api, :user_session]
 
+    post "/verifications", VerificationController, :create
     get "/verifications", VerificationController, :index
     get "/verifications/:id", VerificationController, :show
   end

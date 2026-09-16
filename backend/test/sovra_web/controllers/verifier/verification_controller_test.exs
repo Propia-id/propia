@@ -1,17 +1,16 @@
 defmodule SovraWeb.Verifier.VerificationControllerTest do
   use SovraWeb.ConnCase, async: false
 
+  alias Sovra.Auth.UserSession
   alias Sovra.Organizations.Organization
   alias Sovra.Verification
   alias Sovra.Verification.Session
   alias Sovra.Workspaces.ApiKeys
   alias Sovra.Workspaces.Workspace
 
-  defp create_user, do: fixture_user()
-
   defp create_workspace do
-    %{workspace: ws, org: org} = fixture_workspace(name: "Verifier")
-    %{workspace: provision_workspace(ws), organization: org}
+    %{workspace: ws, org: org, owner: owner} = fixture_workspace(name: "Verifier")
+    %{workspace: provision_workspace(ws), organization: org, owner: owner}
   end
 
   defp dcql_query do
@@ -153,6 +152,84 @@ defmodule SovraWeb.Verifier.VerificationControllerTest do
     end
   end
 
+  describe "POST /dashboard/issuer/verifications (JWT path)" do
+    test "201 and the session belongs to the session's workspace", %{conn: conn} do
+      %{workspace: ws, owner: owner} = create_workspace()
+      {:ok, token} = UserSession.create(owner.id, ws.id, owner.is_admin)
+
+      resp =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> post("/dashboard/issuer/verifications", %{"dcql_query" => dcql_query()})
+        |> json_response(201)
+
+      assert String.starts_with?(resp["authorization_request_uri"], "openid4vp://")
+      assert resp["status"] == "pending"
+
+      listed =
+        conn
+        |> put_req_header("authorization", "Bearer #{token}")
+        |> get("/dashboard/issuer/verifications")
+        |> json_response(200)
+
+      assert [%{"session_id" => id}] = listed["sessions"]
+      assert id == resp["session_id"]
+    end
+
+    test "401 without a session token", %{conn: conn} do
+      conn = post(conn, "/dashboard/issuer/verifications", %{"dcql_query" => dcql_query()})
+      assert json_response(conn, 401)
+    end
+  end
+
+  describe "QR payload size" do
+    # The dashboard renders `authorization_request_uri_ref`, not the
+    # pass-by-value URI, and this is why: the pass-by-value form carries the
+    # signed request object inline, so it grows with every requested claim and
+    # runs past what a QR symbol can hold. The reference form is a link, so its
+    # length is fixed whatever the query asks for.
+    @qr_byte_capacity 2953
+
+    test "the reference URI is fixed-size while the value URI grows", %{conn: conn} do
+      %{workspace: ws} = create_workspace()
+      {:ok, %{api_key: key}} = ApiKeys.create_api_key(ws.id, "Prod")
+
+      create = fn claim_count ->
+        dcql = %{
+          "credentials" => [
+            %{
+              "id" => "probe",
+              "format" => "vc+sd-jwt",
+              "meta" => %{"vct_values" => ["NationalIdCredential"]},
+              "claims" =>
+                for(i <- 1..claim_count, do: %{"path" => ["claim_name_#{i}"], "id" => "c#{i}"})
+            }
+          ]
+        }
+
+        conn
+        |> put_req_header("authorization", "Bearer #{key}")
+        |> post("/api/v1/verifier/verifications", %{"dcql_query" => dcql})
+        |> json_response(201)
+      end
+
+      one = create.(1)
+      many = create.(60)
+
+      assert byte_size(one["authorization_request_uri_ref"]) ==
+               byte_size(many["authorization_request_uri_ref"])
+
+      assert byte_size(many["authorization_request_uri_ref"]) < @qr_byte_capacity
+
+      # The premise: the form the dashboard used to render really does outgrow
+      # a QR code, so this is not a distinction without a difference.
+      assert byte_size(many["authorization_request_uri"]) >
+               byte_size(one["authorization_request_uri"])
+
+      assert byte_size(many["authorization_request_uri"]) > @qr_byte_capacity
+    end
+  end
+
   describe "GET /api/v1/verifier/verifications/:id" do
     test "200 with the session for the owning workspace", %{conn: conn} do
       %{workspace: ws} = create_workspace()
@@ -197,6 +274,11 @@ defmodule SovraWeb.Verifier.VerificationControllerTest do
         |> json_response(200)
 
       assert resp["authorization_request_uri"] == created["authorization_request_uri"]
+
+      assert resp["authorization_request_uri_ref"] ==
+               created["authorization_request_uri_ref"]
+
+      assert String.contains?(resp["authorization_request_uri_ref"], "request_uri=")
     end
 
     test "the authorization request URI is withheld once settled", %{conn: conn} do
@@ -228,6 +310,7 @@ defmodule SovraWeb.Verifier.VerificationControllerTest do
 
       assert resp["status"] == "failed"
       assert resp["authorization_request_uri"] == nil
+      assert resp["authorization_request_uri_ref"] == nil
     end
 
     test "the authorization request URI is withheld past expiry", %{conn: conn} do
@@ -255,6 +338,7 @@ defmodule SovraWeb.Verifier.VerificationControllerTest do
       # check the clock itself.
       assert resp["status"] == "pending"
       assert resp["authorization_request_uri"] == nil
+      assert resp["authorization_request_uri_ref"] == nil
     end
 
     test "404 cross-tenant lookup", %{conn: conn} do
