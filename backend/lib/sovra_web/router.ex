@@ -211,6 +211,45 @@ defmodule SovraWeb.Router do
     get "/verifications/:id", VerificationController, :show
   end
 
+  # The ISO mDL element set, for seeding a schema. Read-only and the same for
+  # everyone — it is ISO's list, not ours — so any signed-in issuer may read it.
+  scope "/dashboard/issuer", SovraWeb.Issuer do
+    pipe_through [:api, :user_session]
+
+    get "/mdl/template", MdlController, :template
+    get "/mdl/signer", MdlController, :signer
+  end
+
+  # Reading the trust list. Any signed-in issuer may, because an issuer
+  # registering a certificate has to say which admitted root issued it — and
+  # because a trust list is published information by construction: AAMVA and
+  # the EU publish theirs. Admitting and withdrawing stay Sovra's.
+  scope "/dashboard/mdl", SovraWeb.Issuer do
+    pipe_through [:api, :user_session]
+
+    get "/issuing-authorities", MdlController, :list_issuing_authorities
+  end
+
+  # Becoming an mDL issuer. Workspace admin, because registering a document
+  # signer decides what the whole workspace can issue and under whose name.
+  scope "/dashboard/issuer", SovraWeb.Issuer do
+    pipe_through [:api, :user_session, :require_workspace_admin]
+
+    post "/mdl/signing-key", MdlController, :create_signing_key
+    post "/mdl/certification-request", MdlController, :certification_request
+    post "/mdl/document-signer", MdlController, :register_document_signer
+  end
+
+  # Trust anchors. Admitting an IACA root is the trust decision our verifiers
+  # rest on, and it is Sovra's to make rather than a workspace's — see
+  # `Sovra.Mdl.IssuingAuthority`.
+  scope "/dashboard/mdl", SovraWeb.Issuer do
+    pipe_through [:api, :user_session, :require_admin]
+
+    post "/issuing-authorities", MdlController, :admit_issuing_authority
+    delete "/issuing-authorities/:id", MdlController, :withdraw_issuing_authority
+  end
+
   # Admin-only credential status changes (workspace admin required)
   scope "/dashboard/issuer", SovraWeb.Issuer do
     pipe_through [:api, :user_session, :require_workspace_admin]

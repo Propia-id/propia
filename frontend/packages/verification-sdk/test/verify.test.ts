@@ -166,7 +166,7 @@ describe("verify", () => {
       vct,
     });
 
-    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as unknown as typeof fetch;
 
     const result = await verify(fixture.presentation, baseOptions, testCache);
 
@@ -189,7 +189,7 @@ describe("verify", () => {
     });
 
     // Mock returns WRONG issuer key (from wrongKeys)
-    globalThis.fetch = createFetchMock(wrongKeys, issuerAddress, holderAddress, vct) as typeof fetch;
+    globalThis.fetch = createFetchMock(wrongKeys, issuerAddress, holderAddress, vct) as unknown as typeof fetch;
 
     const result = await verify(fixture.presentation, baseOptions, testCache);
 
@@ -206,7 +206,7 @@ describe("verify", () => {
 
     globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct, {
       untrusted: true,
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const result = await verify(fixture.presentation, baseOptions, testCache);
 
@@ -222,7 +222,7 @@ describe("verify", () => {
       exp: Math.floor(Date.now() / 1000) - 3600, // 1 hour ago
     });
 
-    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as unknown as typeof fetch;
 
     const result = await verify(fixture.presentation, baseOptions, testCache);
 
@@ -238,7 +238,7 @@ describe("verify", () => {
       noExp: true,
     });
 
-    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as unknown as typeof fetch;
 
     const result = await verify(fixture.presentation, baseOptions, testCache);
 
@@ -254,7 +254,7 @@ describe("verify", () => {
       nonce: "wrong-nonce",
     });
 
-    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as unknown as typeof fetch;
 
     const result = await verify(fixture.presentation, baseOptions, testCache);
 
@@ -270,7 +270,7 @@ describe("verify", () => {
       audience: "did:sovra:0xwrongaudience",
     });
 
-    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as unknown as typeof fetch;
 
     const result = await verify(fixture.presentation, baseOptions, testCache);
 
@@ -287,7 +287,7 @@ describe("verify", () => {
 
     globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct, {
       deactivatedIssuer: true,
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const result = await verify(fixture.presentation, baseOptions, testCache);
 
@@ -304,7 +304,7 @@ describe("verify", () => {
 
     globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct, {
       holderNoKeys: true,
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const result = await verify(fixture.presentation, baseOptions, testCache);
 
@@ -321,7 +321,7 @@ describe("verify", () => {
 
     globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct, {
       holderFutureValidAt: true,
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const result = await verify(fixture.presentation, baseOptions, testCache);
 
@@ -338,7 +338,7 @@ describe("verify", () => {
 
     globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct, {
       holderWrongKeyType: true,
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const result = await verify(fixture.presentation, baseOptions, testCache);
 
@@ -356,7 +356,7 @@ describe("verify", () => {
     // No fetch mock — offline mode should NOT call fetch at all
     globalThis.fetch = vi.fn(() => {
       throw new Error("fetch should not be called in offline mode");
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const offlineOptions = {
       ...baseOptions,
@@ -386,7 +386,7 @@ describe("verify", () => {
       iat: futureIat,
     });
 
-    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as unknown as typeof fetch;
 
     const result = await verify(fixture.presentation, baseOptions, testCache);
 
@@ -403,7 +403,7 @@ describe("verify", () => {
       sub: `did:sovra:${differentHolder}`, // sub points to different address than cnf.kid
     });
 
-    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as unknown as typeof fetch;
 
     const result = await verify(fixture.presentation, baseOptions, testCache);
 
@@ -419,7 +419,7 @@ describe("verify", () => {
       rawPayloadOverrides: { iss: 12345 },
     });
 
-    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as unknown as typeof fetch;
 
     const result = await verify(fixture.presentation, baseOptions, testCache);
 
@@ -435,7 +435,7 @@ describe("verify", () => {
       rawPayloadOverrides: { iss: "did:sovra:notahexaddress" },
     });
 
-    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as unknown as typeof fetch;
 
     const result = await verify(fixture.presentation, baseOptions, testCache);
 
@@ -453,7 +453,7 @@ describe("verify", () => {
     });
 
     // On-chain returns wrong passkey — signature won't match
-    globalThis.fetch = createFetchMock(modifiedKeys, issuerAddress, holderAddress, vct) as typeof fetch;
+    globalThis.fetch = createFetchMock(modifiedKeys, issuerAddress, holderAddress, vct) as unknown as typeof fetch;
 
     const result = await verify(fixture.presentation, baseOptions, testCache);
 
@@ -471,7 +471,7 @@ describe("verify", () => {
       kbAlg: "WebAuthn",
     });
 
-    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as unknown as typeof fetch;
 
     const result = await verify(fixture.presentation, baseOptions, testCache);
 
@@ -491,7 +491,7 @@ describe("verify", () => {
       webauthnOverrides: { challenge: "A".repeat(43) },
     });
 
-    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as unknown as typeof fetch;
 
     const result = await verify(fixture.presentation, baseOptions, testCache);
 
@@ -509,7 +509,7 @@ describe("verify", () => {
       kbAlg: "WebAuthn",
     });
 
-    globalThis.fetch = createFetchMock(modifiedKeys, issuerAddress, holderAddress, vct) as typeof fetch;
+    globalThis.fetch = createFetchMock(modifiedKeys, issuerAddress, holderAddress, vct) as unknown as typeof fetch;
 
     const result = await verify(fixture.presentation, baseOptions, testCache);
 
@@ -526,7 +526,7 @@ describe("verify", () => {
       webauthnOverrides: { flags: 0x01 }, // UP only, UV not set
     });
 
-    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as unknown as typeof fetch;
 
     const result = await verify(fixture.presentation, baseOptions, testCache);
 
@@ -544,7 +544,7 @@ describe("verify", () => {
 
     globalThis.fetch = vi.fn(() => {
       throw new Error("fetch should not be called in offline mode");
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const result = await verify(fixture.presentation, { ...baseOptions, offlineMode: true }, testCache);
 
@@ -573,7 +573,7 @@ describe("verify", () => {
   it("reads holder keys from holderRpcUrl while registries stay on l2RpcUrl", async () => {
     const fixture = buildPresentation(keys, { issuerAddress, holderAddress, vct });
     const { mock, calls } = createRoutingFetchMock();
-    globalThis.fetch = mock as unknown as typeof fetch;
+    globalThis.fetch = mock as unknown as unknown as typeof fetch;
 
     const result = await verify(
       fixture.presentation,
@@ -611,7 +611,7 @@ describe("verify", () => {
       },
     });
 
-    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as unknown as typeof fetch;
 
     const result = await verify(fixture.presentation, baseOptions, testCache);
 
@@ -632,7 +632,7 @@ describe("verify", () => {
       },
     });
 
-    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as unknown as typeof fetch;
 
     // A fresh cache each way, so neither run can be satisfied by the other's entry.
     const urlResult = await verify(asUrl.presentation, baseOptions, new VerificationCache());
@@ -654,7 +654,7 @@ describe("verify", () => {
       rawPayloadOverrides: { iss: "https://issuer.example.com/issuers/42" },
     });
 
-    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as unknown as typeof fetch;
 
     const result = await verify(fixture.presentation, baseOptions, testCache);
 
@@ -670,7 +670,7 @@ describe("verify", () => {
       rawPayloadOverrides: { iss: "https://example.com/did:sovra:0xnothex" },
     });
 
-    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as typeof fetch;
+    globalThis.fetch = createFetchMock(keys, issuerAddress, holderAddress, vct) as unknown as typeof fetch;
 
     const result = await verify(fixture.presentation, baseOptions, testCache);
 
@@ -681,7 +681,7 @@ describe("verify", () => {
   it("defaults holder key reads to l2RpcUrl when holderRpcUrl is omitted", async () => {
     const fixture = buildPresentation(keys, { issuerAddress, holderAddress, vct });
     const { mock, calls } = createRoutingFetchMock();
-    globalThis.fetch = mock as unknown as typeof fetch;
+    globalThis.fetch = mock as unknown as unknown as typeof fetch;
 
     const result = await verify(fixture.presentation, baseOptions, testCache);
 

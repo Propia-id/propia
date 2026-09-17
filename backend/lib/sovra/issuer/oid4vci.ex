@@ -5,6 +5,7 @@ defmodule Sovra.Issuer.OID4VCI do
   """
 
   alias Sovra.Issuer.ClaimUtils
+  alias Sovra.Mdoc.DocType
   alias Sovra.Repo
 
   # Every display string we publish is authored in one language today, so the
@@ -21,14 +22,7 @@ defmodule Sovra.Issuer.OID4VCI do
     configs =
       Map.new(latest_per_schema_id(schemas), fn schema ->
         {schema.credential_type,
-         %{
-           "format" => "vc+sd-jwt",
-           "credential_definition" => %{
-             "type" => ["VerifiableCredential", schema.credential_type]
-           },
-           "credential_metadata" =>
-             credential_metadata(schema, workspace, Map.get(designs_by_schema_id, schema.id))
-         }}
+         config_for(schema, workspace, Map.get(designs_by_schema_id, schema.id))}
       end)
 
     %{
@@ -39,6 +33,64 @@ defmodule Sovra.Issuer.OID4VCI do
       "display" => [display_entry(workspace)]
     }
   end
+
+  # One configuration per schema either way, still keyed by `credential_type`.
+  # Keeping that key is what lets `ensure_configuration_matches/2` and
+  # `build_offer_uri/4` stay untouched — the docType identifies the wire format,
+  # not the configuration.
+  defp config_for(%{format: "mso_mdoc"} = schema, workspace, design) do
+    doc_type = DocType.build(workspace, schema)
+
+    %{
+      "format" => "mso_mdoc",
+      "doctype" => doc_type,
+      # The holder proves possession with a plain OID4VCI `jwt` proof, exactly as
+      # for SD-JWT; `cose_key` describes how the key is *carried* in the issued
+      # credential (MSO.deviceKeyInfo), not how the proof is signed.
+      "cryptographic_binding_methods_supported" => ["cose_key"],
+      "credential_signing_alg_values_supported" => [-7],
+      "proof_types_supported" => %{
+        "jwt" => %{"proof_signing_alg_values_supported" => ["ES256"]}
+      },
+      "credential_metadata" =>
+        credential_metadata(schema, workspace, design, mdoc_claims(schema, doc_type))
+    }
+  end
+
+  defp config_for(schema, workspace, design) do
+    %{
+      "format" => "vc+sd-jwt",
+      "credential_definition" => %{
+        "type" => ["VerifiableCredential", schema.credential_type]
+      },
+      "credential_metadata" => credential_metadata(schema, workspace, design, claims_for(schema))
+    }
+  end
+
+  # OpenID4VP 1.0 path form: `[namespace, element_identifier]`. The namespace is
+  # the docType, since we emit exactly one.
+  #
+  # Only operator-defined claims appear here. The `io.sovra.meta.1` namespace an
+  # issued mdoc also carries is Sovra plumbing — a wallet has nothing to render
+  # for it and no reason to request it.
+  defp mdoc_claims(schema, doc_type) do
+    schema.claims
+    |> ClaimUtils.parse_claim_defs()
+    |> Enum.map(fn claim ->
+      %{
+        "path" => [doc_type, claim["key"]],
+        # `disclosable: false` means the holder cannot withhold it, which is what
+        # OID4VCI calls a mandatory claim.
+        "mandatory" => not disclosable?(claim)
+      }
+    end)
+    |> case do
+      [] -> nil
+      claims -> claims
+    end
+  end
+
+  defp disclosable?(claim), do: !!(claim["disclosable"] || claim["sd"])
 
   defp latest_per_schema_id(schemas) do
     schemas
@@ -58,9 +110,12 @@ defmodule Sovra.Issuer.OID4VCI do
   # (`display`) and the per-claim labels (`claims`) — is nested under
   # `credential_metadata`. Both sat at the top of the configuration object in
   # draft 13; wallets read the 1.0 position only.
-  defp credential_metadata(schema, workspace, design) do
+  # `claims` comes from the caller because the two formats point at claims
+  # differently: an mdoc element is addressed `[namespace, identifier]`, an
+  # SD-JWT claim by its flat key.
+  defp credential_metadata(schema, workspace, design, claims) do
     %{"display" => display_for(schema, workspace, design)}
-    |> maybe_put("claims", claims_for(schema))
+    |> maybe_put("claims", claims)
   end
 
   # OID4VCI 1.0 Appendix B.2 — one claims description object per schema claim.

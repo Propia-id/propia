@@ -21,7 +21,17 @@ defmodule Sovra.Workspaces.Workspace do
     field :webhook_secret_key_id, :string
     field :status_index_secret_key_id, :string
 
+    # The mDL document signer: a dedicated KMS key, the certificate an issuing
+    # authority issued for it, and the root that certificate chains to. Separate
+    # from `signing_key_id` because ISO expects a document signer to rotate on
+    # its own schedule — see `Sovra.Mdl`.
+    field :mdl_signing_key_id, :string
+    field :mdl_signing_public_key_x, :binary
+    field :mdl_signing_public_key_y, :binary
+    field :mdl_signer_certificate, :string
+
     belongs_to :organization, Sovra.Organizations.Organization
+    belongs_to :mdl_issuing_authority, Sovra.Mdl.IssuingAuthority
 
     timestamps(type: :utc_datetime)
   end
@@ -50,6 +60,39 @@ defmodule Sovra.Workspaces.Workspace do
       |> validate_length(:name, min: 1, max: 200)
       |> validate_url(:webhook_url)
     end
+  end
+
+  @mdl_key_fields ~w(mdl_signing_key_id mdl_signing_public_key_x mdl_signing_public_key_y)a
+
+  @doc """
+  Record the workspace's mDL document signer key.
+
+  Separate from `mdl_signer_changeset/2` because the key exists first and alone:
+  a certification request is built from it, and the certificate only arrives
+  once the authority has signed one.
+  """
+  def mdl_signing_key_changeset(record, attrs) do
+    record
+    |> cast(attrs, @mdl_key_fields)
+    |> validate_required(@mdl_key_fields)
+  end
+
+  @doc """
+  Record the Document Signer Certificate and the root it chains to.
+
+  Both together, never one: a certificate without its trust anchor is one no
+  verifier of ours can do anything with. The database says the same thing in
+  `workspaces_mdl_signer_complete_check`.
+  """
+  def mdl_signer_changeset(record, attrs) do
+    record
+    |> cast(attrs, ~w(mdl_signer_certificate mdl_issuing_authority_id)a)
+    |> validate_required(~w(mdl_signer_certificate mdl_issuing_authority_id)a)
+    |> foreign_key_constraint(:mdl_issuing_authority_id)
+    |> check_constraint(:mdl_signer_certificate,
+      name: :workspaces_mdl_signer_complete_check,
+      message: "needs a signing key and an issuing authority"
+    )
   end
 
   def webhook_secret_changeset(record, key_id) do

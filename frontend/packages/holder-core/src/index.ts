@@ -23,11 +23,22 @@ export type {
 } from "./api/index.js";
 
 // State stores
-export { createCredentialStore, logoAssetKey } from "./state/index.js";
+export {
+  createCredentialStore,
+  isMdoc,
+  isSdJwt,
+  logoAssetKey,
+} from "./state/index.js";
+// The member types and guards are exported alongside the union so downstream
+// consumers can narrow without reimplementing the discriminant.
 export type {
   CredentialStore,
-  StoredCredential,
   CredentialDisplayMetadata,
+  CredentialFormat,
+  MdocElementMeta,
+  StoredCredential,
+  StoredMdocCredential,
+  StoredSdJwtCredential,
   StoredLogo,
   PendingLogo,
 } from "./state/index.js";
@@ -36,6 +47,21 @@ export type { ApprovalStore } from "./state/approval-store.js";
 
 // Credential manager
 export { CredentialManager } from "./credentials/index.js";
+export { isEnvelopeClaim } from "./credentials/envelope.js";
+
+// COSE / mdoc surface, for apps that need the algorithm identifiers.
+export { COSE_ALG, COSE_HEADER, SOVRA_WEBAUTHN_LABEL } from "./cose/index.js";
+// A wallet rendering an mDL needs the portrait bytes, which `claims` carries
+// only a descriptor for — see `readElementBytes`.
+export {
+  drivingPrivilegeCategories,
+  isBytesDescriptor,
+  ISO_MDL_NAMESPACE,
+  PORTRAIT_ELEMENT,
+  portraitDataUri,
+  readElementBytes,
+} from "./mdoc/index.js";
+export type { BytesDescriptor } from "./mdoc/index.js";
 export type { ParsedCredential, IssuerInfo } from "./credentials/index.js";
 
 // Protocol flows
@@ -48,12 +74,17 @@ export {
   pickLogo,
   toStoredDisplay,
 } from "./protocols/index.js";
+export { assertionToJwtSegment } from "./protocols/index.js";
 export type {
   CredentialOffer,
+  ClaimRef,
   DCQLQuery,
   VPRequest,
   ApprovalData,
+  HolderAssertion,
   HolderSigner,
+  RawEs256Signature,
+  WebAuthnAssertion,
 } from "./protocols/index.js";
 
 // DID resolution

@@ -10,7 +10,7 @@ This document specifies the platform extensions added to credential schemas to s
 
 ### Requirement: Credential format selection
 
-The system SHALL allow each schema to declare its credential format — **W3C** (default) or **mDoc** — at creation time, and SHALL persist a `docType` namespace when the format is mDoc.
+The system SHALL allow each schema to declare its credential format — `vc+sd-jwt` (default) or `mso_mdoc` — at creation time, and SHALL derive a `docType` for mDoc schemas rather than accepting one.
 
 #### Scenario: Create a W3C credential schema
 - GIVEN a workspace admin wants to define a new type of credential
@@ -18,18 +18,33 @@ The system SHALL allow each schema to declare its credential format — **W3C** 
 - THEN the schema is saved with version 1, a JSON Schema (draft 2020-12) is auto-generated from the properties, and the schema is available for use when issuing credentials
 
 #### Scenario: Create an mDoc schema
-- GIVEN a workspace on an Enterprise plan (`supportsMdl=true`)
-- WHEN they create a schema with format "mdoc", docType "org.iso.18013.5.1", and fields per ISO 18013-5 (family_name, given_name, birth_date, portrait, etc.)
-- THEN the schema is saved with the mDoc format and docType namespace
+- GIVEN a workspace with a provisioned signing key
+- WHEN they create a schema with format `mso_mdoc` and their own fields
+- THEN the schema is saved with the mDoc format, and its docType and namespace are derived as `io.sovra.<workspace-address>.<schema_id>.1`
 
-### Requirement: mDoc gating by plan feature flag
+#### Scenario: docType is generated, never supplied
+- GIVEN an operator creating an mDoc schema
+- WHEN they submit the schema
+- THEN any docType in the request is ignored, and the generated one is returned read-only
 
-The system SHALL reject schema creation with format "mdoc" when the workspace's active plan has `supportsMdl=false`. The check SHALL happen at creation and at update.
+> Deriving the docType rather than accepting it buys uniqueness without a
+> constraint, prevents a workspace from squatting `org.iso.*` — reserved for
+> real ISO document types — and keeps the identifier stable across workspace
+> renames, since it is built from the address rather than the name.
 
-#### Scenario: mDoc schema rejected on non-Enterprise plan
-- GIVEN a workspace on the Free plan (`supportsMdl=false`)
-- WHEN they attempt to create a schema with format "mdoc"
-- THEN the system rejects the request indicating that mDoc support requires a plan upgrade
+#### Scenario: mDoc is credential-only
+- GIVEN an operator creating a schema with kind "document"
+- WHEN they select format `mso_mdoc`
+- THEN the system rejects it, because a document is signed straight to a PDF with no wallet and no holder key, which an mDoc cannot express
+
+### Requirement: mDoc schema identifiers
+
+The system SHALL require an mDoc schema's `schema_id` to be lowercase alphanumeric with `-` or `_`, because it becomes a docType segment. The rule SHALL NOT apply to `vc+sd-jwt` schemas, so identifiers already in use are not retro-invalidated.
+
+> **Plan gating is not implemented.** Earlier drafts of this document gated mDoc
+> behind an Enterprise `supportsMdl` flag. Plans and billing have no model in
+> code, so gating would mean inventing half of one; any workspace may create
+> mDoc schemas today. Revisit alongside the billing work.
 
 ### Requirement: Version increment on update
 
@@ -68,12 +83,16 @@ The system SHALL support the following property types for schema fields:
 
 ### Requirement: Schema format consistency with designs
 
-The system SHALL store the credential format (w3c/mdoc) and docType at schema creation time. These fields can be updated but must remain consistent with associated designs and issued credentials.
+The system SHALL fix the credential format at schema creation and SHALL carry it forward unchanged across every revision, alongside `kind` and `credential_type`.
 
-#### Scenario: Update schema format and docType
-- GIVEN a schema with format "w3c"
-- WHEN the admin updates the schema including format and docType fields
-- THEN the system updates all provided fields (name, description, format, docType, properties) and increments the version
+#### Scenario: Format survives a revision
+- GIVEN an `mso_mdoc` schema at version 1
+- WHEN the admin revises it, including a `format` field in the request
+- THEN the format in the request is ignored, the schema stays `mso_mdoc`, and the version increments
+
+> The format cannot be mutable. The docType derives from the schema and is
+> signed into every credential already sitting in a holder's wallet, so a
+> revision that changed it would orphan them.
 
 ### Requirement: Schema integrity protection
 

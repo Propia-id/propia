@@ -5,11 +5,24 @@ import type {
   CredentialDisplay,
   ClaimDescription,
 } from "../api/index.js";
+import { isEnvelopeClaim } from "../credentials/envelope.js";
+import {
+  buildDeviceResponse,
+  holderSignerToDeviceSigner,
+  parseIssuerSigned,
+  SOVRA_META_NAMESPACE,
+} from "../mdoc/index.js";
+import { assertionToJwtSegment as toJwtSegment } from "./types.js";
+import type { HolderSigner } from "./types.js";
 import type { CredentialManager } from "../credentials/index.js";
 import type {
-  StoredCredential,
   CredentialDisplayMetadata,
+  CredentialFormat,
+  MdocElementMeta,
   PendingLogo,
+  StoredCredential,
+  StoredMdocCredential,
+  StoredSdJwtCredential,
 } from "../state/index.js";
 import {
   base64urlDecode,
@@ -21,22 +34,13 @@ import { parseDidUrl, resolveAssertionKey } from "../did/index.js";
 
 // ─── Holder signing seam ──────────────────────────────
 
-/**
- * Signs the holder proofs (OID4VCI proof-of-possession + OID4VP KB-JWT).
- * The concrete implementation lives in the app — e.g. an Aligned-passkey
- * signer — so holder-core stays agnostic of the wallet SDK.
- */
-export interface HolderSigner {
-  /** The JWT `alg` header value this signer produces (e.g. "WebAuthn"). */
-  readonly alg: string;
-  /**
-   * Sign `hash` (the 32-byte SHA-256 of the JWT signing input) with the
-   * holder's key `credentialId`, returning the JWT's third (signature)
-   * segment, base64url-encoded. For WebAuthn that segment is
-   * `base64url(JSON{r,s,challenge_index,type_index,authenticator_data,client_data_json})`.
-   */
-  signToSegment(hash: Uint8Array, credentialId: string): Promise<string>;
-}
+export { assertionToJwtSegment } from "./types.js";
+export type {
+  HolderAssertion,
+  HolderSigner,
+  RawEs256Signature,
+  WebAuthnAssertion,
+} from "./types.js";
 
 // ─── OID4VCI Types ────────────────────────────────────
 
@@ -57,9 +61,29 @@ export interface DCQLQuery {
   credentials: Array<{
     id: string;
     format: string;
-    meta?: { vct_values?: string[] };
-    claims?: Array<{ path: string[]; id?: string }>;
+    /** `vct_values` for SD-JWT; `doctype_value` for mdoc. */
+    meta?: { vct_values?: string[]; doctype_value?: string };
+    claims?: Array<{ path: string[]; id?: string; intent_to_retain?: boolean }>;
   }>;
+}
+
+/**
+ * One requested claim, resolved against a held credential.
+ *
+ * A path rather than a bare name because an mdoc claim is
+ * `[namespace, element_identifier]`. Encoding that back into a string would
+ * push splitting into every consumer and — worse — would keep compiling
+ * everywhere, which is exactly the silent breakage this migration exists to
+ * surface.
+ */
+export interface ClaimRef {
+  /** Selection key and React key: `"ns/elem"` for mdoc, the claim name for SD-JWT. */
+  id: string;
+  path: string[];
+  /** Last path segment, which the existing label lookup keys on. */
+  key: string;
+  /** From the schema's `disclosable: false` — the holder may not withhold it. */
+  mandatory: boolean;
 }
 
 export interface VPRequest {
@@ -94,11 +118,12 @@ export interface ApprovalData {
   /** Mirrors `VPRequest.verified` — the consent screen has to say which it is. */
   verified: boolean;
   credentialType: string;
-  sharedClaims: string[];
-  withheldClaims: string[];
+  format: CredentialFormat;
+  sharedClaims: ClaimRef[];
+  withheldClaims: ClaimRef[];
   credential: StoredCredential;
   /** What the verifier asked for; re-derive against it when the holder switches. */
-  requestedClaims: string[];
+  requestedClaims: ClaimRef[];
   /** Every credential the request accepts, `credential` among them. */
   matches: StoredCredential[];
 }
@@ -270,6 +295,88 @@ export function toStoredDisplay(
   return Object.keys(stored).length > 0 ? stored : undefined;
 }
 
+// ─── DCQL matching ────────────────────────────────────
+
+function matchesQueryCredential(
+  queryCredential: DCQLQuery["credentials"][number],
+  cred: StoredCredential,
+): boolean {
+  if (queryCredential.format !== cred.format) return false;
+
+  if (cred.format === "mso_mdoc") {
+    const doctype = queryCredential.meta?.doctype_value;
+    return !doctype || doctype === cred.docType;
+  }
+
+  const vctValues = queryCredential.meta?.vct_values ?? [];
+  return vctValues.length === 0 || vctValues.includes(cred.credentialType);
+}
+
+/**
+ * Turn a query's claim paths into refs against a held credential.
+ *
+ * For mdoc the path is `[namespace, element]`, and `key` has to come out as the
+ * credential's own `claimKey` — which `claimKeyFor` leaves unqualified for the
+ * credential's own namespace and qualifies for any other. Everything
+ * downstream keys off it: `buildApprovalData` matches against
+ * `Object.keys(credential.claims)`, and `selectMdocElements` decides what is
+ * disclosed.
+ *
+ * Taking the last path segment instead would be right only for the
+ * credential's own namespace. A real mDL pairs `org.iso.18013.5.1` with a
+ * domestic one, and then a request for
+ * `["org.iso.18013.5.1.aamva", "document_number"]` produces the bare
+ * `document_number` — which is not a key `claims` holds, so the claim vanishes
+ * from the approval screen and is never disclosed, and which would match the
+ * ISO namespace's `document_number` if anything did. That collision is the
+ * whole reason element identifiers are namespaced.
+ */
+function resolveClaimRefs(
+  queryCredential: DCQLQuery["credentials"][number],
+  cred: StoredCredential,
+): ClaimRef[] {
+  return (queryCredential.claims ?? []).map((claim) => {
+    const element = findElement(cred, claim.path);
+    const key = element?.claimKey ?? claim.path[claim.path.length - 1];
+
+    return {
+      id: claim.path.join("/"),
+      path: claim.path,
+      key,
+      mandatory: element?.mandatory ?? false,
+    };
+  });
+}
+
+/** The held element a DCQL `[namespace, element_identifier]` path names. */
+function findElement(
+  cred: StoredCredential,
+  path: string[],
+): MdocElementMeta | undefined {
+  if (cred.format !== "mso_mdoc" || path.length !== 2) return undefined;
+
+  return cred.elements.find(
+    (element) => element.namespace === path[0] && element.elementIdentifier === path[1],
+  );
+}
+
+function claimRefFor(cred: StoredCredential, key: string): ClaimRef {
+  const element =
+    cred.format === "mso_mdoc" ? cred.elements.find((e) => e.claimKey === key) : undefined;
+
+  return {
+    id: element ? `${element.namespace}/${element.elementIdentifier}` : key,
+    path: element ? [element.namespace, element.elementIdentifier] : [key],
+    key,
+    mandatory: element?.mandatory ?? false,
+  };
+}
+
+function isMandatory(cred: StoredCredential, key: string): boolean {
+  if (cred.format !== "mso_mdoc") return false;
+  return cred.elements.some((e) => e.claimKey === key && e.mandatory);
+}
+
 // ─── OID4VCI Protocol ─────────────────────────────────
 
 export class IssuanceProtocol {
@@ -342,7 +449,7 @@ export class IssuanceProtocol {
 
     // 5. Request credential
     const credConfigId = offer.credential_configuration_ids[0];
-    const sdJwtString = await this.api.requestCredential(
+    const credential = await this.api.requestCredential(
       metadata.credential_endpoint,
       tokenResponse.access_token,
       { proof_type: "jwt", jwt: proofJwt },
@@ -355,25 +462,29 @@ export class IssuanceProtocol {
       offer.credential_issuer;
     const issuerDid = `did:sovra:${new URL(offer.credential_issuer).hostname}`;
 
+    // The metadata was already fetched in step 1, so the format, the card
+    // design and the claim labels all come out of a lookup, with no extra
+    // round trip.
+    const config = metadata.credential_configurations_supported?.[credConfigId];
     const credentialMetadata = credentialMetadataFor(metadata, credConfigId);
     const credentialDisplay = pickCredentialDisplay(
       credentialMetadata?.display,
       preferredLocale,
     );
-    const display = toStoredDisplay(credentialDisplay);
-    // The card logo the issuer designed for this credential configuration —
-    // the app's own brand mark is only the fallback.
-    const logo = pickLogo(credentialDisplay);
-    const claimLabels = pickClaimLabels(credentialMetadata?.claims, preferredLocale);
-
-    // 7. Store credential
-    return this.credentialManager.storeCredential(sdJwtString, {
+    const issuerInfo = {
       issuerDid,
       issuerName,
-      display,
-      logo,
-      claimLabels,
-    });
+      display: toStoredDisplay(credentialDisplay),
+      // The card logo the issuer designed for this credential configuration —
+      // the app's own brand mark is only the fallback.
+      logo: pickLogo(credentialDisplay),
+      claimLabels: pickClaimLabels(credentialMetadata?.claims, preferredLocale),
+    };
+
+    // 7. Store it in whichever format the issuer advertised.
+    return config?.format === "mso_mdoc"
+      ? this.credentialManager.storeMdocCredential(credential, issuerInfo)
+      : this.credentialManager.storeCredential(credential, issuerInfo);
   }
 
   /** Build and sign a proof-of-possession JWT for OID4VCI. */
@@ -420,10 +531,8 @@ export class IssuanceProtocol {
     // The signer signs sha256(signing_input) and returns the JWT's third
     // segment (a WebAuthn assertion for the Aligned passkey).
     const hash = sha256(new TextEncoder().encode(signingInput));
-    const sigB64 = await this.signer.signToSegment(
-      hash,
-      identity.passkeyCredentialId,
-    );
+    const assertion = await this.signer.sign(hash, identity.passkeyCredentialId);
+    const sigB64 = toJwtSegment(assertion, base64urlEncode);
 
     return `${signingInput}.${sigB64}`;
   }
@@ -674,22 +783,31 @@ export class PresentationProtocol {
     };
   }
 
-  /** Every credential the query accepts, in wallet order — the holder picks. */
+  /**
+   * Every credential the query accepts, in wallet order — the holder picks.
+   *
+   * Matching is on format *and* type. The format check is not cosmetic: without
+   * it an mdoc would satisfy a `vc+sd-jwt` query and the presentation would
+   * fail much later, in signature verification, with nothing pointing back
+   * here. And an empty type list is no longer a wildcard — it used to mean
+   * "match anything", so a malformed query silently offered up the first
+   * credential in the wallet.
+   */
   findMatchingCredentials(
     query: DCQLQuery,
     credentials: StoredCredential[],
-  ): { credentials: StoredCredential[]; requestedClaims: string[] } | null {
+  ): { credentials: StoredCredential[]; requestedClaims: ClaimRef[] } | null {
     for (const queryCredential of query.credentials) {
-      const vctValues = queryCredential.meta?.vct_values ?? [];
-      const requestedClaims =
-        queryCredential.claims?.map((c) => c.path[c.path.length - 1]) ?? [];
-
-      const matches = credentials.filter(
-        (cred) =>
-          vctValues.length === 0 || vctValues.includes(cred.credentialType),
+      const matches = credentials.filter((cred) =>
+        matchesQueryCredential(queryCredential, cred),
       );
       if (matches.length > 0) {
-        return { credentials: matches, requestedClaims };
+        return {
+          credentials: matches,
+          // Resolved against the first match; `buildApprovalData` re-derives
+          // the per-credential parts when the holder switches.
+          requestedClaims: resolveClaimRefs(queryCredential, matches[0]),
+        };
       }
     }
     return null;
@@ -699,7 +817,7 @@ export class PresentationProtocol {
   findMatchingCredential(
     query: DCQLQuery,
     credentials: StoredCredential[],
-  ): { credential: StoredCredential; requestedClaims: string[] } | null {
+  ): { credential: StoredCredential; requestedClaims: ClaimRef[] } | null {
     const match = this.findMatchingCredentials(query, credentials);
     if (!match) return null;
     return { credential: match.credentials[0], requestedClaims: match.requestedClaims };
@@ -709,12 +827,17 @@ export class PresentationProtocol {
   buildApprovalData(
     request: VPRequest,
     credential: StoredCredential,
-    requestedClaims: string[],
+    requestedClaims: ClaimRef[],
     matches: StoredCredential[] = [credential],
   ): ApprovalData {
-    const allClaims = Object.keys(credential.claims).filter(
-      (k) => !k.startsWith("_") && k !== "iss" && k !== "sub" && k !== "iat" && k !== "exp" && k !== "vct" && k !== "cnf" && k !== "credentialStatus",
-    );
+    // An mdoc namespace holds only real data elements — no JWT envelope — so
+    // the filter would only ever hide something the operator meant to show.
+    const allClaims =
+      credential.format === "mso_mdoc"
+        ? Object.keys(credential.claims)
+        : Object.keys(credential.claims).filter((k) => !isEnvelopeClaim(k));
+
+    const requestedKeys = new Set(requestedClaims.map((c) => c.key));
 
     // `clientId` may stand in for a missing `client_name` only once a
     // signature has bound it to a DID; unsigned, it is whatever the QR said.
@@ -724,8 +847,15 @@ export class PresentationProtocol {
         : undefined,
       verified: request.verified,
       credentialType: credential.credentialType,
-      sharedClaims: requestedClaims.filter((c) => allClaims.includes(c)),
-      withheldClaims: allClaims.filter((c) => !requestedClaims.includes(c)),
+      format: credential.format,
+      // `mandatory` belongs to the credential, not the request, so it is
+      // re-derived here: the holder may have switched to another card.
+      sharedClaims: requestedClaims
+        .filter((c) => allClaims.includes(c.key))
+        .map((c) => ({ ...c, mandatory: isMandatory(credential, c.key) })),
+      withheldClaims: allClaims
+        .filter((key) => !requestedKeys.has(key))
+        .map((key) => claimRefFor(credential, key)),
       credential,
       requestedClaims,
       matches,
@@ -770,6 +900,71 @@ export class PresentationProtocol {
   async executePresentation(
     request: VPRequest,
     credential: StoredCredential,
+    approvedClaims: string[],
+  ): Promise<string> {
+    return credential.format === "mso_mdoc"
+      ? this.executeMdocPresentation(request, credential, approvedClaims)
+      : this.executeSdJwtPresentation(request, credential, approvedClaims);
+  }
+
+  /**
+   * Build an mdoc `DeviceResponse`.
+   *
+   * mdoc is `direct_post` only. The session transcript hashes the
+   * `response_uri`, and the QR path deliberately omits one so the two devices
+   * need no network path to each other — there is nothing to hash, and
+   * substituting an empty string would be inventing a private protocol that
+   * only our own verifier could follow.
+   */
+  private async executeMdocPresentation(
+    request: VPRequest,
+    credential: StoredMdocCredential,
+    approvedClaims: string[],
+  ): Promise<string> {
+    if (!request.responseUri) {
+      throw new Error(
+        "This verifier can't accept mDoc credentials — it did not provide a response address.",
+      );
+    }
+
+    const identity = this.getIdentity();
+    const parsed = parseIssuerSigned(credential.issuerSigned);
+
+    // Mandatory elements are unioned in by the manager, not by the caller.
+    const selected = this.credentialManager.selectMdocElements(credential, approvedClaims);
+    const selectedKeys = new Set(selected.map((e) => `${e.namespace}/${e.elementIdentifier}`));
+
+    const disclosed = parsed.items.filter(
+      (item) =>
+        // The Sovra metadata is not the holder's to withhold. The verifier
+        // requires it whole — it carries the holder DID, the revocation index
+        // and the mandatory-element set — and it holds no user data to choose
+        // about. It is deliberately absent from `credential.elements`, which
+        // exists to describe what a holder can decide on, so it has to be
+        // added back here rather than selected.
+        item.namespace === SOVRA_META_NAMESPACE ||
+        selectedKeys.has(`${item.namespace}/${item.elementIdentifier}`),
+    );
+
+    return buildDeviceResponse({
+      parsed,
+      disclosed,
+      handover: {
+        clientId: request.clientId,
+        nonce: request.nonce,
+        responseUri: request.responseUri,
+      },
+      signer: holderSignerToDeviceSigner(
+        this.signer,
+        identity.passkeyCredentialId,
+        sha256,
+      ),
+    });
+  }
+
+  private async executeSdJwtPresentation(
+    request: VPRequest,
+    credential: StoredSdJwtCredential,
     approvedClaims: string[],
   ): Promise<string> {
     const identity = this.getIdentity();
@@ -849,10 +1044,8 @@ export class PresentationProtocol {
     // The signer signs sha256(signing_input) (its WebAuthn challenge) and
     // returns the JWT's third segment.
     const hash = sha256(new TextEncoder().encode(signingInput));
-    const sigB64 = await this.signer.signToSegment(
-      hash,
-      identity.passkeyCredentialId,
-    );
+    const assertion = await this.signer.sign(hash, identity.passkeyCredentialId);
+    const sigB64 = toJwtSegment(assertion, base64urlEncode);
 
     return `${signingInput}.${sigB64}`;
   }

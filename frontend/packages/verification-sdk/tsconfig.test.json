@@ -1,0 +1,16 @@
+{
+  // `tsconfig.json` builds, so it emits `src` alone. This one only checks, and
+  // covers the tests too — without it a test can read a property no type
+  // declares and still pass, because vitest transpiles without checking. That
+  // is how `issuingAuthority` reached a passing test before it existed on
+  // `VerificationResult`.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "composite": false,
+    "declaration": false,
+    "resolveJsonModule": true
+  },
+  "include": ["src", "test"]
+}

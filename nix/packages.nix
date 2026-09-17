@@ -23,7 +23,7 @@ let
     pname = "sovra-frontend-deps";
     version = "0.1.0";
     src = ../frontend;
-    hash = "sha256-xAuFEUFYoRuvgLseGJS45Z/W/iUU2glqOmfI6O2XGxk=";
+    hash = "sha256-Gxs4mDcAgXOlxUCwV5iN1ncANRwgxNwbQPSwldof6xk=";
     fetcherVersion = 3;
   };
 

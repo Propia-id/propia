@@ -32,8 +32,9 @@ export interface ClaimDisplay {
 
 /**
  * A claims description object (OID4VCI 1.0 Appendix B.2). `path` is a claims
- * path pointer: a segment per level, so a Sovra credential's flat claims are
- * always a single-element path.
+ * path pointer, a segment per level: an SD-JWT credential's flat claims are a
+ * single-element path, while an mdoc element is addressed by its namespace and
+ * identifier, so `[namespace, identifier]`.
  */
 export interface ClaimDescription {
   path: (string | number | null)[];
@@ -60,9 +61,12 @@ export interface IssuerMetadata {
     string,
     {
       format: string;
-      credential_definition: {
+      /** W3C/SD-JWT shaped, so absent from an `mso_mdoc` configuration. */
+      credential_definition?: {
         type: string[];
       };
+      /** Present instead of `credential_definition` when the format is `mso_mdoc`. */
+      doctype?: string;
       credential_metadata?: CredentialMetadata;
       /**
        * Legacy placement. OID4VCI 1.0 nests `display` and `claims` under

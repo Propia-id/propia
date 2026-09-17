@@ -9,9 +9,19 @@ defmodule Sovra.Ethereum.ClientBalanceTest do
   @other_chain_id 999_702
   @address <<0xAB::8, 0::152>>
 
-  setup do
+  # One listener for the whole module, not one per test. Starting and stopping
+  # it around every test raced with itself two ways: the next bind could land
+  # before the last listener released the port (`:eaddrinuse`), and the HTTP
+  # client's pooled keep-alive connection to the previous listener could be
+  # checked out after that listener died (`TransportError{reason: :closed}`).
+  # The stub is stateless — its answers come from the application env each test
+  # sets below — so there is nothing to reset between tests.
+  setup_all do
     start_supervised!({Bandit, plug: JsonRpcStubPlug, scheme: :http, port: @port})
+    :ok
+  end
 
+  setup do
     original = Application.get_env(:sovra, :ethereum, [])
 
     Application.put_env(

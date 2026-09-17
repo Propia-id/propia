@@ -263,6 +263,30 @@ defmodule SovraWeb.Verifier.VerificationController do
       {:error, :invalid_dcql_query} ->
         conn |> put_status(400) |> json(%{error: "invalid_dcql_query"})
 
+      {:error, :unsupported_dcql_format} ->
+        conn
+        |> put_status(400)
+        |> json(%{
+          error: "unsupported_dcql_format",
+          details: "every credential must declare a format of vc+sd-jwt, dc+sd-jwt or mso_mdoc"
+        })
+
+      {:error, :invalid_mdoc_claim_path} ->
+        conn
+        |> put_status(400)
+        |> json(%{
+          error: "invalid_mdoc_claim_path",
+          details: ~s(an mso_mdoc claim is {"path": ["<namespace>", "<element_identifier>"]})
+        })
+
+      {:error, :mixed_dcql_formats} ->
+        conn
+        |> put_status(400)
+        |> json(%{
+          error: "mixed_dcql_formats",
+          details: "a presentation carries one credential format; query for them separately"
+        })
+
       {:error, :workspace_inactive} ->
         conn |> put_status(403) |> json(%{error: "workspace_inactive"})
 

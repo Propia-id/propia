@@ -1,12 +1,21 @@
 import type { AssetStorage, SecureStorage } from "../platform/index.js";
 import type {
   StoredCredential,
+  StoredMdocCredential,
+  StoredSdJwtCredential,
   CredentialStore,
   CredentialDisplayMetadata,
+  MdocElementMeta,
   StoredLogo,
   PendingLogo,
 } from "../state/index.js";
 import { credentialKey, logoAssetKey } from "../state/index.js";
+import {
+  claimKeyFor,
+  flattenClaims,
+  parseIssuerSigned,
+  SOVRA_META_NAMESPACE,
+} from "../mdoc/index.js";
 import { sha256, base64urlDecode, base64urlEncode } from "../utils/index.js";
 
 // ─── Types ────────────────────────────────────────────
@@ -36,6 +45,14 @@ export interface IssuerInfo {
    * resulting reference is written.
    */
   logo?: PendingLogo;
+}
+
+/** A random UUIDv4-shaped identifier. `crypto.randomUUID` is absent under Hermes. */
+function newCredentialId(): string {
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  const h = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
 // ─── Credential Manager ──────────────────────────────
@@ -119,14 +136,11 @@ export class CredentialManager {
   async storeCredential(
     sdJwtString: string,
     issuerInfo: IssuerInfo,
-  ): Promise<StoredCredential> {
+  ): Promise<StoredSdJwtCredential> {
     const ns = this.requireNamespace();
     const parsed = this.parseSDJwt(sdJwtString);
 
-    const bytes = new Uint8Array(16);
-    globalThis.crypto.getRandomValues(bytes);
-    const h = Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("");
-    const id = `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;
+    const id = newCredentialId();
     const credentialType =
       (parsed.payload.vct as string) ??
       (parsed.payload.type as string) ??
@@ -137,8 +151,9 @@ export class CredentialManager {
       ? { ...(issuerInfo.display ?? {}), logo }
       : issuerInfo.display;
 
-    const credential: StoredCredential = {
+    const credential: StoredSdJwtCredential = {
       id,
+      format: "vc+sd-jwt",
       sdJwt: sdJwtString,
       issuerDid: issuerInfo.issuerDid,
       credentialType,
@@ -157,6 +172,83 @@ export class CredentialManager {
     await store.persistToStorage(this.storage, ns);
 
     return credential;
+  }
+
+  /**
+   * Store a received mdoc credential.
+   *
+   * `parseIssuerSigned` reads the docType out of the signed MSO rather than
+   * from any wrapper, so a credential cannot claim to be one type while being
+   * signed as another.
+   */
+  async storeMdocCredential(
+    issuerSignedB64u: string,
+    issuerInfo: IssuerInfo,
+  ): Promise<StoredMdocCredential> {
+    const ns = this.requireNamespace();
+    const parsed = parseIssuerSigned(issuerSignedB64u);
+
+    const elements: MdocElementMeta[] = parsed.items
+      .filter((item) => item.namespace !== SOVRA_META_NAMESPACE)
+      .map((item) => ({
+        namespace: item.namespace,
+        elementIdentifier: item.elementIdentifier,
+        claimKey: claimKeyFor(item, parsed.namespace),
+        // Frozen by the issuer at issuance, so a later schema revision cannot
+        // change what this credential is required to disclose. Looked up under
+        // the item's own namespace: an element identifier is only unique
+        // within one.
+        mandatory: (parsed.mandatoryElements[item.namespace] ?? []).includes(
+          item.elementIdentifier,
+        ),
+      }));
+
+    const id = newCredentialId();
+    const logo = await this.captureLogo(id, issuerInfo.logo);
+    const display = logo
+      ? { ...(issuerInfo.display ?? {}), logo }
+      : issuerInfo.display;
+
+    const credential: StoredMdocCredential = {
+      id,
+      format: "mso_mdoc",
+      issuerSigned: issuerSignedB64u,
+      docType: parsed.docType,
+      // credentialType carries the docType so type-based lookups, colours and
+      // categories work across both formats off one field.
+      credentialType: parsed.docType,
+      issuerDid: issuerInfo.issuerDid,
+      issuerName: issuerInfo.issuerName,
+      issuedAt: parsed.validFrom,
+      expiresAt: parsed.validUntil,
+      claims: flattenClaims(parsed.items, parsed.namespace),
+      elements,
+      ...(display ? { display } : {}),
+      ...(issuerInfo.claimLabels ? { claimLabels: issuerInfo.claimLabels } : {}),
+    };
+
+    const store = this.credentialStore.getState();
+    store.addCredential(credential);
+    await store.persistToStorage(this.storage, ns);
+
+    return credential;
+  }
+
+  /**
+   * The mdoc elements to disclose for a set of requested claim keys.
+   *
+   * Every mandatory element is unioned in regardless of what was requested or
+   * deselected. This is the enforcement point for the schema's
+   * `disclosable: false`; the disabled toggle in the approval screen is a
+   * courtesy on top of it.
+   */
+  selectMdocElements(
+    credential: StoredMdocCredential,
+    requestedClaimKeys: string[],
+  ): MdocElementMeta[] {
+    return credential.elements.filter(
+      (element) => element.mandatory || requestedClaimKeys.includes(element.claimKey),
+    );
   }
 
   /**
@@ -190,7 +282,7 @@ export class CredentialManager {
 
   /** Select disclosure strings for the requested claim names. */
   selectDisclosures(
-    credential: StoredCredential,
+    credential: StoredSdJwtCredential,
     requestedClaims: string[],
   ): string[] {
     const parsed = this.parseSDJwt(credential.sdJwt);
@@ -204,7 +296,7 @@ export class CredentialManager {
    * Format: issuerJwt~disclosure1~disclosure2~...~kbJwt
    */
   buildPresentationSDJwt(
-    credential: StoredCredential,
+    credential: StoredSdJwtCredential,
     selectedDisclosures: string[],
     kbJwt: string,
   ): string {

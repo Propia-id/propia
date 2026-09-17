@@ -435,12 +435,21 @@ defmodule Sovra.Verification.VerifierTest do
       assert s.error == "missing_required_claim:degree"
     end
 
-    test "format mismatch -> format_mismatch" do
+    test "an SD-JWT presented against an mdoc query is rejected as malformed" do
+      # `mso_mdoc` used to fall through to the format_mismatch branch. It now
+      # routes to the mdoc pipeline, which cannot parse an SD-JWT string — so
+      # this asserts the *pipeline dispatch*, not a format comparison. An
+      # unsupported format is now rejected at create_session; see
+      # verification_test.exs.
       ctx = setup_session()
 
       query = %{
         "credentials" => [
-          %{"id" => "x", "format" => "mso_mdoc", "claims" => [%{"path" => ["a"]}]}
+          %{
+            "id" => "x",
+            "format" => "mso_mdoc",
+            "claims" => [%{"path" => ["ns", "a"]}]
+          }
         ]
       }
 
@@ -467,7 +476,7 @@ defmodule Sovra.Verification.VerifierTest do
                )
 
       assert s.status == "failed"
-      assert String.starts_with?(s.error, "format_mismatch")
+      assert s.error == "malformed_vp_token"
     end
 
     test "resolver returns a different key -> holder_key_mismatch" do

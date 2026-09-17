@@ -20,7 +20,7 @@
   "scripts": {
     "build": "rm -rf dist tsconfig.tsbuildinfo && tsc -p tsconfig.json",
     "prepack": "pnpm build",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run"
   },
   "publishConfig": {
@@ -35,7 +35,10 @@
     }
   },
   "dependencies": {
-    "@sovrahq/holder-core": "workspace:*",
-    "@noble/curves": "^1.8.0"
+    "@noble/curves": "^1.8.0",
+    "@sovrahq/holder-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@animo-id/mdoc": "0.5.2"
   }
 }

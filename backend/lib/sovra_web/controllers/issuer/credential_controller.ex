@@ -68,7 +68,8 @@ defmodule SovraWeb.Issuer.CredentialController do
   operation(:issue,
     summary: "Issue credential",
     description:
-      "Issue a verifiable credential in SD-JWT format. Requires a Bearer access token obtained from the token endpoint.",
+      "Issue a verifiable credential in the format its schema declares — SD-JWT VC " <>
+        "or ISO 18013-5 mdoc. Requires a Bearer access token obtained from the token endpoint.",
     security: [%{"BearerAuth" => []}],
     request_body:
       {"Credential request", "application/json",
@@ -105,8 +106,17 @@ defmodule SovraWeb.Issuer.CredentialController do
          %OpenApiSpex.Schema{
            type: :object,
            properties: %{
-             credential: %OpenApiSpex.Schema{type: :string, description: "SD-JWT credential"},
-             format: %OpenApiSpex.Schema{type: :string, example: "vc+sd-jwt"}
+             credential: %OpenApiSpex.Schema{
+               type: :string,
+               description:
+                 "The credential, in the format its schema declares: an SD-JWT string " <>
+                   "for `vc+sd-jwt`, or base64url-encoded CBOR `IssuerSigned` for `mso_mdoc`."
+             },
+             format: %OpenApiSpex.Schema{
+               type: :string,
+               enum: ["vc+sd-jwt", "mso_mdoc"],
+               example: "vc+sd-jwt"
+             }
            }
          }},
       400 =>
@@ -185,8 +195,8 @@ defmodule SovraWeb.Issuer.CredentialController do
       conn |> put_status(401) |> json(%{error: "missing_token"})
     else
       case Issuer.issue_credential(access_token, credential_configuration_id, proof) do
-        {:ok, sd_jwt} ->
-          json(conn, %{credential: sd_jwt, format: "vc+sd-jwt"})
+        {:ok, %{credential: credential, format: format}} ->
+          json(conn, %{credential: credential, format: format})
 
         {:error, :invalid_token} ->
           conn |> put_status(401) |> json(%{error: "invalid_token"})

@@ -109,9 +109,11 @@ defmodule Sovra.Verification do
   Returns `{:ok, %{session, authorization_request_uri}}` on success, or one of:
   `{:error, :workspace_not_found}`, `{:error, :workspace_inactive}`,
   `{:error, :organization_inactive}`, `{:error, :invalid_dcql_query}`,
-  `{:error, %Ecto.Changeset{}}`, or whatever the signer returns when the
-  request object cannot be signed — a session with no signed request is no
-  session at all, so nothing is persisted in that case.
+  `{:error, :unsupported_dcql_format}`, `{:error, :mixed_dcql_formats}`,
+  `{:error, :invalid_mdoc_claim_path}`, `{:error, %Ecto.Changeset{}}`, or
+  whatever the signer returns when the request object cannot be signed — a
+  session with no signed request is no session at all, so nothing is persisted
+  in that case.
   """
   def create_session(workspace_id, dcql_query, opts \\ []) when is_map(dcql_query) do
     ttl = Keyword.get(opts, :ttl_seconds, @session_ttl_seconds)
@@ -176,8 +178,72 @@ defmodule Sovra.Verification do
     |> Repo.insert()
   end
 
-  defp validate_dcql(%{"credentials" => [_ | _]}), do: :ok
+  @dcql_formats ~w(vc+sd-jwt dc+sd-jwt mso_mdoc)
+
+  # Validating the format here turns an unsupported query from a silent
+  # `presentation.failed` webhook — arriving long after the verifier moved on —
+  # into a synchronous 400 on the request that introduced it.
+  defp validate_dcql(%{"credentials" => [_ | _] = credentials}) do
+    with :ok <- validate_dcql_formats(credentials),
+         :ok <- validate_single_format_family(credentials),
+         :ok <- validate_mdoc_claim_paths(credentials) do
+      :ok
+    end
+  end
+
   defp validate_dcql(_), do: {:error, :invalid_dcql_query}
+
+  # An mdoc claim path is `[namespace, element_identifier]` — the one spelling
+  # OpenID4VP 1.0 gives it. Checked here for the same reason as the format: a
+  # query the caller cannot fix should fail on the request that introduced it,
+  # not as a presentation the holder has already scanned for.
+  defp validate_mdoc_claim_paths(credentials) do
+    credentials
+    |> Enum.filter(&(is_map(&1) and Map.get(&1, "format") == "mso_mdoc"))
+    |> Enum.all?(&valid_mdoc_claims?/1)
+    |> case do
+      true -> :ok
+      false -> {:error, :invalid_mdoc_claim_path}
+    end
+  end
+
+  # No `claims` key requests the whole credential, which is a valid query.
+  defp valid_mdoc_claims?(entry) do
+    case Map.get(entry, "claims") do
+      nil -> true
+      claims when is_list(claims) -> Enum.all?(claims, &valid_mdoc_claim_path?/1)
+      _ -> false
+    end
+  end
+
+  defp valid_mdoc_claim_path?(%{"path" => [namespace, element_id]})
+       when is_binary(namespace) and is_binary(element_id),
+       do: true
+
+  defp valid_mdoc_claim_path?(_), do: false
+
+  defp validate_dcql_formats(credentials) do
+    if Enum.all?(credentials, &(is_map(&1) and Map.get(&1, "format") in @dcql_formats)) do
+      :ok
+    else
+      {:error, :unsupported_dcql_format}
+    end
+  end
+
+  # A single presentation carries one credential in one format, so a query
+  # mixing families could never be satisfied — failing at creation says so
+  # while the verifier can still fix it.
+  defp validate_single_format_family(credentials) do
+    families = credentials |> Enum.map(&format_family(&1["format"])) |> Enum.uniq()
+
+    case families do
+      [_single] -> :ok
+      _ -> {:error, :mixed_dcql_formats}
+    end
+  end
+
+  defp format_family("mso_mdoc"), do: :mdoc
+  defp format_family(_), do: :sd_jwt
 
   @doc """
   Build the pass-by-value OID4VP URI for a session: the signed request object

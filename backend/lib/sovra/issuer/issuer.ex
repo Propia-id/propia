@@ -9,11 +9,12 @@ defmodule Sovra.Issuer do
   use Sovra.Log
 
   alias Sovra.Issuer.{
+    CredentialBuilder,
     CredentialSchema,
     CredentialDesign,
     CredentialOffer,
     IssuedCredential,
-    SDJWT,
+    MdocElement,
     StatusList,
     TokenHash,
     ClaimUtils
@@ -39,6 +40,7 @@ defmodule Sovra.Issuer do
 
     with {:ok, workspace} <- Workspaces.get_workspace(workspace_id),
          :ok <- Workspaces.assert_provisioned(workspace),
+         :ok <- assert_doc_type_allowed(attrs, workspace),
          {:ok, schema} <- CredentialSchema.create_changeset(attrs) |> Repo.insert() do
       # No schema_version: create_schema/2 always produces version 1 — the
       # controller never passes one and revisions go through
@@ -192,6 +194,17 @@ defmodule Sovra.Issuer do
         # kind is immutable across revisions: a document schema stays a document
         # schema, otherwise a revision could silently change how it is issued.
         "kind" => prior.kind,
+        # format likewise, and more sharply: the docType derives from the schema
+        # and is signed into every credential already in a holder's wallet, so a
+        # revision that changed it would orphan them.
+        "format" => prior.format,
+        # And the docType and namespace themselves, for that same reason now
+        # that they can be named rather than only derived. Pinning them also
+        # closes a bypass: a revision that introduced an ISO docType would
+        # otherwise never meet the document-signer check `create_schema/2`
+        # applies, because a revision is not a creation.
+        "doc_type" => prior.doc_type,
+        "namespace" => prior.namespace,
         "version" => prior.version + 1
       })
 
@@ -446,6 +459,18 @@ defmodule Sovra.Issuer do
     |> Repo.all()
   end
 
+  # `create_schema/2` has attrs, not a schema, so the same rule
+  # `CredentialSchema.assert_can_issue/2` enforces at issuance is applied to the
+  # attrs here. Refusing at creation is what keeps the failure attached to the
+  # operator who chose the docType, rather than to the citizen whose issuance
+  # fails months later.
+  defp assert_doc_type_allowed(attrs, workspace) do
+    CredentialSchema.assert_can_issue(
+      %CredentialSchema{doc_type: Map.get(attrs, :doc_type)},
+      workspace
+    )
+  end
+
   # ── Credential Offer ───────────────────────────────────
 
   def create_credential_offer(workspace_id, schema_id, claims) do
@@ -453,7 +478,18 @@ defmodule Sovra.Issuer do
          :ok <- Workspaces.assert_provisioned(workspace),
          {:ok, schema} <- get_schema(workspace_id, schema_id),
          :ok <- assert_kind(schema, "credential"),
-         :ok <- validate_claims(schema, claims) do
+         # An ISO docType is trusted through the workspace's certificate chain,
+         # so issuing under one without a registered document signer produces a
+         # credential that resolves to nobody. Checked again here rather than
+         # only at schema creation: the schema outlives the check, and a
+         # workspace can hold one whose signer was never registered.
+         :ok <- CredentialSchema.assert_can_issue(schema, workspace),
+         :ok <- validate_claims(schema, claims),
+         # Fails here rather than at delivery: a value with no deterministic
+         # CBOR encoding would otherwise surface as a 500 in the middle of the
+         # holder's wallet flow, long after the operator who supplied it has
+         # gone. A no-op for sd-jwt schemas.
+         :ok <- MdocElement.encodable?(schema, claims) do
       {plaintext_code, code_hash} = TokenHash.generate_and_hash(32)
       offer_id = Ecto.UUID.generate()
 
@@ -495,7 +531,7 @@ defmodule Sovra.Issuer do
           offer_uri = build_offer_uri(plaintext_code, offer, schema, workspace)
 
           credential_preview =
-            SDJWT.build_preview(workspace, schema, claims,
+            CredentialBuilder.preview(workspace, schema, claims,
               status_list_index: offer.status_list_index
             )
 
@@ -783,8 +819,9 @@ defmodule Sovra.Issuer do
         else
           with {:ok, schema} <- get_schema_by_id(offer.schema_id),
                :ok <- ensure_configuration_matches(schema, credential_configuration_id),
-               {:ok, %{holder_did: holder_did}} <- verify_proof(proof, offer.c_nonce) do
-            deliver_credential(offer, holder_did)
+               {:ok, %{holder_did: holder_did, holder_key: holder_key}} <-
+                 verify_proof(proof, offer.c_nonce) do
+            deliver_credential(offer, holder_did, holder_key)
           else
             {:error, reason} ->
               reject_request(:credential, offer.id, offer.issuer_id, reason)
@@ -799,7 +836,7 @@ defmodule Sovra.Issuer do
   defp ensure_configuration_matches(%{credential_type: type}, type) when is_binary(type), do: :ok
   defp ensure_configuration_matches(_, _), do: {:error, :invalid_credential_request}
 
-  defp deliver_credential(offer, holder_did) do
+  defp deliver_credential(offer, holder_did, holder_key) do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
 
     # No assert_provisioned here: an offer can only exist if the workspace
@@ -809,17 +846,11 @@ defmodule Sovra.Issuer do
     # endpoint must not return non-OID4VCI error codes.
     with {:ok, workspace} <- Workspaces.get_workspace(offer.issuer_id),
          {:ok, schema} <- get_schema_by_id(offer.schema_id),
-         {:ok, sd_jwt} <-
-           SDJWT.build(workspace, schema, offer.claims, holder_did,
-             status_list_index: offer.status_list_index
+         {:ok, %{credential: credential, format: format, expires_at: expires_at} = built} <-
+           CredentialBuilder.build(workspace, schema, offer.claims, holder_did, holder_key,
+             status_list_index: offer.status_list_index,
+             now: now
            ) do
-      # Extract exp from the freshly-built SD-JWT; absent when it never expires.
-      [jwt_part | _] = String.split(sd_jwt, "~")
-      [_, payload_b64 | _] = String.split(jwt_part, ".")
-      {:ok, payload_json} = Base.url_decode64(payload_b64, padding: false)
-      {:ok, payload} = Jason.decode(payload_json)
-      expires_at = unix_to_datetime(payload["exp"])
-
       # Reuse offer.id as the IssuedCredential's primary key so external
       # integrators have a single stable `credential_id` from offer creation
       # through webhook delivery and lifecycle changes.
@@ -854,17 +885,22 @@ defmodule Sovra.Issuer do
                 )
 
                 {:ok, _} =
-                  Sovra.Webhooks.enqueue(offer.issuer_id, "credential.issued", %{
-                    "credential_id" => cred.id,
-                    "holder_did" => cred.holder_did,
-                    "schema_type" => schema.credential_type,
-                    "issued_at" => DateTime.to_iso8601(cred.issued_at),
-                    "expires_at" => cred.expires_at && DateTime.to_iso8601(cred.expires_at),
-                    "credential" => sd_jwt,
-                    "format" => "vc+sd-jwt"
-                  })
+                  Sovra.Webhooks.enqueue(
+                    offer.issuer_id,
+                    "credential.issued",
+                    %{
+                      "credential_id" => cred.id,
+                      "holder_did" => cred.holder_did,
+                      "schema_type" => schema.credential_type,
+                      "issued_at" => DateTime.to_iso8601(cred.issued_at),
+                      "expires_at" => cred.expires_at && DateTime.to_iso8601(cred.expires_at),
+                      "credential" => credential,
+                      "format" => format
+                    }
+                    |> maybe_put_doc_type(built)
+                  )
 
-                sd_jwt
+                %{credential: credential, format: format}
 
               {:error, reason} ->
                 Repo.rollback(reason)
@@ -877,12 +913,12 @@ defmodule Sovra.Issuer do
     end
   end
 
-  defp unix_to_datetime(nil), do: nil
+  # An additive field: integrators already branch on `format`, and an sd-jwt
+  # payload gains nothing from a null key.
+  defp maybe_put_doc_type(payload, %{doc_type: doc_type}) when is_binary(doc_type),
+    do: Map.put(payload, "doc_type", doc_type)
 
-  defp unix_to_datetime(seconds) when is_integer(seconds) do
-    {:ok, dt} = DateTime.from_unix(seconds)
-    DateTime.truncate(dt, :second)
-  end
+  defp maybe_put_doc_type(payload, _built), do: payload
 
   # ── Proof Verification ─────────────────────────────────
 
@@ -902,7 +938,12 @@ defmodule Sovra.Issuer do
          {:ok, {pub_x, pub_y}} <- extract_jwk_coordinates(header["jwk"]),
          signing_input = header_b64 <> "." <> payload_b64,
          true <- verify_proof_sig(header["alg"], signing_input, sig_b64, {pub_x, pub_y}) do
-      {:ok, %{holder_did: holder_did}}
+      # The coordinates travel with the DID because mdoc binds to the key
+      # itself (MSO.deviceKeyInfo) rather than to a DID reference the way
+      # SD-JWT's `cnf` does. Both proof algorithms carry the same P-256 jwk,
+      # which is exactly why the holder's existing passkey can serve as the
+      # mdoc device key.
+      {:ok, %{holder_did: holder_did, holder_key: {pub_x, pub_y}}}
     else
       _ -> {:error, :invalid_proof}
     end

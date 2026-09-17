@@ -6,6 +6,7 @@ defmodule SovraWeb.Issuer.AdminController do
   alias Sovra.Accounts
   alias Sovra.Documents
   alias Sovra.Issuer
+  alias Sovra.Mdoc.DocType
   alias Sovra.Workspaces
 
   tags(["Issuer Admin"])
@@ -109,6 +110,16 @@ defmodule SovraWeb.Issuer.AdminController do
                "`credential` is issued to a wallet over OID4VCI and bound to a holder key. " <>
                  "`document` is signed directly by the issuer, with no holder, and is the " <>
                  "only kind `POST /dashboard/issuer/documents` accepts."
+           },
+           format: %OpenApiSpex.Schema{
+             type: :string,
+             enum: ["vc+sd-jwt", "mso_mdoc"],
+             default: "vc+sd-jwt",
+             description:
+               "Wire format. `vc+sd-jwt` is SD-JWT VC (JSON/JWT). `mso_mdoc` is " <>
+                 "ISO 18013-5 CBOR, is available only for `credential` schemas, and " <>
+                 "derives a read-only `doc_type` from the workspace and `schema_id`. " <>
+                 "Fixed at creation — a revision cannot change it."
            }
          }
        }},
@@ -123,7 +134,16 @@ defmodule SovraWeb.Issuer.AdminController do
              credential_type: %OpenApiSpex.Schema{type: :string},
              name: %OpenApiSpex.Schema{type: :string},
              claims: %OpenApiSpex.Schema{type: :array, items: %OpenApiSpex.Schema{type: :object}},
-             validity_period: %OpenApiSpex.Schema{type: :string, nullable: true}
+             validity_period: %OpenApiSpex.Schema{type: :string, nullable: true},
+             format: %OpenApiSpex.Schema{type: :string, enum: ["vc+sd-jwt", "mso_mdoc"]},
+             doc_type: %OpenApiSpex.Schema{
+               type: :string,
+               nullable: true,
+               description:
+                 "Generated docType, for `mso_mdoc` schemas only. Null otherwise, and " <>
+                   "null until the workspace finishes provisioning.",
+               example: "io.sovra.0xab34...09f9.membership-card.1"
+             }
            }
          }},
       422 =>
@@ -444,7 +464,13 @@ defmodule SovraWeb.Issuer.AdminController do
       name: params["name"],
       claims: normalize_claims(params["claims"]),
       validity_period: validity_period,
-      kind: params["kind"] || "credential"
+      kind: params["kind"] || "credential",
+      format: params["format"] || "vc+sd-jwt",
+      # Both nil for a generated docType, which is every schema an operator has
+      # not deliberately named. Supplying one is how a workspace issues under an
+      # ISO document type, and requires a registered document signer.
+      doc_type: params["doc_type"],
+      namespace: params["namespace"]
     }
 
     case Issuer.create_schema(workspace_id, attrs) do
@@ -458,7 +484,10 @@ defmodule SovraWeb.Issuer.AdminController do
           name: schema.name,
           claims: schema.claims,
           validity_period: schema.validity_period,
-          kind: schema.kind
+          kind: schema.kind,
+          format: schema.format,
+          doc_type: doc_type_for(workspace_id, schema),
+          namespace: namespace_for(workspace_id, schema)
         })
 
       {:error, %Ecto.Changeset{} = changeset} ->
@@ -468,6 +497,9 @@ defmodule SovraWeb.Issuer.AdminController do
 
       {:error, :workspace_not_provisioned} ->
         conn |> put_status(409) |> json(%{error: "workspace_not_provisioned"})
+
+      {:error, :document_signer_required} ->
+        conn |> put_status(409) |> json(%{error: "document_signer_required"})
 
       {:error, _reason} ->
         conn |> put_status(500) |> json(%{error: "internal_error"})
@@ -563,6 +595,8 @@ defmodule SovraWeb.Issuer.AdminController do
     schemas = Issuer.list_schemas(workspace_id)
     # One query for every layout, rather than one per schema.
     layouts = Documents.layouts_for(Enum.map(schemas, & &1.id))
+    # Likewise one workspace lookup, since every docType shares its prefix.
+    workspace = load_workspace(workspace_id)
 
     json(conn, %{
       schemas:
@@ -576,6 +610,8 @@ defmodule SovraWeb.Issuer.AdminController do
             validity_period: s.validity_period,
             version: s.version,
             kind: s.kind,
+            format: s.format,
+            doc_type: workspace && DocType.build(workspace, s),
             layout: Map.get(layouts, s.id)
           }
         end)
@@ -605,7 +641,9 @@ defmodule SovraWeb.Issuer.AdminController do
             claims: schema.claims,
             validity_period: schema.validity_period,
             version: schema.version,
-            kind: schema.kind
+            kind: schema.kind,
+            format: schema.format,
+            doc_type: doc_type_for(workspace_id, schema)
           })
 
         {:error, :schema_not_found} ->
@@ -961,6 +999,33 @@ defmodule SovraWeb.Issuer.AdminController do
         name: offer.schema.name
       }
     }
+  end
+
+  # The docType is derived, never stored — see `Sovra.Mdoc.DocType`. Both
+  # single-schema responses pay one workspace lookup for it; `list_schemas/2`
+  # hoists that lookup out of the loop instead.
+  defp doc_type_for(workspace_id, schema) do
+    case load_workspace(workspace_id) do
+      nil -> nil
+      workspace -> DocType.build(workspace, schema)
+    end
+  end
+
+  # Equal to the docType for every generated schema, and different only for one
+  # that named its own — which is exactly when a caller needs to be told, since
+  # that is the string its DCQL claim paths have to use.
+  defp namespace_for(workspace_id, schema) do
+    case load_workspace(workspace_id) do
+      nil -> nil
+      workspace -> DocType.namespace(workspace, schema)
+    end
+  end
+
+  defp load_workspace(workspace_id) do
+    case Workspaces.get_workspace(workspace_id) do
+      {:ok, workspace} -> workspace
+      _ -> nil
+    end
   end
 
   # How long a credential stays valid is never guessed: the caller states it or

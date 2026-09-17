@@ -97,16 +97,21 @@ export function p256GetPublicKey(privateKey: Uint8Array): Uint8Array {
  * Verify a P256 signature in raw `r||s` (64-byte) form against a message hash
  * and the public key's x/y coordinates.
  *
- * Only the canonical low-S form is accepted: ECDSA admits both `(r, s)` and
- * `(r, n - s)` for the same hash and key, and everything Sovra signs
- * normalizes to low-S, so accepting the malleable twin would let one logical
- * signature travel under two distinct byte-shapes.
+ * Low-S by default: ECDSA admits both `(r, s)` and `(r, n - s)` for the same
+ * hash and key, and everything Sovra signs normalizes to low-S, so accepting
+ * the malleable twin would let one logical signature travel under two distinct
+ * byte-shapes. JOSE requires that canonical form.
+ *
+ * `lowS` is a parameter rather than a constant because it genuinely differs by
+ * caller: a WebAuthn authenticator may emit either form, and rejecting high-S
+ * there would fail legitimate passkeys. Pass `false` only for that.
  */
 export function p256Verify(
   messageHash: Uint8Array,
   signature: Uint8Array,
   x: Uint8Array,
   y: Uint8Array,
+  lowS = true,
 ): boolean {
   if (signature.length !== 64) return false;
 
@@ -115,7 +120,7 @@ export function p256Verify(
       signature,
       messageHash,
       concatBytes(new Uint8Array([0x04]), x, y),
-      { lowS: true, format: "compact" },
+      { lowS, format: "compact" },
     );
   } catch {
     return false;

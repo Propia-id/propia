@@ -50,10 +50,24 @@ export interface CredentialDisplayMetadata {
   logo?: StoredLogo;
 }
 
-export interface StoredCredential {
+export type CredentialFormat = "vc+sd-jwt" | "mso_mdoc";
+
+/**
+ * Fields every credential has, whatever its wire format.
+ *
+ * `claims` stays a flat, display-ready map on the base type on purpose. An
+ * mdoc's data is namespaced, but flattening it here is what lets every card,
+ * search box and detail view keep working unchanged — the format is plumbing a
+ * holder should never have to see. Namespaced element metadata lives on the
+ * mdoc variant for the code that genuinely needs it.
+ *
+ * Binary and tagged CBOR values are normalised into display-safe forms before
+ * they reach `claims`; raw bytes stay in the credential blob.
+ */
+interface StoredCredentialBase {
   id: string;
-  sdJwt: string;
   issuerDid: string;
+  /** The `vct` for SD-JWT, the docType for mdoc. One field, so lookups by type work for both. */
   credentialType: string;
   issuerName: string;
   issuedAt: number;
@@ -70,6 +84,39 @@ export interface StoredCredential {
    * Sparse: only claims the issuer actually labelled appear.
    */
   claimLabels?: Record<string, string>;
+}
+
+export interface StoredSdJwtCredential extends StoredCredentialBase {
+  format: "vc+sd-jwt";
+  sdJwt: string;
+}
+
+/** One data element inside an mdoc namespace. */
+export interface MdocElementMeta {
+  namespace: string;
+  elementIdentifier: string;
+  /** The key this element was flattened to in `claims`. */
+  claimKey: string;
+  /** From the schema's `disclosable: false` — the holder may not withhold it. */
+  mandatory: boolean;
+}
+
+export interface StoredMdocCredential extends StoredCredentialBase {
+  format: "mso_mdoc";
+  /** base64url(CBOR) of the OID4VCI `IssuerSigned` structure. */
+  issuerSigned: string;
+  docType: string;
+  elements: MdocElementMeta[];
+}
+
+export type StoredCredential = StoredSdJwtCredential | StoredMdocCredential;
+
+export function isSdJwt(c: StoredCredential): c is StoredSdJwtCredential {
+  return c.format === "vc+sd-jwt";
+}
+
+export function isMdoc(c: StoredCredential): c is StoredMdocCredential {
+  return c.format === "mso_mdoc";
 }
 
 export interface CredentialState {
@@ -94,6 +141,46 @@ export type CredentialStore = CredentialState & CredentialActions;
 const indexKey = (namespace: string) => `sovra.credentials.${namespace}.index`;
 export const credentialKey = (namespace: string, id: string) =>
   `sovra.credential.${namespace}.${id}`;
+
+/**
+ * What the index holds: everything except the credential blob, which is stored
+ * under its own key.
+ *
+ * Spelled out per variant rather than as `Omit<StoredCredential, "sdJwt">`.
+ * That would look correct and silently lose data: `keyof` over a union yields
+ * only the keys *common* to its members, so the `Omit` would collapse to the
+ * base fields and drop `docType` and `elements` — while still type-checking.
+ *
+ * `format` is optional on the SD-JWT variant, and that single optionality is
+ * the whole back-compat story. Every record written before mdoc existed lacks
+ * the field, so `undefined` reads as `"vc+sd-jwt"`. No version marker, no
+ * rewrite pass: legacy entries pick up the field on the next persist.
+ */
+type PersistedSdJwt = Omit<StoredSdJwtCredential, "sdJwt" | "format"> & {
+  format?: "vc+sd-jwt";
+};
+type PersistedMdoc = Omit<StoredMdocCredential, "issuerSigned">;
+type PersistedEntry = PersistedSdJwt | PersistedMdoc;
+
+/** The blob stored under the credential's own key. */
+function blobFor(cred: StoredCredential): string {
+  return isSdJwt(cred) ? cred.sdJwt : cred.issuerSigned;
+}
+
+function stripBlob(cred: StoredCredential): PersistedEntry {
+  if (isSdJwt(cred)) {
+    const { sdJwt: _sdJwt, ...rest } = cred;
+    return rest;
+  }
+  const { issuerSigned: _issuerSigned, ...rest } = cred;
+  return rest;
+}
+
+function hydrate(entry: PersistedEntry, blob: string): StoredCredential {
+  return entry.format === "mso_mdoc"
+    ? { ...entry, issuerSigned: blob }
+    : { ...entry, format: "vc+sd-jwt", sdJwt: blob };
+}
 
 /**
  * Asset-store key for one credential's captured logo.
@@ -138,14 +225,20 @@ export function createCredentialStore() {
       }
 
       try {
-        const index: Array<Omit<StoredCredential, "sdJwt">> =
-          JSON.parse(indexRaw);
+        const index: PersistedEntry[] = JSON.parse(indexRaw);
         const credentials: StoredCredential[] = [];
 
         for (const entry of index) {
-          const sdJwt = await storage.get(credentialKey(namespace, entry.id));
-          if (sdJwt) {
-            credentials.push({ ...entry, sdJwt });
+          const blob = await storage.get(credentialKey(namespace, entry.id));
+          if (blob) {
+            credentials.push(hydrate(entry, blob));
+          } else {
+            // An index entry whose blob is gone is unrecoverable, but dropping
+            // it silently makes "my credential vanished" impossible to
+            // diagnose from a log.
+            console.warn(
+              `[credentials] index entry ${entry.id} has no stored blob — skipping`,
+            );
           }
         }
 
@@ -160,13 +253,15 @@ export function createCredentialStore() {
     async persistToStorage(storage, namespace) {
       const { credentials } = get();
 
-      // Store index (without raw SD-JWT to keep index small)
-      const index = credentials.map(({ sdJwt: _, ...rest }) => rest);
-      await storage.set(indexKey(namespace), JSON.stringify(index));
+      // The index carries metadata only; each credential blob is stored under
+      // its own key so the index stays small.
+      await storage.set(
+        indexKey(namespace),
+        JSON.stringify(credentials.map(stripBlob)),
+      );
 
-      // Store each SD-JWT separately
       for (const cred of credentials) {
-        await storage.set(credentialKey(namespace, cred.id), cred.sdJwt);
+        await storage.set(credentialKey(namespace, cred.id), blobFor(cred));
       }
     },
 

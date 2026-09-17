@@ -22,7 +22,7 @@ defmodule Sovra.VerificationTest do
       "credentials" => [
         %{
           "id" => "diploma",
-          "format" => "jwt_vc_json",
+          "format" => "vc+sd-jwt",
           "claims" => [%{"path" => ["studentName"]}, %{"path" => ["degree"]}]
         }
       ]
@@ -60,6 +60,91 @@ defmodule Sovra.VerificationTest do
     test "returns :invalid_dcql_query when DCQL is empty" do
       %{workspace: ws} = create_workspace()
       assert {:error, :invalid_dcql_query} = Verification.create_session(ws.id, %{})
+    end
+
+    test "rejects a format we cannot present" do
+      # Previously accepted and then failed at presentation time as a
+      # `presentation.failed` webhook, long after the verifier had moved on.
+      %{workspace: ws} = fixture_workspace()
+      ws = provision_workspace(ws)
+
+      query = %{"credentials" => [%{"id" => "x", "format" => "jwt_vc_json"}]}
+
+      assert {:error, :unsupported_dcql_format} = Verification.create_session(ws.id, query)
+    end
+
+    test "rejects a credential entry with no format at all" do
+      %{workspace: ws} = fixture_workspace()
+      ws = provision_workspace(ws)
+
+      query = %{"credentials" => [%{"id" => "x", "claims" => []}]}
+
+      assert {:error, :unsupported_dcql_format} = Verification.create_session(ws.id, query)
+    end
+
+    test "rejects a query mixing sd-jwt and mdoc" do
+      # One presentation carries one credential in one format, so such a query
+      # could never be satisfied.
+      %{workspace: ws} = fixture_workspace()
+      ws = provision_workspace(ws)
+
+      query = %{
+        "credentials" => [
+          %{"id" => "a", "format" => "vc+sd-jwt"},
+          %{"id" => "b", "format" => "mso_mdoc"}
+        ]
+      }
+
+      assert {:error, :mixed_dcql_formats} = Verification.create_session(ws.id, query)
+    end
+
+    test "rejects the earlier draft's namespace/claim_name claim path" do
+      # OpenID4VP 1.0 spells an mdoc claim path `path: [namespace, element]`.
+      # Supporting the superseded form alongside it would leave two ways to say
+      # one thing, and a caller still emitting the old one would look fine right
+      # up until a holder's presentation failed.
+      %{workspace: ws} = fixture_workspace()
+      ws = provision_workspace(ws)
+
+      query = %{
+        "credentials" => [
+          %{
+            "id" => "a",
+            "format" => "mso_mdoc",
+            "claims" => [%{"namespace" => "io.sovra.0xabc.card.1", "claim_name" => "tier"}]
+          }
+        ]
+      }
+
+      assert {:error, :invalid_mdoc_claim_path} = Verification.create_session(ws.id, query)
+    end
+
+    test "accepts an mdoc query with no claims, which requests the whole credential" do
+      %{workspace: ws} = fixture_workspace()
+      ws = provision_workspace(ws)
+
+      query = %{"credentials" => [%{"id" => "a", "format" => "mso_mdoc"}]}
+
+      assert {:ok, _} = Verification.create_session(ws.id, query)
+    end
+
+    test "accepts an mdoc query" do
+      %{workspace: ws} = fixture_workspace()
+      ws = provision_workspace(ws)
+
+      query = %{
+        "credentials" => [
+          %{
+            "id" => "licence",
+            "format" => "mso_mdoc",
+            "meta" => %{"doctype_value" => "io.sovra.0xabc.licence.1"},
+            "claims" => [%{"path" => ["io.sovra.0xabc.licence.1", "given_name"]}]
+          }
+        ]
+      }
+
+      assert {:ok, %{session: session}} = Verification.create_session(ws.id, query)
+      assert session.status == "pending"
     end
 
     test "returns :invalid_dcql_query when credentials list is empty" do

@@ -112,6 +112,51 @@ export function verifyWebAuthn(
   // authenticatorData = rpIdHash(32) || flags(1) || signCount(4) [|| extensions]
   if (authData.length < 37) return false;
 
+  // The KB-JWT's challenge binds to its signing input.
+  return verifyWebAuthnAssertion(
+    { ...assertion, r, s, authenticatorData: authData },
+    new TextEncoder().encode(signingInput),
+    pubKeyX,
+    pubKeyY,
+  );
+}
+
+/** A WebAuthn assertion with its hex fields already decoded. */
+export interface DecodedWebAuthnAssertion {
+  r: Uint8Array;
+  s: Uint8Array;
+  authenticatorData: Uint8Array;
+  client_data_json: string;
+  challenge_index: number;
+  type_index: number;
+}
+
+/**
+ * Verify a WebAuthn assertion against the bytes it should be bound to.
+ *
+ * Shared by the SD-JWT key-binding JWT and by mdoc device authentication, which
+ * differ only in *what* the challenge covers: a JWT signing input in one case,
+ * a COSE `Sig_structure` in the other. Keeping one implementation matters — if
+ * these two drifted, one of them would become exploitable and nothing would say
+ * which.
+ *
+ * The authenticator does not sign `challengeInput`. It signs
+ * `authenticatorData || SHA-256(clientDataJSON)`, and the binding comes from
+ * requiring `base64url(SHA-256(challengeInput))` to appear at the declared
+ * offset inside that signed `clientDataJSON`.
+ */
+export function verifyWebAuthnAssertion(
+  assertion: DecodedWebAuthnAssertion,
+  challengeInput: Uint8Array,
+  pubKeyX: Uint8Array,
+  pubKeyY: Uint8Array,
+): boolean {
+  const { r, s, authenticatorData: authData } = assertion;
+
+  if (r.length !== 32 || s.length !== 32) return false;
+  // authenticatorData = rpIdHash(32) || flags(1) || signCount(4) [|| extensions]
+  if (authData.length < 37) return false;
+
   const cdjBytes = new TextEncoder().encode(assertion.client_data_json);
 
   // The assertion type must be "webauthn.get" at the declared offset.
@@ -119,10 +164,7 @@ export function verifyWebAuthn(
     return false;
   }
 
-  // The challenge must bind to THIS KB-JWT: base64url(SHA256(signingInput)).
-  const expectedChallenge = base64urlEncode(
-    sha256(new TextEncoder().encode(signingInput)),
-  );
+  const expectedChallenge = base64urlEncode(sha256(challengeInput));
   if (!bytesHasAsciiAt(cdjBytes, assertion.challenge_index, `"challenge":"${expectedChallenge}"`)) {
     return false;
   }
@@ -136,15 +178,23 @@ export function verifyWebAuthn(
 
   // Reconstruct the WebAuthn signed message and verify the ECDSA-P256 signature.
   const messageHash = sha256(concatBytes(authData, sha256(cdjBytes)));
-  const sig = concatBytes(r, s);
-  const pubKey = concatBytes(new Uint8Array([0x04]), pubKeyX, pubKeyY);
+  return verifyP256Raw(concatBytes(r, s), messageHash, pubKeyX, pubKeyY, false);
+}
 
-  try {
-    return p256.verify(sig, messageHash, pubKey, { lowS: false, format: "compact" });
-  } catch (e) {
-    console.warn("[verification-sdk] WebAuthn verify error:", e);
-    return false;
-  }
+/**
+ * Raw ECDSA-P256 verification over an already-computed message hash.
+ *
+ * `lowS` differs by caller and is not a detail to unify away: JOSE requires the
+ * canonical low-S form, while a WebAuthn authenticator may emit either.
+ */
+export function verifyP256Raw(
+  signature: Uint8Array,
+  messageHash: Uint8Array,
+  pubKeyX: Uint8Array,
+  pubKeyY: Uint8Array,
+  lowS: boolean,
+): boolean {
+  return p256Verify(messageHash, signature, pubKeyX, pubKeyY, lowS);
 }
 
 /**

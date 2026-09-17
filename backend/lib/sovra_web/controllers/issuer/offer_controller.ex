@@ -104,6 +104,16 @@ defmodule SovraWeb.Issuer.OfferController do
             "this schema is of kind #{kind}; only credential schemas can be offered to a wallet"
         })
 
+      {:error, {:unencodable_claims, keys}} ->
+        conn
+        |> put_status(422)
+        |> json(%{
+          error: "unencodable_claims",
+          details:
+            "these values cannot be encoded as ISO 18013-5 CBOR: #{Enum.join(keys, ", ")}. " <>
+              "Numbers must be whole, dates must be ISO 8601."
+        })
+
       {:error, reason} ->
         conn |> put_status(422) |> json(%{error: to_string(reason)})
     end

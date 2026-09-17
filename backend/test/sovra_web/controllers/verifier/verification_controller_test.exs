@@ -18,7 +18,7 @@ defmodule SovraWeb.Verifier.VerificationControllerTest do
       "credentials" => [
         %{
           "id" => "diploma",
-          "format" => "jwt_vc_json",
+          "format" => "vc+sd-jwt",
           "claims" => [%{"path" => ["studentName"]}]
         }
       ]

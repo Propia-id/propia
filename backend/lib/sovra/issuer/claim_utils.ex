@@ -54,6 +54,53 @@ defmodule Sovra.Issuer.ClaimUtils do
   end
 
   @doc """
+  Parses a schema validity period (`"1y"`, `"6m"`, `"30d"`) into seconds.
+
+  `nil` in, `nil` out: no validity period, so no expiry at all. An unparseable
+  string still falls back to one year.
+
+  Shared by every issuance path — SD-JWT, mdoc, and signed documents — so all
+  three derive expiry the same way.
+  """
+  def parse_validity_period(nil), do: nil
+
+  def parse_validity_period(period) do
+    case Regex.run(~r/^(\d+)(y|m|d)$/, period) do
+      [_, n, "y"] -> String.to_integer(n) * 365 * 86400
+      [_, n, "m"] -> String.to_integer(n) * 30 * 86400
+      [_, n, "d"] -> String.to_integer(n) * 86400
+      _ -> 365 * 86400
+    end
+  end
+
+  @doc """
+  The W3C Bitstring Status List entries for an issued credential.
+
+  Shared by the SD-JWT payload and the mdoc offer preview so the two describe
+  revocation identically. The mdoc credential itself cannot use this shape —
+  it has no `credentialStatus` field — and carries the index in
+  `Sovra.Mdoc.MetaNamespace` instead.
+  """
+  def credential_status_entries(issuer, index) do
+    base = "#{base_url()}/api/v1/status/#{issuer.did}"
+
+    [
+      %{
+        "type" => "BitstringStatusListEntry",
+        "statusPurpose" => "revocation",
+        "statusListIndex" => to_string(index),
+        "statusListCredential" => "#{base}/revocation"
+      },
+      %{
+        "type" => "BitstringStatusListEntry",
+        "statusPurpose" => "suspension",
+        "statusListIndex" => to_string(index),
+        "statusListCredential" => "#{base}/suspension"
+      }
+    ]
+  end
+
+  @doc """
   Returns the issuer service base URL from application config.
   """
   def base_url do

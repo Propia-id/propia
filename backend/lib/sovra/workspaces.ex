@@ -225,6 +225,21 @@ defmodule Sovra.Workspaces do
     end
   end
 
+  @doc """
+  Fetch a workspace by its EOA address.
+
+  The address is what an mdoc docType embeds, so this is how a verifier gets
+  from a credential's signed content to the workspace that issued it. Addresses
+  are stored lowercase (`WorkspaceProvisioningJob.ensure_eoa/1`), and the
+  lookup is exact — a mixed-case address is one this system never issued.
+  """
+  def get_workspace_by_eoa_address(address) when is_binary(address) do
+    case Repo.get_by(Workspace, eoa_address: address) do
+      nil -> {:error, :workspace_not_found}
+      workspace -> {:ok, workspace}
+    end
+  end
+
   def list_workspaces do
     from(w in Workspace,
       order_by: [desc: w.inserted_at],

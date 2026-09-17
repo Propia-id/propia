@@ -1,3 +1,6 @@
+// Type-only, and `x509.ts` imports nothing from here, so there is no cycle.
+import type { DistinguishedName } from "./x509.js";
+
 // ─── Error Codes ─────────────────────────────────────
 
 export const ErrorCode = {
@@ -22,6 +25,12 @@ export const ErrorCode = {
   IAT_INVALID: "IAT_INVALID",
   SUBJECT_KEY_MISMATCH: "SUBJECT_KEY_MISMATCH",
   INVALID_ADDRESS: "INVALID_ADDRESS",
+
+  // mdoc-specific. Additive, so existing consumers are unaffected.
+  MDOC_PARSE_ERROR: "MDOC_PARSE_ERROR",
+  MSO_DIGEST_MISMATCH: "MSO_DIGEST_MISMATCH",
+  DEVICE_AUTH_INVALID: "DEVICE_AUTH_INVALID",
+  DOCTYPE_MISMATCH: "DOCTYPE_MISMATCH",
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -62,9 +71,66 @@ export interface VerificationResult {
   error?: string;
   errorCode?: ErrorCode;
   claims?: Record<string, unknown>;
+  /**
+   * The issuer, as a `did:sovra:` DID, when something actually attests it.
+   *
+   * Present on every SD-JWT result and on an mdoc carrying a generated docType,
+   * where the address selected the key the signature was then verified against
+   * — so a wrong address cannot produce a valid result.
+   *
+   * **Absent on the certificate route**, where nothing attests an address: the
+   * docType names nobody, and an ISO Document Signer Certificate names a key
+   * and a subject, never a Sovra workspace. What that route establishes is in
+   * `issuingAuthority` and `documentSigner`; the address the issuer *claims* is
+   * in `assertedIssuerAddress`.
+   */
   issuer?: string;
   holder?: string;
+  /**
+   * The credential type the issuer registered on-chain — an SD-JWT's `vct`, or
+   * an mdoc's `credential_type` from the Sovra meta namespace.
+   *
+   * Deliberately not an mdoc's docType, which is derived from the schema and is
+   * not what the Issuer Trust Registry is keyed by. That is `docType`.
+   */
   credentialType?: string;
+  /** An mdoc's docType. Absent for SD-JWT, which has no equivalent. */
+  docType?: string;
+  /**
+   * The common name of the IACA root that vouched for the issuer's document
+   * signer, when the credential was trusted through a certificate chain.
+   *
+   * Present only on that route. A verifier holding a trust list needs to be
+   * able to say *which* authority it accepted, not only that one of them was
+   * acceptable — "a licence issued under the Spanish root" is a different
+   * statement from "a licence".
+   */
+  issuingAuthority?: string;
+  /**
+   * The subject of the Document Signer Certificate that signed this credential.
+   *
+   * Present only on the certificate route, and together with `issuingAuthority`
+   * it is the whole of what that route attests about the issuer: this named
+   * signer, vouched for by that named authority.
+   */
+  documentSigner?: DistinguishedName;
+  /**
+   * The workspace address the issuer signed into the Sovra meta namespace, on
+   * the certificate route where nothing attests it.
+   *
+   * Issuer-signed, so it cannot be rewritten in transit — and worth exactly
+   * that much. Any workspace holding a document signer under an authority this
+   * verifier admitted can write any address here, so it names who the issuer
+   * *says* they are, never who they are. `issuingAuthority` and
+   * `documentSigner` are the attested facts.
+   *
+   * It is still what revocation is keyed by, because the bitmaps are keyed by
+   * address and the credential carries no other. That check is therefore only
+   * as good as the issuer: a revocation lookup against an address the issuer
+   * chose is worth nothing against an issuer who chose it in bad faith, and is
+   * correct for every issuer who did not.
+   */
+  assertedIssuerAddress?: string;
   issuedAt?: number;
   expiresAt?: number;
   offlineMode?: boolean;

@@ -13,7 +13,12 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./utils": "./src/utils/index.ts"
+    "./utils": "./src/utils/index.ts",
+    "./cbor": "./src/cbor/index.ts",
+    "./cose": "./src/cose/index.ts",
+    "./mdoc": "./src/mdoc/index.ts",
+    "./test-fixtures": "./test/fixtures.ts",
+    "./test-fixtures/mdoc-issuer-signed.json": "./test/fixtures/mdoc-issuer-signed.json"
   },
   "files": [
     "dist"
@@ -36,6 +41,18 @@
       "./utils": {
         "types": "./dist/utils/index.d.ts",
         "default": "./dist/utils/index.js"
+      },
+      "./cbor": {
+        "types": "./dist/cbor/index.d.ts",
+        "default": "./dist/cbor/index.js"
+      },
+      "./cose": {
+        "types": "./dist/cose/index.d.ts",
+        "default": "./dist/cose/index.js"
+      },
+      "./mdoc": {
+        "types": "./dist/mdoc/index.d.ts",
+        "default": "./dist/mdoc/index.js"
       }
     }
   },

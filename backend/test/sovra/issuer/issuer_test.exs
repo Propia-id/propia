@@ -126,7 +126,7 @@ defmodule Sovra.IssuerTest do
 
       {:ok, token_data} = Issuer.exchange_token(result.pre_authorized_code)
 
-      {:ok, sd_jwt} =
+      {:ok, %{credential: sd_jwt, format: "vc+sd-jwt"}} =
         Issuer.issue_credential(
           token_data.access_token,
           schema.credential_type,
@@ -151,7 +151,7 @@ defmodule Sovra.IssuerTest do
 
       {:ok, token_data} = Issuer.exchange_token(result.pre_authorized_code)
 
-      {:ok, sd_jwt} =
+      {:ok, %{credential: sd_jwt, format: "vc+sd-jwt"}} =
         Issuer.issue_credential(
           token_data.access_token,
           schema.credential_type,
@@ -453,7 +453,7 @@ defmodule Sovra.IssuerTest do
 
       proof = %{"proof_type" => "jwt", "jwt" => jwt}
 
-      assert {:ok, sd_jwt} =
+      assert {:ok, %{credential: sd_jwt, format: "vc+sd-jwt"}} =
                Issuer.issue_credential(token_data.access_token, "TestCredential", proof)
 
       assert is_binary(sd_jwt)
@@ -526,7 +526,7 @@ defmodule Sovra.IssuerTest do
       jwt = "#{signing_input}.#{Base.url_encode64(assertion, padding: false)}"
       proof = %{"proof_type" => "jwt", "jwt" => jwt}
 
-      assert {:ok, sd_jwt} =
+      assert {:ok, %{credential: sd_jwt, format: "vc+sd-jwt"}} =
                Issuer.issue_credential(token_data.access_token, "TestCredential", proof)
 
       [jwt_part | _] = String.split(sd_jwt, "~")
@@ -1292,6 +1292,109 @@ defmodule Sovra.IssuerTest do
         })
 
       assert v3.version == 3
+    end
+  end
+
+  describe "OID4VCI.build_metadata projection — mdoc" do
+    defp create_mdoc_schema(issuer) do
+      attrs = %{
+        schema_id: "mdoc-schema-#{System.unique_integer([:positive])}",
+        credential_type: "MembershipCard",
+        name: "Membership Card",
+        format: "mso_mdoc",
+        claims: [
+          %{
+            "key" => "member_name",
+            "type" => "string",
+            "required" => true,
+            "disclosable" => true
+          },
+          %{"key" => "tier", "type" => "string", "required" => true, "disclosable" => false}
+        ],
+        validity_period: "1y"
+      }
+
+      {:ok, schema} = Issuer.create_schema(issuer.id, attrs)
+      schema
+    end
+
+    test "emits an mso_mdoc configuration with the generated doctype" do
+      issuer = create_test_issuer()
+      schema = create_mdoc_schema(issuer)
+
+      config =
+        Sovra.Issuer.OID4VCI.build_metadata(issuer, [schema], [])
+        |> get_in(["credential_configurations_supported", schema.credential_type])
+
+      assert config["format"] == "mso_mdoc"
+      assert config["doctype"] == Sovra.Mdoc.DocType.build(issuer, schema)
+      assert config["cryptographic_binding_methods_supported"] == ["cose_key"]
+      assert config["credential_signing_alg_values_supported"] == [-7]
+
+      # The holder still proves possession with a plain OID4VCI jwt proof, so
+      # no wallet-side change is needed to receive an mdoc.
+      assert config["proof_types_supported"]["jwt"]["proof_signing_alg_values_supported"] ==
+               ["ES256"]
+
+      # An mdoc has no credential_definition — that is SD-JWT/W3C shaped.
+      refute Map.has_key?(config, "credential_definition")
+    end
+
+    test "projects claims as [namespace, element] paths with mandatory flags" do
+      issuer = create_test_issuer()
+      schema = create_mdoc_schema(issuer)
+      doc_type = Sovra.Mdoc.DocType.build(issuer, schema)
+
+      config =
+        Sovra.Issuer.OID4VCI.build_metadata(issuer, [schema], [])
+        |> get_in(["credential_configurations_supported", schema.credential_type])
+
+      # `disclosable: false` is what OID4VCI calls mandatory — the holder
+      # cannot withhold it.
+      assert config["credential_metadata"]["claims"] == [
+               %{"path" => [doc_type, "member_name"], "mandatory" => false},
+               %{"path" => [doc_type, "tier"], "mandatory" => true}
+             ]
+    end
+
+    test "does not advertise the Sovra meta namespace" do
+      # io.sovra.meta.1 rides inside an issued mdoc as plumbing. A wallet has
+      # nothing to render for it and no reason to request it, so it must not
+      # appear as a user-facing claim.
+      issuer = create_test_issuer()
+      schema = create_mdoc_schema(issuer)
+
+      config =
+        Sovra.Issuer.OID4VCI.build_metadata(issuer, [schema], [])
+        |> get_in(["credential_configurations_supported", schema.credential_type])
+
+      refute Enum.any?(config["credential_metadata"]["claims"], fn c ->
+               c["path"] |> List.first() |> String.contains?("meta")
+             end)
+    end
+
+    test "both formats coexist, each keyed by credential_type" do
+      issuer = create_test_issuer()
+      sd_jwt = create_test_schema(issuer)
+      mdoc = create_mdoc_schema(issuer)
+
+      configs =
+        Sovra.Issuer.OID4VCI.build_metadata(issuer, [sd_jwt, mdoc], [])
+        |> Map.fetch!("credential_configurations_supported")
+
+      assert configs[sd_jwt.credential_type]["format"] == "vc+sd-jwt"
+      assert configs[mdoc.credential_type]["format"] == "mso_mdoc"
+    end
+
+    test "reuses the shared display projection" do
+      issuer = create_test_issuer()
+      schema = create_mdoc_schema(issuer)
+
+      config =
+        Sovra.Issuer.OID4VCI.build_metadata(issuer, [schema], [])
+        |> get_in(["credential_configurations_supported", schema.credential_type])
+
+      assert config["credential_metadata"]["display"] == [%{"name" => schema.name}]
     end
   end
 

@@ -16,7 +16,15 @@ defmodule Sovra.Issuer.SDJWT do
   "key", "type", "required", "disclosable".
   """
   def build(issuer, schema, claims, holder_did, opts \\ []) do
-    now = System.system_time(:second)
+    # `:now` lets the caller pin the issuance instant. `Sovra.Issuer` records
+    # `expires_at` on the IssuedCredential row from the same instant, and the
+    # two must agree exactly — the row is what the dashboard shows, the `exp`
+    # claim is what a verifier enforces.
+    now =
+      case Keyword.get(opts, :now) do
+        %DateTime{} = dt -> DateTime.to_unix(dt)
+        _ -> System.system_time(:second)
+      end
 
     # Separate claims into disclosable vs non-disclosable based on schema
     claim_defs = ClaimUtils.parse_claim_defs(schema.claims)
@@ -101,22 +109,7 @@ defmodule Sovra.Issuer.SDJWT do
         payload
 
       index ->
-        base = "#{ClaimUtils.base_url()}/api/v1/status/#{issuer.did}"
-
-        Map.put(payload, "credentialStatus", [
-          %{
-            "type" => "BitstringStatusListEntry",
-            "statusPurpose" => "revocation",
-            "statusListIndex" => to_string(index),
-            "statusListCredential" => "#{base}/revocation"
-          },
-          %{
-            "type" => "BitstringStatusListEntry",
-            "statusPurpose" => "suspension",
-            "statusListIndex" => to_string(index),
-            "statusListCredential" => "#{base}/suspension"
-          }
-        ])
+        Map.put(payload, "credentialStatus", ClaimUtils.credential_status_entries(issuer, index))
     end
   end
 
@@ -146,17 +139,10 @@ defmodule Sovra.Issuer.SDJWT do
   Parses a schema validity period (`"1y"`, `"6m"`, `"30d"`) into seconds.
 
   `nil` in, `nil` out: no validity period, so no `exp`. An unparseable string
-  still falls back to one year. Public so the document issuance path derives
-  `exp` the same way credentials do.
-  """
-  def parse_validity_period(nil), do: nil
+  still falls back to one year.
 
-  def parse_validity_period(period) do
-    case Regex.run(~r/^(\d+)(y|m|d)$/, period) do
-      [_, n, "y"] -> String.to_integer(n) * 365 * 86400
-      [_, n, "m"] -> String.to_integer(n) * 30 * 86400
-      [_, n, "d"] -> String.to_integer(n) * 86400
-      _ -> 365 * 86400
-    end
-  end
+  Lives in `Sovra.Issuer.ClaimUtils` now that mdoc needs it too; delegated here
+  because the document issuance path reaches it through this module.
+  """
+  defdelegate parse_validity_period(period), to: ClaimUtils
 end

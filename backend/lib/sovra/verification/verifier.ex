@@ -18,11 +18,19 @@ defmodule Sovra.Verification.Verifier do
   use Sovra.Log
 
   alias Ecto.Multi
+  alias Sovra.Credentials.Mdoc
   alias Sovra.Credentials.SDJWT
+  alias Sovra.Mdoc.DeviceAuth
+  alias Sovra.Mdoc.IssuerTrust
+  alias Sovra.Mdoc.MetaNamespace
+  alias Sovra.Mdoc.SessionTranscript
   alias Sovra.Repo
+  alias Sovra.Verification.RequestObject
   alias Sovra.Verification.Session
   alias Sovra.Webhooks
   alias Sovra.Workspaces
+
+  require Logger
 
   @kb_iat_max_skew_seconds 300
 
@@ -69,7 +77,27 @@ defmodule Sovra.Verification.Verifier do
     {:error, reason}
   end
 
+  # Both pipelines converge on `complete/3` and `fail/3`, so session
+  # finalization, webhooks and the three-outcome contract are shared.
   defp run_pipeline(session, vp_token, opts) do
+    case dcql_format(session) do
+      "mso_mdoc" ->
+        run_mdoc_pipeline(session, vp_token, opts)
+
+      format when format in ["vc+sd-jwt", "dc+sd-jwt"] ->
+        run_sd_jwt_pipeline(session, vp_token, opts)
+
+      _ ->
+        finalize_failure(fail(session, "invalid_dcql_query", nil))
+    end
+  end
+
+  defp dcql_format(%Session{dcql_query: %{"credentials" => [%{"format" => format} | _]}}),
+    do: format
+
+  defp dcql_format(_session), do: nil
+
+  defp run_sd_jwt_pipeline(session, vp_token, opts) do
     with {:ok, sd_jwt_vp} <- unwrap_dcql_response(vp_token, session),
          {:ok, parts} <- parse_vp_token(sd_jwt_vp, session),
          {:ok, sd_payload, issuer_ws} <- verify_issuer_signature(parts, session),
@@ -81,13 +109,237 @@ defmodule Sovra.Verification.Verifier do
          {:ok, effective} <-
            resolve_disclosures(sd_payload, parts.disclosures, session, holder_did),
          :ok <- check_expiry(effective, session, holder_did),
-         :ok <- check_status(effective, issuer_ws, session, holder_did, opts),
+         :ok <- check_status(sd_jwt_statuses(effective), issuer_ws, session, holder_did, opts),
          {:ok, credentials} <- match_dcql(session.dcql_query, effective, session, holder_did) do
       complete(session, holder_did, credentials)
     else
       {:done, session} -> {:ok, session}
       {:error, _} = err -> err
     end
+  end
+
+  # ── mDoc pipeline ──────────────────────────────────────
+  #
+  # The steps mirror the SD-JWT pipeline's intent, not its mechanics: an mdoc
+  # binds its holder by key rather than by DID reference, hashes elements rather
+  # than disclosures, and proves freshness through a session transcript rather
+  # than through claims in a signed payload.
+  defp run_mdoc_pipeline(session, vp_token, opts) do
+    with {:ok, encoded} <- unwrap_dcql_response(vp_token, session),
+         {:ok, doc} <- parse_device_response(encoded, session),
+         {:ok, issuer_ws, issuer_key} <- resolve_mdoc_issuer(doc, session),
+         {:ok, mso} <- verify_mdoc_issuer_auth(doc, issuer_key, session),
+         :ok <- check_doc_type(doc, mso, session),
+         :ok <- check_value_digests(doc, mso, session),
+         {:ok, meta} <- extract_meta(doc, session),
+         :ok <- check_issuer_address(issuer_ws, meta, session),
+         :ok <- check_mandatory_elements(doc, meta, session),
+         :ok <- check_mdoc_validity(mso, session, meta.holder_did),
+         {:ok, holder_keys} <- resolve_holder_keys(meta.holder_did, session, opts),
+         {:ok, device_key} <-
+           check_device_key_binding(mso, holder_keys, session, meta.holder_did),
+         :ok <- verify_device_auth(doc, session, [device_key], meta.holder_did),
+         :ok <- check_status(mdoc_statuses(meta), issuer_ws, session, meta.holder_did, opts),
+         {:ok, credentials} <- match_mdoc_dcql(session, doc, meta) do
+      complete(session, meta.holder_did, credentials)
+    else
+      {:done, session} -> {:ok, session}
+      {:error, _} = err -> err
+    end
+  end
+
+  defp parse_device_response(encoded, session) do
+    case Mdoc.parse_device_response(encoded) do
+      {:ok, doc} -> {:ok, doc}
+      {:error, _} -> fail(session, "malformed_vp_token", nil)
+    end
+  end
+
+  # Two routes, both ending in a key rather than a workspace alone: a generated
+  # docType resolves by the address it carries, an ISO one by the `x5chain`
+  # leaf. `IssuerTrust` owns the choice, and issuance makes it from the same
+  # signal. `check_doc_type/3` closes the loop either way.
+  defp resolve_mdoc_issuer(doc, session) do
+    case IssuerTrust.resolve(doc.doc_type, doc.issuer_auth) do
+      {:ok, workspace, key} -> {:ok, workspace, key}
+      {:error, _} -> fail(session, "unknown_issuer", nil)
+    end
+  end
+
+  # The key comes from resolution rather than from the workspace row, because
+  # the two routes sign with different keys — the general signing key, or the
+  # document signer the certificate names.
+  defp verify_mdoc_issuer_auth(doc, issuer_key, session) do
+    case Mdoc.verify_issuer_auth(doc, issuer_key) do
+      {:ok, mso} -> {:ok, mso}
+      {:error, _} -> fail(session, "credential_signature_invalid", nil)
+    end
+  end
+
+  # What makes `resolve_mdoc_issuer/2` safe. The document's docType is unsigned,
+  # and on the generated route it is what selected the issuer's key; requiring
+  # the signed MSO to name the same string means a rewritten docType resolves to
+  # a workspace whose key cannot verify this signature.
+  #
+  # On the certificate route the docType selects nothing — the `x5chain` leaf
+  # does — but the check still earns its place: it is what stops a credential
+  # issued under one docType from being presented as another, which is the
+  # difference between an age attestation and a driving licence.
+  defp check_doc_type(doc, mso, session) do
+    if Map.get(mso, "docType") == doc.doc_type do
+      :ok
+    else
+      fail(session, "credential_signature_invalid", nil)
+    end
+  end
+
+  defp check_value_digests(doc, mso, session) do
+    case Mdoc.verify_value_digests(doc.items, mso) do
+      :ok -> :ok
+      {:error, _} -> fail(session, "invalid_disclosure", nil)
+    end
+  end
+
+  # The meta namespace carries enforcement inputs supplied by the party being
+  # enforced against, so an incomplete one is a hard failure rather than absent
+  # metadata — which is safe because the whole namespace is issuer-signed.
+  defp extract_meta(doc, session) do
+    case MetaNamespace.extract(Mdoc.elements(doc.items)) do
+      {:ok, meta} -> {:ok, meta}
+      {:error, _} -> fail(session, "missing_mandatory_element:#{MetaNamespace.namespace()}", nil)
+    end
+  end
+
+  # The meta namespace names the issuer's address, and resolution found the
+  # workspace independently — by the address inside the docType, or by the key
+  # the `x5chain` leaf certifies. Both are issuer-signed, so they cannot
+  # disagree unless the credential is malformed, and `Sovra.Mdoc.MetaNamespace`
+  # documents that they must agree.
+  #
+  # Requiring it is what keeps the certificate route from widening who an
+  # issuer can claim to be. There the docType names nobody and the chain names
+  # only a key, so without this check a workspace holding a document signer
+  # could issue credentials carrying another workspace's address — the address
+  # the revocation bitmaps and the Issuer Trust Registry are keyed by, and the
+  # one `mdoc_statuses/1` is about to be checked against.
+  defp check_issuer_address(issuer_ws, meta, session) do
+    if issuer_address_matches?(issuer_ws, meta.issuer_address) do
+      :ok
+    else
+      fail(session, "unknown_issuer", meta.holder_did)
+    end
+  end
+
+  # `MetaNamespace.extract/1` has already required the lowercase form, which is
+  # the single form issuance writes.
+  defp issuer_address_matches?(%{eoa_address: address}, claimed) when is_binary(address),
+    do: String.downcase(address) == claimed
+
+  defp issuer_address_matches?(_workspace, _claimed), do: false
+
+  # Keyed by namespace, because an element identifier is only unique within one
+  # — a document with an ISO namespace and a domestic one can hold two
+  # `document_number`s, and requiring "the disclosed one" would accept the wrong
+  # one.
+  defp check_mandatory_elements(doc, meta, session) do
+    disclosed =
+      MapSet.new(doc.items, &{&1.namespace, &1.element_identifier})
+
+    missing =
+      Enum.find_value(meta.mandatory_elements, fn {namespace, elements} ->
+        case Enum.find(elements, &(not MapSet.member?(disclosed, {namespace, &1}))) do
+          nil -> nil
+          element -> {namespace, element}
+        end
+      end)
+
+    case missing do
+      nil ->
+        :ok
+
+      {namespace, element} ->
+        fail(session, "missing_mandatory_element:#{namespace}.#{element}", meta.holder_did)
+    end
+  end
+
+  defp check_mdoc_validity(mso, session, holder_did) do
+    now = DateTime.utc_now()
+
+    # 18013-5 requires `validUntil` to be later than `validFrom`, and there is
+    # deliberately no check for it: the next two clauses already require
+    # `validFrom <= now < validUntil`, which implies it. An inverted or empty
+    # window is rejected either as not yet valid or as expired, so a third
+    # comparison could never fire — `mdoc_verifier_test.exs` pins that.
+    with {:ok, validity} <- Mdoc.validity(mso),
+         :lt <- DateTime.compare(now, validity.valid_until),
+         false <- DateTime.compare(now, validity.valid_from) == :lt,
+         # A credential signed in the future is a clock problem or a forgery;
+         # either way it is not presentable yet.
+         false <- DateTime.diff(validity.signed, now) > @kb_iat_max_skew_seconds do
+      :ok
+    else
+      _ -> fail(session, "credential_expired", holder_did)
+    end
+  end
+
+  # Where issuance-time binding meets current on-chain authority. Trusting the
+  # MSO's deviceKey alone would be ISO-native but would drop the chain binding
+  # entirely: the credential would verify while the holder's account contract
+  # says nothing about that key, and a rotated-away passkey would work forever.
+  # Returns the matched key, because it is the only one `DeviceAuth` may accept
+  # a signature from — the rest of the account's keys are current but not bound.
+  defp check_device_key_binding(mso, holder_keys, session, holder_did) do
+    with {:ok, {x, y}} <- Mdoc.device_key(mso),
+         %{} = key <- Enum.find(holder_keys, &(&1.x == x and &1.y == y)) do
+      {:ok, key}
+    else
+      _ -> fail(session, "holder_key_mismatch", holder_did)
+    end
+  end
+
+  defp verify_device_auth(doc, session, holder_keys, holder_did) do
+    transcript = SessionTranscript.build(session)
+
+    case DeviceAuth.verify(
+           doc.device_auth,
+           transcript,
+           doc.doc_type,
+           doc.device_name_spaces_bytes,
+           holder_keys
+         ) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        # The nonce and client_id live inside the transcript, so a stale nonce
+        # or a wrong audience surfaces here as a signature failure. Log the
+        # inputs: without them this is an opaque crypto error.
+        Logger.debug(
+          "mdoc device auth failed: #{inspect(reason)} " <>
+            "client_id=#{session.client_id} " <>
+            "nonce=#{session.nonce} response_uri=#{RequestObject.response_uri(session)}"
+        )
+
+        fail(session, device_auth_tag(reason), holder_did)
+    end
+  end
+
+  defp device_auth_tag(:device_mac_unsupported), do: "device_mac_unsupported"
+  defp device_auth_tag(:unsupported_device_auth_alg), do: "unsupported_device_auth_alg"
+  defp device_auth_tag(_), do: "holder_key_mismatch"
+
+  # The index is one value; both purposes share it, exactly as the SD-JWT
+  # `credentialStatus` array does.
+  defp mdoc_statuses(%{status_list_index: index}) do
+    [%{purpose: "revocation", index: index}, %{purpose: "suspension", index: index}]
+  end
+
+  defp match_mdoc_dcql(session, doc, meta) do
+    elements = Mdoc.elements(doc.items)
+
+    match_dcql_entries(session, meta.holder_did, fn entry ->
+      match_mdoc_entry(entry, doc.doc_type, elements)
+    end)
   end
 
   # ── Pipeline steps ─────────────────────────────────────
@@ -228,15 +480,23 @@ defmodule Sovra.Verification.Verifier do
     end
   end
 
-  defp check_status(effective, issuer_workspace, session, holder_did, opts) do
+  # SD-JWT carries a `credentialStatus` array; an mdoc carries a bare index in
+  # the Sovra meta namespace, because the format has no equivalent field. Both
+  # normalise to the same list so the chain reads and the failure tags stay in
+  # one place.
+  defp sd_jwt_statuses(effective) do
+    for %{"statusListIndex" => idx_str, "statusPurpose" => purpose} <-
+          effective["credentialStatus"] || [],
+        {:ok, idx} <- [to_integer(idx_str)],
+        do: %{purpose: purpose, index: idx}
+  end
+
+  defp check_status(statuses, issuer_workspace, session, holder_did, opts) do
     registry = Keyword.get(opts, :revocation_registry, default_registry())
-    statuses = effective["credentialStatus"] || []
     issuer_address = issuer_workspace.eoa_address
 
-    Enum.reduce_while(statuses, :ok, fn entry, _acc ->
-      with %{"statusListIndex" => idx_str, "statusPurpose" => purpose} <- entry,
-           {:ok, idx} <- to_integer(idx_str),
-           {:ok, flagged} <- registry_check(registry, purpose, issuer_address, idx) do
+    Enum.reduce_while(statuses, :ok, fn %{purpose: purpose, index: idx}, _acc ->
+      with {:ok, flagged} <- registry_check(registry, purpose, issuer_address, idx) do
         cond do
           flagged and purpose == "revocation" ->
             {:halt, fail(session, "credential_revoked", holder_did)}
@@ -279,20 +539,90 @@ defmodule Sovra.Verification.Verifier do
 
   defp match_dcql(%{"credentials" => requested}, effective, session, holder_did)
        when is_list(requested) do
-    Enum.reduce_while(requested, {:ok, []}, fn entry, {:ok, acc} ->
-      case match_credential_entry(entry, effective) do
-        {:ok, matched} -> {:cont, {:ok, [matched | acc]}}
-        {:error, tag} -> {:halt, fail(session, tag, holder_did)}
-      end
+    match_dcql_entries(session, holder_did, fn entry ->
+      match_credential_entry(entry, effective)
     end)
-    |> case do
-      {:ok, list} -> {:ok, Enum.reverse(list)}
-      other -> other
-    end
   end
 
   defp match_dcql(_, _, session, holder_did),
     do: fail(session, "invalid_dcql_query", holder_did)
+
+  # Shared by both pipelines: walk the query's credential entries, collecting
+  # matches or failing on the first that cannot be satisfied.
+  defp match_dcql_entries(session, holder_did, matcher) do
+    case session.dcql_query do
+      %{"credentials" => requested} when is_list(requested) ->
+        requested
+        |> Enum.reduce_while({:ok, []}, fn entry, {:ok, acc} ->
+          case matcher.(entry) do
+            {:ok, matched} -> {:cont, {:ok, [matched | acc]}}
+            {:error, tag} -> {:halt, fail(session, tag, holder_did)}
+          end
+        end)
+        |> case do
+          {:ok, list} -> {:ok, Enum.reverse(list)}
+          other -> other
+        end
+
+      _ ->
+        fail(session, "invalid_dcql_query", holder_did)
+    end
+  end
+
+  # mdoc claim paths are `[namespace, element_identifier]`, and the returned
+  # claims are keyed `"<namespace>.<element_identifier>"` — the same shape the
+  # request used, and namespace-qualified because two namespaces may carry an
+  # element of the same name. `parse-response.ts`'s `flattenClaims` builds the
+  # same keys; a divergence makes an integrator's lookup silently miss.
+  defp match_mdoc_entry(%{"format" => "mso_mdoc"} = entry, doc_type, elements) do
+    with :ok <- check_doctype_value(entry, doc_type) do
+      entry
+      |> Map.get("claims", [])
+      |> Enum.reduce_while({:ok, %{}}, fn claim, {:ok, acc} ->
+        case mdoc_claim_path(claim) do
+          {:ok, {namespace, element_id}} ->
+            case get_in(elements, [namespace, element_id]) do
+              nil ->
+                {:halt, {:error, "missing_required_claim:#{namespace}.#{element_id}"}}
+
+              value ->
+                {:cont,
+                 {:ok, Map.put(acc, "#{namespace}.#{element_id}", Mdoc.to_json_value(value))}}
+            end
+
+          :error ->
+            {:halt, {:error, "invalid_dcql_query"}}
+        end
+      end)
+      |> case do
+        {:ok, claims} -> {:ok, %{"id" => entry["id"], "format" => "mso_mdoc", "claims" => claims}}
+        err -> err
+      end
+    end
+  end
+
+  defp match_mdoc_entry(%{"format" => format}, _doc_type, _elements),
+    do: {:error, "format_mismatch:#{format}"}
+
+  defp match_mdoc_entry(_, _, _), do: {:error, "format_mismatch"}
+
+  defp check_doctype_value(entry, doc_type) do
+    case get_in(entry, ["meta", "doctype_value"]) do
+      nil -> :ok
+      ^doc_type -> :ok
+      _ -> {:error, "doctype_mismatch"}
+    end
+  end
+
+  # Only the OpenID4VP 1.0 spelling. An earlier draft used an explicit
+  # `namespace`/`claim_name` pair; accepting both would leave two ways to say
+  # the same thing, and a dashboard emitting the superseded one would keep
+  # working until it silently didn't.
+  defp mdoc_claim_path(%{"path" => [namespace, element_id]})
+       when is_binary(namespace) and is_binary(element_id),
+       do: {:ok, {namespace, element_id}}
+
+  defp mdoc_claim_path(_), do: :error
 
   defp match_credential_entry(%{"format" => format} = entry, effective)
        when format in ["dc+sd-jwt", "vc+sd-jwt"] do
