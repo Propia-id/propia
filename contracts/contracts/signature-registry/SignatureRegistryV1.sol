@@ -5,21 +5,13 @@ import {ISignatureRegistry} from "./ISignatureRegistry.sol";
 import {IKeyRegistry, IAuthorizationRegistry} from "./IExternalRegistries.sol";
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {P256} from "@openzeppelin/contracts/utils/cryptography/P256.sol";
 
 /// @title Timestamps P-256 signatures made by registered issuers.
-/// @notice Stores nothing about what was signed: only the digest, so the content
-/// stays off-chain. A record proves the signature existed at a block time and
-/// cannot be erased.
+/// @notice Records only the digest, never the signed content.
 contract SignatureRegistryV1 is ISignatureRegistry, AccessControlUpgradeable, UUPSUpgradeable {
-    /// RIP-7212 P-256 verification precompile.
-    address internal constant P256_VERIFIER = address(0x0100);
-
-    /// Half the curve order. Above it, a signature has an equally valid twin.
-    uint256 internal constant P256_N_DIV_2 =
-        0x7fffffff800000007fffffffffffffffde737d56d38bcf4279dce5617e3192a8;
-
-    /// Both come from the key registry's encoding: `keyType` is an enum and
-    /// `relationships` a bitmask, so assertion is a bit and not a value.
+    /// Mirrors the key registry's encoding: `keyType` is an enum, `relationships`
+    /// a bitmask.
     uint8 internal constant KEY_TYPE_P256 = 0;
     uint8 internal constant RELATIONSHIP_ASSERTION = 2;
 
@@ -31,7 +23,7 @@ contract SignatureRegistryV1 is ISignatureRegistry, AccessControlUpgradeable, UU
 
     IAuthorizationRegistry public authorizationRegistry;
 
-    /// Keyed by signer and digest: the same digest from two issuers is two records.
+    /// Keyed by signer and digest, so one digest from two issuers is two records.
     mapping(address => mapping(bytes32 => Record)) internal records;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -54,10 +46,8 @@ contract SignatureRegistryV1 is ISignatureRegistry, AccessControlUpgradeable, UU
 
     function _authorizeUpgrade(address) internal override onlyRole(UPGRADER_ROLE) {}
 
-    /// @notice Verifies the signature here, on-chain, before storing it. The role
-    /// only says who may write and pay: it cannot make an invalid signature pass.
-    /// Checks run cheapest first, so a bad call fails before touching storage or
-    /// another contract.
+    /// @notice Verifies the signature on-chain before storing it. RECORDER_ROLE
+    /// governs who may write, not whether a signature is valid.
     function record(address signer, bytes32 typeId, bytes32 digest, bytes32 r, bytes32 s)
         external
         onlyRole(RECORDER_ROLE)
@@ -67,11 +57,10 @@ contract SignatureRegistryV1 is ISignatureRegistry, AccessControlUpgradeable, UU
         if (!authorizationRegistry.isTrusted(signer, typeId)) revert NotAuthorized();
 
         (bytes32 pubKeyX, bytes32 pubKeyY) = _signerKey(signer);
-        if (!_verifyP256(digest, r, s, pubKeyX, pubKeyY)) revert InvalidSignature();
+        if (!P256.verifyNative(digest, r, s, pubKeyX, pubKeyY)) revert InvalidSignature();
 
         uint64 recordedAt = uint64(block.timestamp);
-        // `r` and `s` are never read back by this contract. They are kept so a
-        // verifier can read the signature from the chain without the document.
+        // Kept for off-chain verifiers; this contract never reads them back.
         records[signer][digest] = Record({r: r, s: s, recordedAt: recordedAt});
 
         emit SignatureRecorded(signer, digest, recordedAt);
@@ -85,8 +74,7 @@ contract SignatureRegistryV1 is ISignatureRegistry, AccessControlUpgradeable, UU
         return records[signer][digest].recordedAt != 0;
     }
 
-    /// The signer's P-256 assertion key, straight from the key registry. Reverts
-    /// when there is none, so an issuer must be registered before recording.
+    /// The signer's P-256 assertion key. Reverts when the key registry has none.
     function _signerKey(address signer) internal view returns (bytes32, bytes32) {
         (IKeyRegistry.VerificationMethod[] memory methods,,,,,) = keyRegistry.resolve(signer);
 
@@ -100,23 +88,5 @@ contract SignatureRegistryV1 is ISignatureRegistry, AccessControlUpgradeable, UU
         }
 
         revert NoRegisteredKey();
-    }
-
-    function _verifyP256(bytes32 hash, bytes32 r, bytes32 s, bytes32 pubKeyX, bytes32 pubKeyY)
-        internal
-        view
-        returns (bool)
-    {
-        // Only the canonical half is accepted, so one signature has one encoding.
-        if (uint256(s) > P256_N_DIV_2) revert SignatureMalleability();
-
-        (bool success, bytes memory result) = P256_VERIFIER.staticcall(
-            abi.encode(hash, r, s, pubKeyX, pubKeyY)
-        );
-
-        // On a chain without the precompile the staticcall succeeds with empty
-        // returndata, so the length check is what makes this fail closed: nothing
-        // can be recorded there, rather than everything being accepted.
-        return success && result.length >= 32 && abi.decode(result, (uint256)) == 1;
     }
 }

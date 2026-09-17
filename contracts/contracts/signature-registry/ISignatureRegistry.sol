@@ -16,8 +16,6 @@ interface ISignatureRegistry {
 
     error InvalidSignature();
 
-    error SignatureMalleability();
-
     error EmptyDigest();
 
     event SignatureRecorded(address indexed signer, bytes32 indexed digest, uint64 recordedAt);
