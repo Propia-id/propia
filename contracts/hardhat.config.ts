@@ -1,6 +1,16 @@
-import { HardhatUserConfig } from "hardhat/config";
+import { HardhatUserConfig, task } from "hardhat/config";
 import "@nomicfoundation/hardhat-toolbox";
 import "@openzeppelin/hardhat-upgrades";
+
+// `hardhat run` takes no custom params, so --contract has to be a task.
+// Imported inside the action, after the runtime environment exists, because
+// that module imports "hardhat".
+task("deploy", "Deploy everything, or one registry with --contract")
+  .addOptionalParam("contract", "Registry name, e.g. SignatureRegistry or SignatureRegistryV1")
+  .setAction(async ({ contract }: { contract?: string }) => {
+    const { deploy } = await import("./scripts/deploy-impl");
+    await deploy({ contract });
+  });
 
 const explorerUrl = process.env.EXPLORER_URL;
 

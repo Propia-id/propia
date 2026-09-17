@@ -54,7 +54,7 @@ DEPLOYER_PRIVATE_KEY=0x… RPC_URL=https://… \
 
 The script prints the role plan (and any concentration-of-power warnings)
 before sending anything, deploys the beacon with `beaconOwner` /
-`securityCouncil` from the config, deploys the three registries behind UUPS
+`securityCouncil` from the config, deploys the four registries behind UUPS
 proxies with the deployer as bootstrap admin, grants every configured role,
 renounces the deployer's own roles when `renounceDeployer` is true, then
 re-reads all roles from chain and fails if they do not match the config.
@@ -72,6 +72,44 @@ and verification SDK need the same three. `deployments/` is gitignored, so
 record them wherever the environment is configured: the
 `*_registry_address` keys in `infra/ansible/playbooks/ini/config-<env>.ini` for
 a fleet deploy, `frontend/verifier/.env.local` for the verifier.
+
+### Deploying one registry
+
+A network that already has registries from an earlier full run needs a way to
+add or replace a single one — running the full deploy again would deploy a
+second copy of everything. `hardhat run` rejects custom params (HH305), so this
+form is a task rather than a script:
+
+```bash
+cd contracts
+DEPLOYER_PRIVATE_KEY=0x… RPC_URL=https://… \
+DID_REGISTRY_ADDRESS=0x… ISSUER_REGISTRY_ADDRESS=0x… \
+REVOCATION_REGISTRY_ADDRESS=0x… \
+  npx hardhat deploy --contract SignatureRegistry --network sovrachain
+```
+
+`--contract` takes a registry name from `chain/config.json`, with or without
+the `V1` suffix; omitting it deploys everything, exactly as the script does. Every *other* registry has to be named through its
+`*_REGISTRY_ADDRESS` variable — the same keys as
+`infra/ansible/playbooks/ini/config-<env>.ini`, so what is deployed and what is
+served cannot diverge. Those addresses are needed twice over: the target's
+`initialize` may take one of them, and the role step re-reads all four against
+the config.
+
+Before sending anything it checks that each given address has code, and for
+`SignatureRegistry` that the DID and issuer registries answer `resolve` and
+`isTrusted` respectively — `keyRegistry` and `authorizationRegistry` have no
+setter, so a swapped pair would mean redeploying the proxy. It also verifies a
+freshly generated P-256 signature against the precompile at `0x100`: without
+it, `P256.verifyNative` reverts and the registry could never record anything.
+The full deploy runs that same precompile check.
+
+The output goes to `deployments/<network>-<chainId>-<Contract>.json`, named
+apart from the full deploy record so neither overwrites the other, and it lists
+all four registries so `apply-roles.ts` can finish the role step if it fails.
+
+The wallet implementation, beacon and dispatcher have no selective form; they
+are deployed by a full run.
 
 ### If the role step fails
 
