@@ -143,6 +143,18 @@ defmodule SovraWeb.Issuer.AdminController do
                  "Generated docType, for `mso_mdoc` schemas only. Null otherwise, and " <>
                    "null until the workspace finishes provisioning.",
                example: "io.sovra.0xab34...09f9.membership-card.1"
+             },
+             namespace: %OpenApiSpex.Schema{
+               type: :string,
+               nullable: true,
+               description:
+                 "Where this schema's data elements live, and the first segment of " <>
+                   "every mdoc DCQL claim path a verifier sends. Equal to `doc_type` " <>
+                   "for a generated schema; different for one that names its own ISO " <>
+                   "docType. A schema that names its own namespace reports it even " <>
+                   "while `doc_type` is still null; otherwise it is null exactly when " <>
+                   "`doc_type` is.",
+               example: "io.sovra.0xab34...09f9.membership-card.1"
              }
            }
          }},
@@ -475,6 +487,8 @@ defmodule SovraWeb.Issuer.AdminController do
 
     case Issuer.create_schema(workspace_id, attrs) do
       {:ok, schema} ->
+        {doc_type, namespace} = mdoc_ids(workspace_id, schema)
+
         conn
         |> put_status(201)
         |> json(%{
@@ -486,8 +500,8 @@ defmodule SovraWeb.Issuer.AdminController do
           validity_period: schema.validity_period,
           kind: schema.kind,
           format: schema.format,
-          doc_type: doc_type_for(workspace_id, schema),
-          namespace: namespace_for(workspace_id, schema)
+          doc_type: doc_type,
+          namespace: namespace
         })
 
       {:error, %Ecto.Changeset{} = changeset} ->
@@ -612,6 +626,7 @@ defmodule SovraWeb.Issuer.AdminController do
             kind: s.kind,
             format: s.format,
             doc_type: workspace && DocType.build(workspace, s),
+            namespace: workspace && DocType.namespace(workspace, s),
             layout: Map.get(layouts, s.id)
           }
         end)
@@ -631,6 +646,8 @@ defmodule SovraWeb.Issuer.AdminController do
 
       case Issuer.revise_schema(workspace_id, schema_id, base_version, attrs) do
         {:ok, schema} ->
+          {doc_type, namespace} = mdoc_ids(workspace_id, schema)
+
           conn
           |> put_status(201)
           |> json(%{
@@ -643,7 +660,8 @@ defmodule SovraWeb.Issuer.AdminController do
             version: schema.version,
             kind: schema.kind,
             format: schema.format,
-            doc_type: doc_type_for(workspace_id, schema)
+            doc_type: doc_type,
+            namespace: namespace
           })
 
         {:error, :schema_not_found} ->
@@ -1001,23 +1019,16 @@ defmodule SovraWeb.Issuer.AdminController do
     }
   end
 
-  # The docType is derived, never stored — see `Sovra.Mdoc.DocType`. Both
-  # single-schema responses pay one workspace lookup for it; `list_schemas/2`
-  # hoists that lookup out of the loop instead.
-  defp doc_type_for(workspace_id, schema) do
-    case load_workspace(workspace_id) do
-      nil -> nil
-      workspace -> DocType.build(workspace, schema)
-    end
-  end
-
-  # Equal to the docType for every generated schema, and different only for one
+  # The docType is derived, never stored — see `Sovra.Mdoc.DocType`. The
+  # namespace equals it for every generated schema, and differs only for one
   # that named its own — which is exactly when a caller needs to be told, since
-  # that is the string its DCQL claim paths have to use.
-  defp namespace_for(workspace_id, schema) do
+  # that is the string its DCQL claim paths have to use. Both come out of a
+  # single workspace lookup; `list_schemas/2` hoists that lookup out of its
+  # loop instead.
+  defp mdoc_ids(workspace_id, schema) do
     case load_workspace(workspace_id) do
-      nil -> nil
-      workspace -> DocType.namespace(workspace, schema)
+      nil -> {nil, nil}
+      workspace -> {DocType.build(workspace, schema), DocType.namespace(workspace, schema)}
     end
   end
 

@@ -107,17 +107,29 @@ function originOf(url: URL): string {
 
 export interface ApiClientConfig {
   l2RpcUrl: string;
-  /** The wallet's own backend: the one origin allowed to serve http. */
-  apiBase?: string;
+  /**
+   * The Sovra issuer: the backend that serves the request object and takes the
+   * direct_post, and the one origin allowed to speak plain http so a dev build
+   * against a LAN address works.
+   *
+   * Not the Aligned wallet API the app logs in against. That is a separate
+   * origin — a different port on the same address in dev — and it never
+   * appears in a QR, so naming it here would exempt a host no request can
+   * legitimately come from while leaving the one that can locked out.
+   * Compared as an origin, so the port is part of it.
+   */
+  sovraIssuerUrl?: string;
 }
 
 export class ApiClient {
   private l2: AxiosInstance;
-  private apiOrigin?: string;
+  private sovraIssuerOrigin?: string;
 
   constructor(config: ApiClientConfig) {
     this.l2 = axios.create({ baseURL: config.l2RpcUrl });
-    if (config.apiBase) this.apiOrigin = originOf(new URL(config.apiBase));
+    if (config.sovraIssuerUrl) {
+      this.sovraIssuerOrigin = originOf(new URL(config.sovraIssuerUrl));
+    }
   }
 
   // ─── OID4VCI ──────────────────────────────────────
@@ -197,7 +209,7 @@ export class ApiClient {
 
   /**
    * The QR picks both the `request_uri` and the `response_uri`, so https only
-   * — bar our own backend, which is http in dev. Applied to the inbound
+   * — bar the Sovra issuer, which is http in dev. Applied to the inbound
    * request-object fetch *and* to the outbound vp_token submission: the second
    * is the one carrying the citizen's claims.
    *
@@ -209,7 +221,9 @@ export class ApiClient {
   private assertSafeOrigin(raw: string, action: string): void {
     const url = new URL(raw);
     if (url.protocol === "https:") return;
-    if (this.apiOrigin && originOf(url) === this.apiOrigin) return;
+    if (this.sovraIssuerOrigin && originOf(url) === this.sovraIssuerOrigin) {
+      return;
+    }
     throw new Error(`Refusing to ${action} ${originOf(url)}`);
   }
 
