@@ -34,14 +34,23 @@ const config: HardhatUserConfig = {
     tests: "./test",
   },
   // Network names are also the keys in chain/config.json, which assigns the
-  // on-chain roles for a deployment. Both remote networks read the same
-  // RPC_URL: you pass the endpoint of whichever chain you are deploying to.
+  // on-chain roles for a deployment. The two local networks are pinned to their
+  // own port; both remote networks read the same RPC_URL, with no localhost
+  // fallback, so `--network sovrachain` cannot quietly hit the local node and
+  // grant the shared chain's roles there.
   networks: {
     anvil: {
       url: "http://127.0.0.1:8545",
     },
+    // The local ethrex L2. Fixed at :1729 rather than reading RPC_URL, like
+    // `anvil` at :8545: its chain/config.json entry puts every role on the
+    // node's genesis account, which must never be aimed at a remote chain.
+    ethrex: {
+      url: "http://127.0.0.1:1729",
+      accounts: deployerAccounts,
+    },
     sovrachain: {
-      url: process.env.RPC_URL || "http://127.0.0.1:1729",
+      url: process.env.RPC_URL || "",
       accounts: deployerAccounts,
     },
     "sovrachain-sepolia": {

@@ -55,20 +55,26 @@
             export PGUSER="''${USER}"
             export PGDATABASE="''${PGDATABASE:-sovra_dev}"
 
-            # Initialise cluster on first entry
-            if [ ! -d "$PGDATA" ]; then
-              echo "Initialising PostgreSQL data directory…"
-              initdb --no-locale --encoding=UTF8 -U "$PGUSER" >/dev/null
-            fi
-
             # Ensure socket directory exists
             mkdir -p "$PGHOST"
 
-            # Start Postgres if not already running
-            if ! pg_isready -q 2>/dev/null; then
-              pg_ctl start -l "$PGDATA/postgres.log" \
-                -o "-k $PGHOST -c listen_addresses=" \
-                >/dev/null
+            # Creating a cluster and booting a database are things you ask for,
+            # not things a `cd` should do behind your back — and direnv sources
+            # this hook on every directory entry. Skipped there; `make shell`,
+            # `make services.start` and every other `nix develop` still get it.
+            if [ -z "$DIRENV_IN_ENVRC" ]; then
+              # Initialise cluster on first entry
+              if [ ! -d "$PGDATA" ]; then
+                echo "Initialising PostgreSQL data directory…"
+                initdb --no-locale --encoding=UTF8 -U "$PGUSER" >/dev/null
+              fi
+
+              # Start Postgres if not already running
+              if ! pg_isready -q 2>/dev/null; then
+                pg_ctl start -l "$PGDATA/postgres.log" \
+                  -o "-k $PGHOST -c listen_addresses=" \
+                  >/dev/null
+              fi
             fi
 
             # Elixir/Mix config
@@ -76,14 +82,21 @@
             export HEX_HOME="''${HEX_HOME:-$PWD/.nix-hex}"
             export ERL_AFLAGS="''${ERL_AFLAGS:--kernel shell_history enabled}"
 
-            echo "Sovra dev environment"
-            echo "  Postgres: socket at $PGHOST (user: $PGUSER)"
-            echo ""
-            echo "Quick start:"
-            echo "  make backend    # Phoenix server on :4000"
-            echo "  make issuer     # Issuer frontend"
-            echo "  make test       # Run all tests"
-            echo ""
+            # Greeting for a shell someone is about to type into. $- has no `i`
+            # under direnv or under `nix develop --command` (every make target),
+            # where this would just be noise ahead of the real output.
+            case $- in
+              *i*)
+                echo "Sovra dev environment"
+                echo "  Postgres: socket at $PGHOST (user: $PGUSER)"
+                echo ""
+                echo "Quick start:"
+                echo "  make backend.start    # Phoenix server on :4000"
+                echo "  make issuer.start     # Issuer frontend"
+                echo "  make test             # Run all tests"
+                echo ""
+                ;;
+            esac
           '';
 
           LANG = "en_US.UTF-8";

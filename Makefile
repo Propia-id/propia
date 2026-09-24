@@ -1,4 +1,19 @@
-NIX := nix develop --command bash -c
+# --no-warn-dirty: an uncommitted working tree is the normal state here, and
+# nix would otherwise prefix every single target's output with a warning.
+NIX := nix develop --no-warn-dirty --command bash -c
+
+# Backend commands read backend/.env themselves, so `make backend.*` works from
+# a bare shell with nothing exported first. The file is dev-only and optional:
+# CI, the nix release build and the deployed nodes have none and take their
+# values from the real environment.
+BACKEND_ENV := set -a; [ -f .env ] && . ./.env; set +a;
+
+# The inverse, for the test suite: unset exactly the names backend/.env
+# declares. direnv exports that file repo-wide, so the suite would otherwise
+# inherit it from the caller's shell no matter what this Makefile sources.
+# Derived from the file rather than a hand-kept list, so a new key there can't
+# silently leak into a test run.
+BACKEND_ENV_CLEAR := [ -f .env ] && for v in $$(sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' .env); do unset $$v; done;
 
 # ── Services ─────────────────────────────────────────────────────────
 
@@ -44,7 +59,7 @@ shell:
 	nix develop
 
 backend.start:
-	$(NIX) "cd backend && mix deps.get && iex -S mix phx.server"
+	$(NIX) "cd backend && $(BACKEND_ENV) mix deps.get && iex -S mix phx.server"
 
 wallet.start:
 	$(NIX) "cd frontend && pnpm --filter @sovra/wallet start"
@@ -60,16 +75,29 @@ issuer.start:
 .PHONY: backend.setup backend.db.create contracts.setup contracts.deploy frontend.setup
 
 backend.setup:
-	$(NIX) "cd backend && mix local.hex --force && mix local.rebar --force && mix deps.get"
+	$(NIX) "cd backend && $(BACKEND_ENV) mix local.hex --force && mix local.rebar --force && mix deps.get"
 
 backend.db.create:
-	$(NIX) "cd backend && mix ecto.setup"
+	$(NIX) "cd backend && $(BACKEND_ENV) mix ecto.setup"
 
 contracts.setup:
 	$(NIX) "cd contracts && npm ci"
 
+# Target network: a key of contracts/chain/config.json, which decides who gets
+# the on-chain roles. Defaults to the local ethrex L2; the shared chains are
+# `make contracts.deploy NETWORK=sovrachain[-sepolia]` and need RPC_URL set,
+# since they grant their roles to the shared chain's addresses rather than to
+# the local node's genesis account.
+NETWORK ?= ethrex
+
+# contracts/.openzeppelin is keyed by chain ID alone, so a wiped and restarted
+# local chain reuses 65536999 and inherits records for implementations that no
+# longer exist, aborting the deploy on the first one it looks up. It is
+# untracked state and a local deploy always starts from scratch, so drop it —
+# but only for the local networks: on the shared chains that manifest is the
+# upgrade history of a chain nobody can restart.
 contracts.deploy:
-	$(NIX) "cd contracts && npx hardhat run scripts/deploy.ts --network anvil"
+	$(NIX) "cd contracts && case $(NETWORK) in ethrex|anvil) rm -rf .openzeppelin;; esac && npx hardhat run scripts/deploy.ts --network $(NETWORK)"
 
 frontend.setup:
 	$(NIX) "cd frontend && pnpm install --frozen-lockfile"
@@ -79,25 +107,30 @@ frontend.setup:
 .PHONY: backend.format backend.lint backend.build backend.test backend.db.setup backend.db.migrate backend.db.reset
 
 backend.format:
-	$(NIX) "cd backend && mix format"
+	$(NIX) "cd backend && $(BACKEND_ENV) mix format"
 
 backend.lint:
-	$(NIX) "cd backend && mix format --check-formatted"
+	$(NIX) "cd backend && $(BACKEND_ENV) mix format --check-formatted"
 
 backend.build:
-	$(NIX) "cd backend && mix compile"
+	$(NIX) "cd backend && $(BACKEND_ENV) mix compile"
 
+# $(BACKEND_ENV_CLEAR), not $(BACKEND_ENV): CI runs the suite with no .env, and
+# config/runtime.exs reads ADMIN_PRIVATE_KEY, SOVRA_IDENTITY_SOURCE and the
+# registry addresses in every env, test included. Left in place they hand the
+# suite the real relayer key and `identity_source: :aligned`, so a green run
+# here would say nothing about CI. The suite's config lives in config/test.exs.
 backend.test:
-	$(NIX) "cd backend && mix test"
+	$(NIX) "cd backend && $(BACKEND_ENV_CLEAR) mix test"
 
 backend.db.setup:
-	$(NIX) "cd backend && mix ecto.setup"
+	$(NIX) "cd backend && $(BACKEND_ENV) mix ecto.setup"
 
 backend.db.migrate:
-	$(NIX) "cd backend && mix ecto.migrate"
+	$(NIX) "cd backend && $(BACKEND_ENV) mix ecto.migrate"
 
 backend.db.reset:
-	$(NIX) "cd backend && mix ecto.reset"
+	$(NIX) "cd backend && $(BACKEND_ENV) mix ecto.reset"
 
 # ── Contracts ────────────────────────────────────────────────────────
 

@@ -30,6 +30,35 @@
     }
   },
 
+  "ethrex": {
+    "_comment": "Local ethrex L2, fixed at http://127.0.0.1:1729. Every holder is the node's pre-funded genesis account, which locally is also DEPLOYER_PRIVATE_KEY and the backend's ADMIN_PRIVATE_KEY: the backend relayer signs the registry calls itself, so it has to hold the manager roles. Keep `renounceDeployer` false so that key keeps managing local state.",
+    "beaconOwner": "0x4417092B70a3E5f10Dc504d0947DD256B965fc62",
+    "securityCouncil": "0x4417092B70a3E5f10Dc504d0947DD256B965fc62",
+    "renounceDeployer": false,
+    "roles": {
+      "SovraDIDRegistryV1": {
+        "DEFAULT_ADMIN_ROLE": ["0x4417092B70a3E5f10Dc504d0947DD256B965fc62"],
+        "DID_MANAGER_ROLE": ["0x4417092B70a3E5f10Dc504d0947DD256B965fc62"],
+        "UPGRADER_ROLE": ["0x4417092B70a3E5f10Dc504d0947DD256B965fc62"]
+      },
+      "SovraIssuerRegistryV1": {
+        "DEFAULT_ADMIN_ROLE": ["0x4417092B70a3E5f10Dc504d0947DD256B965fc62"],
+        "ISSUER_MANAGER_ROLE": ["0x4417092B70a3E5f10Dc504d0947DD256B965fc62"],
+        "UPGRADER_ROLE": ["0x4417092B70a3E5f10Dc504d0947DD256B965fc62"]
+      },
+      "SovraRevocationRegistryV1": {
+        "DEFAULT_ADMIN_ROLE": ["0x4417092B70a3E5f10Dc504d0947DD256B965fc62"],
+        "STATUS_MANAGER_ROLE": ["0x4417092B70a3E5f10Dc504d0947DD256B965fc62"],
+        "UPGRADER_ROLE": ["0x4417092B70a3E5f10Dc504d0947DD256B965fc62"]
+      },
+      "SignatureRegistryV1": {
+        "DEFAULT_ADMIN_ROLE": ["0x4417092B70a3E5f10Dc504d0947DD256B965fc62"],
+        "RECORDER_ROLE": ["0x4417092B70a3E5f10Dc504d0947DD256B965fc62"],
+        "UPGRADER_ROLE": ["0x4417092B70a3E5f10Dc504d0947DD256B965fc62"]
+      }
+    }
+  },
+
   "sovrachain": {
     "_comment": "Manager roles are the backend relayer address (ADMIN_PRIVATE_KEY's address, or the KMS signer address when ADMIN_PRIVATE_KEY is unset). DEFAULT_ADMIN_ROLE / UPGRADER_ROLE / beaconOwner are the admin address, which should be a multisig. securityCouncil currently equals beaconOwner: one key both schedules upgrades and bypasses the beacon's 48h timelock, so the timelock is only a self-imposed delay until they are split. The deploy warns about it.",
     "beaconOwner": "0xFe03276d04479f569137b66eEE468157e0f0B25A",

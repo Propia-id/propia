@@ -19,7 +19,10 @@ Everything runs inside the dev shell (`make shell`, or prefix with
 ## Deploy
 
 Networks are declared in `hardhat.config.ts` and are also the keys of
-`chain/config.json`: `anvil`, `sovrachain`, `sovrachain-sepolia`.
+`chain/config.json`: `anvil`, `ethrex`, `sovrachain`, `sovrachain-sepolia`.
+The two local networks are pinned to their own port; the two remote ones take
+`RPC_URL` and have no localhost fallback, so a missing `RPC_URL` fails instead
+of granting the shared chain's roles on your local node.
 
 **1. Fill in the roles.** `chain/config.json` must have an entry for the target
 network with every role of every registry listed. There are no defaults: a
@@ -32,7 +35,7 @@ what each role can do.
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `DEPLOYER_PRIVATE_KEY` | always | pays for the deploy and bootstraps the registries; keeps no role afterwards when `renounceDeployer` is true |
-| `RPC_URL` | `sovrachain*` | endpoint of the chain being deployed to (`anvil` is fixed at `127.0.0.1:8545`) |
+| `RPC_URL` | `sovrachain*` | endpoint of the chain being deployed to (`anvil` is fixed at `127.0.0.1:8545`, `ethrex` at `127.0.0.1:1729`) |
 | `EXPLORER_URL`, `EXPLORER_API_KEY`, `CHAIN_ID` | no | when set, the deploy also submits source verification |
 
 Nothing is loaded from a dotenv file — export the variables in the shell you run
@@ -41,16 +44,25 @@ the deploy from.
 **3. Run it.**
 
 ```bash
-# local: anvil on :8545 in another shell. This key is anvil account #0,
-# which is also the configured role holder for the `anvil` network.
-export DEPLOYER_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+# local: ethrex L2 on :1729 in another shell. DEPLOYER_PRIVATE_KEY must be the
+# node's pre-funded genesis account — it is the configured role holder for the
+# `ethrex` network, and the backend relays with that same key (ADMIN_PRIVATE_KEY).
+export DEPLOYER_PRIVATE_KEY=0x…
 make contracts.deploy
 
-# remote
-cd contracts
+# local on anvil instead, at :8545. This key is anvil account #0, which is the
+# configured role holder for the `anvil` network.
+DEPLOYER_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+  make contracts.deploy NETWORK=anvil
+
+# remote: NETWORK picks the chain/config.json entry, so the roles go to that
+# chain's addresses. RPC_URL has no default on these two.
 DEPLOYER_PRIVATE_KEY=0x… RPC_URL=https://… \
-  npx hardhat run scripts/deploy.ts --network sovrachain
+  make contracts.deploy NETWORK=sovrachain
 ```
+
+`NETWORK` defaults to `ethrex` and also reads from the environment, so
+`NETWORK=sovrachain-sepolia make contracts.deploy` works the same way.
 
 The script prints the role plan (and any concentration-of-power warnings)
 before sending anything, deploys the beacon with `beaconOwner` /
@@ -63,7 +75,7 @@ re-reads all roles from chain and fails if they do not match the config.
 
 ```bash
 jq -r '.contracts | to_entries[] | "\(.key): \(.value.address)"' \
-  deployments/sovrachain-<chainId>.json
+  deployments/ethrex-65536999.json
 ```
 
 The backend needs the three proxies — `DID_REGISTRY_ADDRESS`,

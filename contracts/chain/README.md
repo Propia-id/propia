@@ -10,7 +10,8 @@ passed as `--network <name>`:
 | Network | Chain |
 | --- | --- |
 | `anvil` | local node, fixed at `127.0.0.1:8545` |
-| `sovrachain` | Sovra chain (ethrex L2), `RPC_URL` (default `127.0.0.1:1729`) |
+| `ethrex` | local ethrex L2, fixed at `127.0.0.1:1729` |
+| `sovrachain` | Sovra chain (ethrex L2), `RPC_URL` |
 | `sovrachain-sepolia` | Sovra chain testnet, `RPC_URL` |
 
 There are no defaults and no fallbacks: a network with no entry, a missing
@@ -85,8 +86,14 @@ configured `DEFAULT_ADMIN_ROLE` holder actually has the role on-chain.
 
 ## Current entries
 
-All three are filled in. `anvil` puts everything on account #0 of the shared
-test mnemonic. Both Sovra chain entries use the same split: the manager roles
+All four are filled in. `anvil` puts everything on account #0 of the shared
+test mnemonic; `ethrex` puts everything on the ethrex node's pre-funded genesis
+account. Both local entries keep `renounceDeployer` false, and both hold the
+manager roles on the same key the backend relays with — the backend signs its
+registry calls itself, so a split there just makes every call revert with
+`AccessControlUnauthorizedAccount`.
+
+Both Sovra chain entries use the same split: the manager roles
 go to the backend relayer, `DEFAULT_ADMIN_ROLE` / `UPGRADER_ROLE` /
 `beaconOwner` to the admin address, and `renounceDeployer` is true so the
 deploy key holds nothing afterwards. `securityCouncil` still equals
