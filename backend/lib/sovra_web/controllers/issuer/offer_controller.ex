@@ -3,6 +3,7 @@ defmodule SovraWeb.Issuer.OfferController do
   use OpenApiSpex.ControllerSpecs
 
   alias Sovra.Issuer
+  alias Sovra.Issuer.ClaimValue
 
   tags(["Issuer OID4VCI"])
 
@@ -114,8 +115,33 @@ defmodule SovraWeb.Issuer.OfferController do
               "Numbers must be whole, dates must be ISO 8601."
         })
 
+      {:error, {:invalid_claim_values, reasons}} ->
+        conn
+        |> put_status(422)
+        |> json(%{
+          error: "invalid_claim_values",
+          details: Enum.map(reasons, fn {key, reason} -> "#{key}: #{claim_reason(reason)}" end)
+        })
+
       {:error, reason} ->
         conn |> put_status(422) |> json(%{error: to_string(reason)})
     end
   end
+
+  # An operator reads these, so they say what to do rather than naming the check
+  # that failed.
+  defp claim_reason(:not_a_string), do: "an attachment must be sent as a data: URI string"
+
+  defp claim_reason(:not_a_data_uri),
+    do: "an attachment must be a data: URI, base64-encoded, with no whitespace"
+
+  defp claim_reason(:unsupported_media_type),
+    do: "only #{Enum.join(ClaimValue.attachment_media_types(), ", ")} attachments are accepted"
+
+  defp claim_reason(:too_large) do
+    kb = div(ClaimValue.max_attachment_uri_bytes(), 1024)
+    "the attachment is too large; the encoded value must be #{kb} KB or less"
+  end
+
+  defp claim_reason(other), do: to_string(other)
 end

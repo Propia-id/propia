@@ -48,6 +48,9 @@ describe("pickLogo", () => {
     // Not a format any renderer in the wallet handles: a file it cannot decode
     // is worse than falling back to the brand mark.
     expect(extensionOf("image/tiff")).toBeUndefined();
+    // A PDF is still not card art, and this gate is not the one that changed
+    // when attachments arrived — those come in as a claim, through
+    // `parseAttachmentValue`, with their own media-type list.
     expect(extensionOf("application/pdf")).toBeUndefined();
   });
 
@@ -116,6 +119,8 @@ describe("pickLogo", () => {
       pickLogo({ name: "B", logo: { uri: "data:image/png;base64,not*base64!" } }),
     ).toBeUndefined();
     expect(pickLogo({ name: "B", logo: { uri: "data:;base64,AAAA" } })).toBeUndefined();
+    // Unpadded: the platform decoder behind `AssetStorage.put` refuses it.
+    expect(pickLogo({ name: "B", logo: { uri: "data:image/png;base64,AAA" } })).toBeUndefined();
   });
 
   it("refuses a payload past the cap instead of writing an unbounded blob", () => {

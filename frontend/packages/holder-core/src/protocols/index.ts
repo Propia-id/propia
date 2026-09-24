@@ -5,7 +5,9 @@ import type {
   CredentialDisplay,
   ClaimDescription,
 } from "../api/index.js";
+import { isAttachmentDescriptor } from "../credentials/attachment.js";
 import { isEnvelopeClaim } from "../credentials/envelope.js";
+import { parseBase64DataUri } from "../utils/data-uri.js";
 import {
   buildDeviceResponse,
   holderSignerToDeviceSigner,
@@ -239,8 +241,6 @@ const MAX_LOGO_BASE64_LENGTH = 512 * 1024;
 const MAX_LOGO_URL_LENGTH = 512;
 const MAX_LOGO_ALT_LENGTH = 128;
 
-const DATA_URI = /^data:([a-z]+\/[a-z0-9.+-]+);base64,([a-z0-9+/=]+)$/i;
-
 /**
  * The card logo off one `display` entry, in the form the wallet can persist.
  *
@@ -265,18 +265,13 @@ export function pickLogo(display: CredentialDisplay | undefined): PendingLogo | 
     return uri.length <= MAX_LOGO_URL_LENGTH ? { kind: "url", url: uri, ...alt } : undefined;
   }
 
-  // Whitespace is legal inside a base64 body but not in a `data:` URI, and
-  // stripping it would mean re-validating the result — reject instead.
-  const match = DATA_URI.exec(uri);
-  if (!match) return undefined;
+  const dataUri = parseBase64DataUri(uri, MAX_LOGO_BASE64_LENGTH);
+  if (!dataUri) return undefined;
 
-  const extension = LOGO_EXTENSIONS[match[1].toLowerCase()];
+  const extension = LOGO_EXTENSIONS[dataUri.mediaType.toLowerCase()];
   if (!extension) return undefined;
 
-  const base64 = match[2];
-  if (base64.length > MAX_LOGO_BASE64_LENGTH) return undefined;
-
-  return { kind: "data", extension, base64, ...alt };
+  return { kind: "data", extension, base64: dataUri.base64, ...alt };
 }
 
 /** Narrow to the persisted fields; `logo`/`background_image` are dropped on purpose. */
@@ -839,6 +834,13 @@ export class PresentationProtocol {
 
     const requestedKeys = new Set(requestedClaims.map((c) => c.key));
 
+    // An attached document is never presented — `selectDisclosures` cannot
+    // reach it — so a request naming it must not show the holder a toggle for
+    // something that will not be sent. It is listed with what stays behind.
+    const presentable = allClaims.filter(
+      (k) => !isAttachmentDescriptor(credential.claims[k]),
+    );
+
     // `clientId` may stand in for a missing `client_name` only once a
     // signature has bound it to a DID; unsigned, it is whatever the QR said.
     return {
@@ -851,10 +853,10 @@ export class PresentationProtocol {
       // `mandatory` belongs to the credential, not the request, so it is
       // re-derived here: the holder may have switched to another card.
       sharedClaims: requestedClaims
-        .filter((c) => allClaims.includes(c.key))
+        .filter((c) => presentable.includes(c.key))
         .map((c) => ({ ...c, mandatory: isMandatory(credential, c.key) })),
       withheldClaims: allClaims
-        .filter((key) => !requestedKeys.has(key))
+        .filter((key) => !requestedKeys.has(key) || !presentable.includes(key))
         .map((key) => claimRefFor(credential, key)),
       credential,
       requestedClaims,

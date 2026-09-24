@@ -53,7 +53,11 @@ The Output Descriptor structure SHALL include:
 #### Scenario: Design with attachment properties
 - GIVEN a schema has an attachment-type property (e.g., diploma scan)
 - WHEN the admin adds this property to the design's display properties
-- THEN the property schema includes `type: "attachment"` with appropriate content type metadata
+- THEN the property schema includes `type: "attachment"` with its `contentMediaType`, and the face renders a reference to the document — its label and media type — never the bytes
+
+> A card face is drawn on every list, carousel and grid the holder scrolls. An attachment is
+> a document to open, not artwork to draw, and the bytes are not in the credential index for
+> a face to reach in the first place.
 
 ### Requirement: Design image uploads
 

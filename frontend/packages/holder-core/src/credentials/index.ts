@@ -8,8 +8,20 @@ import type {
   MdocElementMeta,
   StoredLogo,
   PendingLogo,
+  StoredAttachment,
 } from "../state/index.js";
-import { credentialKey, logoAssetKey } from "../state/index.js";
+import {
+  attachmentAssetKey,
+  attachmentDisclosureAssetKey,
+  credentialKey,
+  isSdJwt,
+  logoAssetKey,
+} from "../state/index.js";
+import {
+  parseAttachmentValue,
+  type AttachmentDescriptor,
+  type AttachmentUri,
+} from "./attachment.js";
 import {
   claimKeyFor,
   flattenClaims,
@@ -31,6 +43,15 @@ export interface ParsedCredential {
   header: Record<string, unknown>;
   payload: Record<string, unknown>;
   claims: Record<string, unknown>;
+  /**
+   * The attached document, if the credential carries one. Reported here rather
+   * than left in `claims`, which is persisted into the credential index.
+   */
+  attachment?: {
+    key: string;
+    disclosure: string;
+    descriptor: AttachmentDescriptor;
+  };
 }
 
 export interface IssuerInfo {
@@ -129,7 +150,35 @@ export class CredentialManager {
       claims[d.key] = d.value;
     }
 
-    return { issuerJwt, disclosures, header, payload, claims };
+    // An attachment is recognised by looking at the value, never by trusting
+    // the issuer's metadata to say which claim it is. Metadata is fetched once,
+    // during issuance — but a credential also arrives through a backup restore,
+    // which calls `storeCredential` with none at all. A metadata-driven flag
+    // would leave that path writing a half-megabyte data URI into the
+    // credential index, which is a single secure-store value holding every
+    // credential's metadata. The parser sees every path into storage.
+    let attachment: ParsedCredential["attachment"];
+    for (const d of disclosures) {
+      const parsed = parseAttachmentValue(d.value);
+      if (!parsed) continue;
+      claims[d.key] = parsed.descriptor;
+      // First one wins: the backend admits one per schema, and a second would
+      // have nowhere of its own to go.
+      attachment ??= {
+        key: d.key,
+        disclosure: d.encoded,
+        descriptor: parsed.descriptor,
+      };
+    }
+
+    return {
+      issuerJwt,
+      disclosures,
+      header,
+      payload,
+      claims,
+      ...(attachment ? { attachment } : {}),
+    };
   }
 
   /** Store a received SD-JWT credential. */
@@ -151,10 +200,26 @@ export class CredentialManager {
       ? { ...(issuerInfo.display ?? {}), logo }
       : issuerInfo.display;
 
+    // Split out whenever there is an asset store, even if the capture failed.
+    // The blob goes into the platform secure store, which cannot hold a
+    // document: kept whole, the write fails and the holder loses the credential
+    // over what came attached to it. Losing only the document is the lesser
+    // failure, and it is not a silent one — the reference stays, so opening it
+    // reports the document missing.
+    //
+    // With no asset store at all — the Node and e2e assemblies, whose storage
+    // has no such limit — the credential is stored whole, because there the
+    // SD-JWT is the only place the document can live.
+    const attachment = await this.captureAttachment(id, parsed.attachment);
+    const sdJwt =
+      attachment && parsed.attachment
+        ? stripDisclosure(sdJwtString, parsed.attachment.disclosure)
+        : sdJwtString;
+
     const credential: StoredSdJwtCredential = {
       id,
       format: "vc+sd-jwt",
-      sdJwt: sdJwtString,
+      sdJwt,
       issuerDid: issuerInfo.issuerDid,
       credentialType,
       issuerName: issuerInfo.issuerName,
@@ -163,6 +228,7 @@ export class CredentialManager {
       claims: parsed.claims,
       ...(display ? { display } : {}),
       ...(issuerInfo.claimLabels ? { claimLabels: issuerInfo.claimLabels } : {}),
+      ...(attachment ? { attachment } : {}),
     };
 
     // Add to in-memory store and persist under the active wallet's namespace.
@@ -280,11 +346,130 @@ export class CredentialManager {
     return { source: "asset", key, ...(logo.alt ? { alt: logo.alt } : {}) };
   }
 
-  /** Select disclosure strings for the requested claim names. */
+  /**
+   * Persist an attached document and return the reference to store.
+   *
+   * One write: the disclosure the document arrived in, verbatim. It is the only
+   * copy the wallet keeps — `attachmentUri` writes the file the holder opens
+   * out of it, after checking it against the issuer's signature. Stored rather
+   * than re-derived from the salt and the value: the digest has to match
+   * SHA-256 over the exact string the issuer hashed, and re-deriving it would
+   * make the wallet depend on `JSON.stringify` matching Elixir's encoder byte
+   * for byte, forever, with a divergence failing silently at a verifier.
+   *
+   * `undefined` only when there is no asset store. A failed write still
+   * returns the reference, with nothing behind it: `storeCredential` strips the
+   * disclosure either way, and `attachmentUri` then reports the document
+   * missing — which, for the holder, is exactly what it is.
+   */
+  private async captureAttachment(
+    credentialId: string,
+    attachment: ParsedCredential["attachment"],
+  ): Promise<StoredAttachment | undefined> {
+    if (!attachment || !this.assets) return undefined;
+
+    const key = attachmentAssetKey(credentialId, attachment.descriptor.extension);
+    const disclosureKey = attachmentDisclosureAssetKey(credentialId);
+
+    try {
+      // `put` takes standard base64 and writes the bytes it decodes, and `text`
+      // reads bytes back as UTF-8. A disclosure is ASCII — the base64url
+      // alphabet — so `btoa` round-trips it exactly. base64url would not: the
+      // platform decoders refuse `-`, `_` and missing padding.
+      await this.assets.put(disclosureKey, btoa(attachment.disclosure));
+    } catch (err) {
+      console.warn("Could not store the credential's attached document:", err);
+      // A half-written file would read back as a disclosure the issuer never
+      // signed, and the holder would be told the document was tampered with.
+      await this.assets.delete(disclosureKey).catch(() => {});
+    }
+
+    return {
+      claim: attachment.key,
+      key,
+      disclosureKey,
+      mediaType: attachment.descriptor.mediaType,
+      bytes: attachment.descriptor.bytes,
+    };
+  }
+
+  /**
+   * The disclosure a credential's attached document arrived in, as stored.
+   *
+   * Unverified: `attachmentUri` checks it against the issuer's signature before
+   * using it. Outside that, nothing calls this today — the attachment is
+   * withheld from every presentation. It exists so that a flow which genuinely
+   * needs to present one can concatenate the result into the disclosures it
+   * passes to `buildPresentationSDJwt` and `computeSdHash`, both of which take
+   * disclosure strings rather than the credential, so neither needs changing
+   * for that to work.
+   */
+  async loadAttachmentDisclosure(
+    credential: StoredCredential,
+  ): Promise<string | null> {
+    if (!isSdJwt(credential) || !credential.attachment || !this.assets) return null;
+    return this.assets.text(credential.attachment.disclosureKey);
+  }
+
+  /**
+   * Write a credential's attached document to a file, from a disclosure
+   * verified against the issuer's signature, and return a URI for it.
+   *
+   * The file is written from the disclosure every time rather than kept beside
+   * it. The disclosure lives in ordinary app storage, not the secure store, so
+   * its digest is checked against the `_sd` array the issuer signed; a file
+   * derived from a checked disclosure is then the signed document by
+   * construction, and there is no second copy on disk that could drift from
+   * it unnoticed.
+   *
+   * `null` when the credential carries no document; `missing` when its
+   * disclosure is gone; `tampered` when the disclosure is not one the issuer
+   * signed. Throws when the file cannot be written.
+   */
+  async attachmentUri(credential: StoredCredential): Promise<AttachmentUri | null> {
+    if (!isSdJwt(credential) || !credential.attachment || !this.assets) return null;
+
+    const disclosure = await this.loadAttachmentDisclosure(credential);
+    if (!disclosure) return { error: "missing" };
+
+    const digest = base64urlEncode(sha256(utf8(disclosure)));
+    const signed = this.parseSDJwt(credential.sdJwt).payload._sd;
+    if (!Array.isArray(signed) || !signed.includes(digest)) return { error: "tampered" };
+
+    // Signed, and read as a document when it arrived, so a null here is a
+    // wallet whose own rules moved — not a file anyone altered.
+    const document = parseAttachmentValue(disclosureValue(disclosure));
+    if (!document) throw new Error("The signed attachment no longer reads as a document");
+
+    const { key } = credential.attachment;
+    await this.assets.put(key, document.base64);
+    const uri = this.assets.uriFor(key);
+    if (!uri) throw new Error(`No file URI for ${key}`);
+    return { uri };
+  }
+
+  /**
+   * Select disclosure strings for the requested claim names.
+   *
+   * An attached document is never among them. Its disclosure was split out of
+   * `sdJwt` at issuance, so this cannot reach it even if a verifier asks — and
+   * that is the intended default: a verifier asking for a driving licence gets
+   * the claims, not the scan. `loadAttachmentDisclosure` is the deliberate way
+   * back, for a flow that has a reason.
+   */
   selectDisclosures(
     credential: StoredSdJwtCredential,
     requestedClaims: string[],
   ): string[] {
+    if (credential.attachment && requestedClaims.includes(credential.attachment.claim)) {
+      // Silently returning one fewer disclosure than was asked for is the kind
+      // of gap that is impossible to diagnose from a verifier's side.
+      console.warn(
+        `[credentials] ${credential.attachment.claim} is an attached document and is ` +
+          `withheld from presentations`,
+      );
+    }
+
     const parsed = this.parseSDJwt(credential.sdJwt);
     return parsed.disclosures
       .filter((d) => requestedClaims.includes(d.key))
@@ -317,7 +502,9 @@ export class CredentialManager {
   /** Delete a credential from the active wallet's storage. */
   async deleteCredential(id: string): Promise<void> {
     const ns = this.requireNamespace();
-    const captured = this.credentialStore.getState().getCredential(id)?.display?.logo;
+    const existing = this.credentialStore.getState().getCredential(id);
+    const captured = existing?.display?.logo;
+    const attachment = existing && isSdJwt(existing) ? existing.attachment : undefined;
     await this.storage.delete(credentialKey(ns, id));
     const store = this.credentialStore.getState();
     store.removeCredential(id);
@@ -327,6 +514,10 @@ export class CredentialManager {
     // rather than leaving a card pointing at art that was deleted under it.
     if (captured?.source === "asset" && this.assets) {
       await this.assets.delete(captured.key).catch(() => {});
+    }
+    if (attachment && this.assets) {
+      await this.assets.delete(attachment.key).catch(() => {});
+      await this.assets.delete(attachment.disclosureKey).catch(() => {});
     }
   }
 
@@ -342,4 +533,34 @@ export class CredentialManager {
     }
     await store.loadFromStorage(this.storage, this.namespace);
   }
+}
+
+/** UTF-8 bytes. Named because the alternative reads as noise at every call site. */
+function utf8(text: string): Uint8Array {
+  return new TextEncoder().encode(text);
+}
+
+/** The value a disclosure carries, or undefined when it is not a `[salt, key, value]`. */
+function disclosureValue(disclosure: string): unknown {
+  try {
+    const decoded = JSON.parse(new TextDecoder().decode(base64urlDecode(disclosure)));
+    return Array.isArray(decoded) && decoded.length === 3 ? decoded[2] : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Remove one disclosure from a compact SD-JWT.
+ *
+ * Lossless: the disclosure's digest stays in the signed `_sd` array, so what
+ * comes back is an ordinary credential with one claim withheld — the state a
+ * holder creates every time they decline to disclose something. The issuer JWT
+ * is untouched, so the signature still verifies, and re-appending the segment
+ * reconstructs the original byte for byte.
+ */
+function stripDisclosure(sdJwt: string, disclosure: string): string {
+  const parts = sdJwt.split("~");
+  const [jwt, ...rest] = parts;
+  return [jwt, ...rest.filter((segment) => segment !== disclosure)].join("~");
 }

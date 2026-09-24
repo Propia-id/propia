@@ -68,13 +68,83 @@ The system SHALL support the following property types for schema fields:
 | uri | URL/URI values | `xsd:anyURI` |
 | date | Date values (YYYY-MM-DD) | `xsd:date` |
 | datetime | Date-time values (ISO 8601) | `xsd:dateTime` |
-| attachment | File attachments (URL + content type) | Structured as `@container`/`@list` with nested `@context` |
+| attachment | An inline document, carried as a `data:` URI | `xsd:string` with `contentMediaType` |
 | object | Nested object with sub-properties | Recursive property definition |
 
 #### Scenario: Schema with attachment property
-- GIVEN a schema needs to include file attachments (e.g., scanned documents)
+- GIVEN a schema needs to carry a scanned document (e.g., the PDF of the licence it represents)
 - WHEN the admin adds a property of type "attachment"
-- THEN the generated JSON Schema includes attachment structure with `@container`/`@list` context, and credentials issued with this schema can include attachment URLs with content types
+- THEN the generated JSON Schema types it as a string with `contentMediaType`, and credentials issued with this schema carry the document inline as a `data:` URI
+
+### Requirement: Inline attachments
+
+The system SHALL carry an `attachment` claim's content inline in the credential as a `data:<media-type>;base64,<payload>` URI, where `<payload>` is standard, padded base64 with no whitespace — a trailing newline included — and SHALL NOT carry it as a URL to external storage.
+
+> An attachment that is a URL is a credential that stops working when the issuer's bucket
+> moves, and a fetch to that bucket every time the holder opens it — a callback telling the
+> issuer when and where a citizen looked at their own licence. Inline bytes are covered by
+> the same issuer signature as every other claim, survive offline, and are selectively
+> disclosable like any other claim. The cost is credential size, which is why the payload is
+> bounded and why the claim is always disclosable rather than merged into the issuer JWT.
+
+#### Scenario: Issuing a credential with an attachment
+- GIVEN a `vc+sd-jwt` credential schema declaring a claim of type `attachment`
+- WHEN the issuer creates an offer whose value for that claim is a `data:application/pdf;base64,…` URI of 560,000 bytes or fewer
+- THEN the offer is accepted and the issued SD-JWT carries the URI as a selectively-disclosable disclosure
+
+#### Scenario: Optional attachment left out
+- GIVEN the same schema, whose attachment claim is not required
+- WHEN the issuer creates an offer that omits the claim, or sends it as `null`
+- THEN the offer is accepted and the issued credential carries no attachment
+
+#### Scenario: Attachment over the size limit
+- GIVEN the same schema
+- WHEN the issuer creates an offer whose attachment URI exceeds 560,000 bytes
+- THEN the request is rejected with 422 `invalid_claim_values` naming the claim, and no offer is created
+
+#### Scenario: Attachment on an unsupported schema
+- GIVEN an operator creating a schema of format `mso_mdoc`, or of kind `document`
+- WHEN the schema declares a claim of type `attachment`
+- THEN schema creation is rejected — ISO 18013-5 defines no element for an arbitrary attached document, and a document schema renders its claims onto a printed page
+
+#### Scenario: Attachment must be disclosable
+- GIVEN an operator creating a `vc+sd-jwt` credential schema
+- WHEN the schema declares an `attachment` claim with `disclosable: false`
+- THEN schema creation is rejected — a non-disclosable claim is merged flat into the signed issuer JWT, which would put the document in every presentation and leave the holder no way to withhold it
+
+#### Scenario: One attachment per schema
+- GIVEN an operator creating a `vc+sd-jwt` credential schema
+- WHEN the schema declares two claims of type `attachment`
+- THEN schema creation is rejected
+
+### Requirement: Attachment holder handling
+
+The wallet SHALL store an attachment outside the credential index, SHALL withhold the attachment from presentations by default, and SHALL verify it against the issuer's signed digest before handing it to the operating system, sharing only bytes derived from what it verified.
+
+> The holder's secure store is sized for key material, not documents. Keeping the bytes in
+> ordinary app storage and the reference in the index is what lets a credential carrying a
+> 400 KB scan stay the same size, in the store, as one carrying none.
+
+#### Scenario: Holder opens an attached document
+- GIVEN a stored credential carrying an attachment
+- WHEN the holder opens it from the credential detail screen
+- THEN the wallet recomputes the stored disclosure's digest, finds it in the credential's `_sd` array, writes the document from that disclosure, and opens the file in the operating system's document viewer, handing it to the share sheet instead when nothing on the device can view it
+
+#### Scenario: Stored disclosure altered on disk
+- GIVEN the same credential, whose stored attachment disclosure was modified outside the app
+- WHEN the holder opens the document
+- THEN the digest does not match and the wallet refuses to share
+
+#### Scenario: Document file altered on disk
+- GIVEN the same credential, whose previously opened document file was modified outside the app
+- WHEN the holder opens the document again
+- THEN the wallet shares the document written from the verified disclosure, not the modified file
+
+#### Scenario: Presenting a credential that carries an attachment
+- GIVEN a verifier requests claims from a credential that carries an attachment
+- WHEN the holder approves the presentation
+- THEN the attachment disclosure is not included, and the presentation verifies against the issuer's signature with the attachment's digest present but undisclosed
+- AND the approval screen lists the attachment among the claims that stay private, even when the request names it
 
 #### Scenario: Schema with nested object property
 - GIVEN a schema needs a structured sub-object (e.g., address with street, city, country)

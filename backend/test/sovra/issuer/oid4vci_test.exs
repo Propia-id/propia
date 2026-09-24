@@ -242,6 +242,23 @@ defmodule Sovra.Issuer.OID4VCITest do
       assert required["mandatory"] == true
     end
 
+    test "publishes contentMediaType for an attachment, and for nothing else" do
+      # A label hint, so a wallet can say "PDF document" before it has parsed
+      # anything. Never a contract: the wallet decides a value is a document by
+      # looking at the value, because a credential can reach it through paths
+      # that carry no issuer metadata at all.
+      workspace = build_workspace(%{id: Ecto.UUID.generate()})
+
+      assert [scan, name] =
+               claims_of(workspace, [
+                 %{"key" => "licence_scan", "type" => "attachment", "disclosable" => true},
+                 %{"key" => "family_name", "type" => "string"}
+               ])
+
+      assert scan["contentMediaType"] == "application/pdf"
+      refute Map.has_key?(name, "contentMediaType")
+    end
+
     test "skips claims with no usable key rather than emitting an empty path" do
       workspace = build_workspace(%{id: Ecto.UUID.generate()})
 

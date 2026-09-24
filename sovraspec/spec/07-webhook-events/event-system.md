@@ -15,6 +15,16 @@ The system SHALL emit typed webhook events for significant platform actions incl
 - WHEN the issuance flow completes (via DIDComm or OpenID4VCI)
 - THEN the appropriate event (`{event:issuance.credential-issued-messaging}` or `{event:issuance.credential-issued-rest}`) is emitted with the credentialId, tenantId, and holder information in the payload
 
+#### Scenario: Credential issued with an attached document
+- GIVEN the issued credential's schema declares an `attachment` claim
+- WHEN the credential-issued event is emitted
+- THEN the payload's `credential` is the issued SD-JWT with the attachment's disclosure removed — its digest is still in the signed `_sd` array, so the signature verifies and the claim reads as withheld — and the payload carries an `attachment` object (`claim`, `type: "attachment"`, `media_type`, `bytes`) describing what was removed
+- AND the credential delivered to the holder is unchanged, attachment included
+
+> An attachment can be up to 560,000 bytes of `data:` URI. Carrying it would make every
+> delivery attempt of a retried payload that size, to hand back a document the workspace
+> supplied itself when it created the offer.
+
 #### Scenario: Verification completed event
 - GIVEN a verification session has been completed (either successfully or with failure)
 - WHEN the verification result is determined

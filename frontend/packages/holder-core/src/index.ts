@@ -24,6 +24,8 @@ export type {
 
 // State stores
 export {
+  attachmentAssetKey,
+  attachmentDisclosureAssetKey,
   createCredentialStore,
   isMdoc,
   isSdJwt,
@@ -41,6 +43,7 @@ export type {
   StoredSdJwtCredential,
   StoredLogo,
   PendingLogo,
+  StoredAttachment,
 } from "./state/index.js";
 export { createApprovalStore } from "./state/approval-store.js";
 export type { ApprovalStore } from "./state/approval-store.js";
@@ -48,6 +51,15 @@ export type { ApprovalStore } from "./state/approval-store.js";
 // Credential manager
 export { CredentialManager } from "./credentials/index.js";
 export { isEnvelopeClaim } from "./credentials/envelope.js";
+// A credential's attached document is kept out of `claims` for the same reason
+// an mdoc portrait is — see `isAttachmentDescriptor`, and `AssetStorage`.
+export {
+  ATTACHMENT_MEDIA_TYPES,
+  isAttachmentDescriptor,
+  MAX_ATTACHMENT_BASE64_LENGTH,
+  parseAttachmentValue,
+} from "./credentials/attachment.js";
+export type { AttachmentDescriptor, AttachmentUri } from "./credentials/attachment.js";
 
 // COSE / mdoc surface, for apps that need the algorithm identifiers.
 export { COSE_ALG, COSE_HEADER, SOVRA_WEBAUTHN_LABEL } from "./cose/index.js";

@@ -3,6 +3,7 @@ defmodule Sovra.Issuer.CredentialSchema do
   import Ecto.Changeset
 
   alias Sovra.Issuer.ClaimUtils
+  alias Sovra.Issuer.ClaimValue
   alias Sovra.Mdl.Template
 
   @primary_key {:id, :binary_id, autogenerate: true}
@@ -73,6 +74,7 @@ defmodule Sovra.Issuer.CredentialSchema do
     |> validate_mdoc_schema_id()
     |> validate_doc_type()
     |> validate_iso_elements()
+    |> validate_attachment_claims()
     |> check_constraint(:format,
       name: :credential_schemas_mdoc_kind_check,
       message: "mdoc is only available for credential schemas"
@@ -157,6 +159,61 @@ defmodule Sovra.Issuer.CredentialSchema do
         )
     end
   end
+
+  # An attachment is a document carried inside the credential as a `data:` URI.
+  # Three rules, each of which is otherwise a wallet that cannot store the
+  # credential or a holder who cannot withhold the document:
+  #
+  #   * sd-jwt only — CBOR has `bytes`, which `Sovra.Issuer.MdocElement` already
+  #     encodes, and one type name producing two different wire values is how a
+  #     second wallet code path gets written by accident.
+  #   * credentials only — a document schema renders its claims onto a printed
+  #     page, where half a megabyte of base64 is body text.
+  #   * disclosable — `Sovra.Issuer.SDJWT.split_claims/2` merges a
+  #     non-disclosable claim flat into the signed payload, which would put the
+  #     document in every presentation with no way to withhold it, and leave the
+  #     wallet nothing to split out of the credential before storing it.
+  #
+  # And one per schema: the holder's model is single-valued, one asset key per
+  # credential, the way its logo is. Every rule after the first needs the key,
+  # which no other check on a claim definition requires.
+  defp validate_attachment_claims(changeset) do
+    attachments = changeset |> get_field(:claims) |> ClaimValue.attachment_claims()
+
+    cond do
+      attachments == [] ->
+        changeset
+
+      Enum.any?(attachments, &(not is_binary(&1["key"]) or &1["key"] == "")) ->
+        add_error(changeset, :claims, "an attachment must name its claim key")
+
+      get_field(changeset, :format) != "vc+sd-jwt" ->
+        add_error(changeset, :claims, "attachments are only available for vc+sd-jwt schemas")
+
+      get_field(changeset, :kind) != "credential" ->
+        add_error(changeset, :claims, "attachments are only available for credential schemas")
+
+      Enum.any?(attachments, &(!(&1["disclosable"] || &1["sd"]))) ->
+        add_error(
+          changeset,
+          :claims,
+          "#{claim_names(attachments)}: an attachment must be disclosable, or the " <>
+            "holder cannot withhold it"
+        )
+
+      length(attachments) > 1 ->
+        add_error(
+          changeset,
+          :claims,
+          "#{claim_names(attachments)}: only one attachment per schema"
+        )
+
+      true ->
+        changeset
+    end
+  end
+
+  defp claim_names(claim_defs), do: claim_defs |> Enum.map(& &1["key"]) |> Enum.join(", ")
 
   @doc """
   Asserts a workspace may issue under this schema's docType.

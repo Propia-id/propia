@@ -5,6 +5,7 @@ defmodule Sovra.Issuer.OID4VCI do
   """
 
   alias Sovra.Issuer.ClaimUtils
+  alias Sovra.Issuer.ClaimValue
   alias Sovra.Mdoc.DocType
   alias Sovra.Repo
 
@@ -135,10 +136,23 @@ defmodule Sovra.Issuer.OID4VCI do
       %{"path" => [key]}
       |> maybe_put("mandatory", if(claim["required"] == true, do: true))
       |> maybe_put("display", claim_display(claim["label"]))
+      |> maybe_put("contentMediaType", attachment_media_type(claim))
     ]
   end
 
   defp claim_description(_), do: []
+
+  # `contentMediaType` is the JSON Schema 2020-12 keyword with exactly these
+  # semantics, and the word our own output-descriptor spec already uses for an
+  # attachment. OID4VCI 1.0 Appendix B.2 permits extra members on a claims
+  # description, so a wallet that does not know it ignores it.
+  #
+  # A hint for labelling, never a contract: the wallet decides a value is a
+  # document by looking at the value, because a credential can reach it through
+  # paths that carry no issuer metadata at all.
+  defp attachment_media_type(claim) do
+    if ClaimValue.attachment?(claim), do: List.first(ClaimValue.attachment_media_types())
+  end
 
   defp claim_display(label) when is_binary(label) do
     case String.trim(label) do

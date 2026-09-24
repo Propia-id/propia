@@ -17,7 +17,9 @@ defmodule Sovra.Issuer do
     MdocElement,
     StatusList,
     TokenHash,
-    ClaimUtils
+    ClaimUtils,
+    ClaimValue,
+    SDJWT
   }
 
   alias Sovra.Crypto.HmacKeyStore
@@ -485,10 +487,12 @@ defmodule Sovra.Issuer do
          # workspace can hold one whose signer was never registered.
          :ok <- CredentialSchema.assert_can_issue(schema, workspace),
          :ok <- validate_claims(schema, claims),
-         # Fails here rather than at delivery: a value with no deterministic
-         # CBOR encoding would otherwise surface as a 500 in the middle of the
-         # holder's wallet flow, long after the operator who supplied it has
-         # gone. A no-op for sd-jwt schemas.
+         # Both of these fail here rather than at delivery, and before the offer
+         # row exists: a bad value would otherwise surface as a 500 in the middle
+         # of the holder's wallet flow, long after the operator who supplied it
+         # has gone — and a rejected attachment would sit in `claims` until the
+         # offer expired. Each is a no-op for the format it does not govern.
+         :ok <- ClaimValue.validate(schema, claims),
          :ok <- MdocElement.encodable?(schema, claims) do
       {plaintext_code, code_hash} = TokenHash.generate_and_hash(32)
       offer_id = Ecto.UUID.generate()
@@ -866,6 +870,11 @@ defmodule Sovra.Issuer do
           expires_at: expires_at
         })
 
+      # Before the transaction: with an attachment this decodes the largest
+      # disclosure the platform produces, and nothing about it needs a
+      # connection held open.
+      {webhook_credential, attachment} = strip_attachment(credential, schema)
+
       Repo.transaction(fn ->
         case Repo.insert(issued_cred_changeset) do
           {:ok, cred} ->
@@ -894,10 +903,11 @@ defmodule Sovra.Issuer do
                       "schema_type" => schema.credential_type,
                       "issued_at" => DateTime.to_iso8601(cred.issued_at),
                       "expires_at" => cred.expires_at && DateTime.to_iso8601(cred.expires_at),
-                      "credential" => credential,
+                      "credential" => webhook_credential,
                       "format" => format
                     }
                     |> maybe_put_doc_type(built)
+                    |> maybe_put_attachment(attachment)
                   )
 
                 %{credential: credential, format: format}
@@ -919,6 +929,29 @@ defmodule Sovra.Issuer do
     do: Map.put(payload, "doc_type", doc_type)
 
   defp maybe_put_doc_type(payload, _built), do: payload
+
+  defp maybe_put_attachment(payload, nil), do: payload
+  defp maybe_put_attachment(payload, attachment), do: Map.put(payload, "attachment", attachment)
+
+  # The webhook ships the credential whole, so a schema carrying an attachment
+  # would ship half a megabyte of PDF — as a ~750 KB body, retried eight times
+  # against a customer endpoint with a five-second timeout. That is a delivery
+  # queue we took down ourselves, to hand back a file the consumer uploaded
+  # minutes earlier. It gets a description of the attachment instead.
+  #
+  # The credential delivered to the holder is untouched: this narrows what the
+  # webhook carries, nothing else.
+  #
+  # A schema stored before attachment keys were required may declare one with
+  # no key. Such a claim can carry no value, so there is nothing to strip.
+  defp strip_attachment(credential, %{format: "vc+sd-jwt"} = schema) do
+    case ClaimValue.attachment_claims(schema.claims) do
+      [%{"key" => key} | _] when is_binary(key) -> SDJWT.without_claim(credential, key)
+      _ -> {credential, nil}
+    end
+  end
+
+  defp strip_attachment(credential, _schema), do: {credential, nil}
 
   # ── Proof Verification ─────────────────────────────────
 

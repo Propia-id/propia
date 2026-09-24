@@ -8,6 +8,7 @@ defmodule Sovra.Issuer.SDJWT do
   """
 
   alias Sovra.Issuer.ClaimUtils
+  alias Sovra.Issuer.ClaimValue
 
   @doc """
   Build a complete SD-JWT string for a credential.
@@ -91,8 +92,77 @@ defmodule Sovra.Issuer.SDJWT do
       "vct" => schema.credential_type
     }
     |> maybe_add_expiry(schema, iat)
-    |> Map.merge(Map.take(claims, schema_keys))
+    |> Map.merge(claims |> Map.take(schema_keys) |> describe_attachments(schema))
     |> maybe_add_credential_status(issuer, opts)
+  end
+
+  # The preview is unsigned and has no disclosure semantics — its job is to let
+  # Sovra Gov render the citizen's credential immediately. Echoing half a
+  # megabyte of PDF back to the request that just uploaded it buys nothing, so
+  # an attachment travels as a description of itself.
+  defp describe_attachments(claims, schema) do
+    schema.claims
+    |> ClaimValue.attachment_claims()
+    |> Enum.reduce(claims, fn claim_def, acc ->
+      key = claim_def["key"]
+
+      case ClaimValue.describe(Map.get(acc, key)) do
+        {:ok, described} -> Map.put(acc, key, attachment_descriptor(described))
+        :error -> acc
+      end
+    end)
+  end
+
+  @doc """
+  Splits one disclosure out of a compact SD-JWT, returning the remainder and a
+  description of what was removed.
+
+  Lossless: the disclosure's digest stays in the signed `_sd` array, so what
+  comes back is an ordinary credential with one claim withheld — exactly the
+  state a holder creates every time they decline to disclose something. The
+  issuer JWT is untouched, so the signature still verifies.
+
+  `{sd_jwt, nil}` when the credential carries no such disclosure, so a caller
+  can hand any credential to this without asking first.
+  """
+  @spec without_claim(String.t(), String.t()) :: {String.t(), map() | nil}
+  def without_claim(sd_jwt, key) when is_binary(sd_jwt) and is_binary(key) do
+    [jwt | segments] = String.split(sd_jwt, "~")
+
+    # Each segment is decoded once, and the removed one is described from that
+    # same decode: for an attachment it is the largest disclosure there is.
+    {kept, described} =
+      Enum.reduce(segments, {[], nil}, fn segment, {kept, described} ->
+        case decode_disclosure(segment) do
+          [_salt, ^key, value] -> {kept, described || describe_value(value, key)}
+          _ -> {[segment | kept], described}
+        end
+      end)
+
+    {Enum.join([jwt | Enum.reverse(kept)], "~"), described}
+  end
+
+  # The trailing empty segment after the final `~` is not a disclosure, and
+  # neither is a KB-JWT — both fail to decode as a `[salt, key, value]` array,
+  # so neither is ever mistaken for one.
+  defp decode_disclosure(segment) do
+    with {:ok, json} <- Base.url_decode64(segment, padding: false),
+         {:ok, decoded} <- Jason.decode(json) do
+      decoded
+    else
+      _ -> nil
+    end
+  end
+
+  defp describe_value(value, key) do
+    case ClaimValue.describe(value) do
+      {:ok, described} -> Map.put(attachment_descriptor(described), "claim", key)
+      :error -> nil
+    end
+  end
+
+  defp attachment_descriptor(%{media_type: media_type, bytes: bytes}) do
+    %{"type" => ClaimValue.attachment_type(), "media_type" => media_type, "bytes" => bytes}
   end
 
   # Omitted, never `"exp" => nil`: RFC 7519 requires a NumericDate when present.

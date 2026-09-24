@@ -86,9 +86,42 @@ interface StoredCredentialBase {
   claimLabels?: Record<string, string>;
 }
 
+/**
+ * A credential's attached document — never the bytes themselves.
+ *
+ * Two asset keys. `disclosureKey` holds the verbatim SD-JWT disclosure the
+ * document arrived in, and it is the only copy kept: its digest is in the
+ * signed `_sd` array, so the wallet can prove it is what the issuer signed.
+ * `key` is where the document is written, from that verified disclosure, each
+ * time the holder opens it — so the file handed to the operating system is
+ * never one that could have drifted from what was signed.
+ *
+ * Not folded into `CredentialDisplayMetadata` beside the logo. That shape
+ * describes card art, and it is what the backup payload carries — an
+ * attachment is credential data, and putting it there would have backups start
+ * smuggling it.
+ */
+export interface StoredAttachment {
+  /** The claim key the document was disclosed under. Operator-chosen. */
+  claim: string;
+  /** Asset key the document is written to when the holder opens it. */
+  key: string;
+  /** Asset key for the verbatim base64url disclosure segment. */
+  disclosureKey: string;
+  mediaType: string;
+  bytes: number;
+}
+
 export interface StoredSdJwtCredential extends StoredCredentialBase {
   format: "vc+sd-jwt";
   sdJwt: string;
+  /**
+   * Absent on every credential that carries no document, and on one stored
+   * with no asset store at all — in which case `sdJwt` still holds the
+   * disclosure whole. Present with nothing behind `disclosureKey` when the
+   * capture failed: the document is gone, and opening it says so.
+   */
+  attachment?: StoredAttachment;
 }
 
 /** One data element inside an mdoc namespace. */
@@ -192,6 +225,20 @@ function hydrate(entry: PersistedEntry, blob: string): StoredCredential {
  */
 export const logoAssetKey = (credentialId: string, extension: string) =>
   `logo-${credentialId}.${extension}`;
+
+/**
+ * Asset-store key for one credential's attached document.
+ *
+ * The extension carries its weight twice here: `AssetStorage.uriFor` stays a
+ * pure string join, and the operating system's share sheet picks the
+ * application to open a file by its name.
+ */
+export const attachmentAssetKey = (credentialId: string, extension: string) =>
+  `attachment-${credentialId}.${extension}`;
+
+/** Asset-store key for the disclosure that document arrived in. */
+export const attachmentDisclosureAssetKey = (credentialId: string) =>
+  `attachment-${credentialId}.disclosure`;
 
 export function createCredentialStore() {
   return createStore<CredentialStore>((set, get) => ({
