@@ -1,4 +1,13 @@
 export { verify } from "./verify.js";
+export { buildPresentationRequestUri } from "./request.js";
+export type { PresentationRequestInput } from "./request.js";
+export { discoverCredentialTypes } from "./discover.js";
+export type {
+  DiscoverOptions,
+  DiscoveredCredentialType,
+  DiscoveryFailure,
+  DiscoveryResult,
+} from "./discover.js";
 export { verifyMdoc } from "./mdoc/verify-mdoc.js";
 export type { VerifyMdocOptions } from "./mdoc/verify-mdoc.js";
 export { verifyDocument, decodeDocument } from "./verify-document.js";

@@ -82,6 +82,27 @@ export async function resolveIssuerDID(
 }
 
 /**
+ * Whether the on-chain Issuer Registry trusts an issuer for a credential type.
+ * RPC failures propagate as thrown errors, not as `false`.
+ */
+export async function isIssuerTrusted(
+  rpcUrl: string,
+  issuerRegistryAddress: string,
+  issuerAddress: string,
+  vct: string,
+): Promise<boolean> {
+  // credentialTypeId = keccak256(utf8(vct))
+  const credentialTypeId = keccak256(new TextEncoder().encode(vct));
+
+  const calldata = encodeFunctionCall(
+    "isTrusted(address,bytes32)",
+    [encodeAddress(issuerAddress), credentialTypeId],
+  );
+
+  return decodeBool(await ethCall(rpcUrl, issuerRegistryAddress, calldata), 0);
+}
+
+/**
  * Check whether an issuer is trusted for a given credential type
  * by querying the on-chain Issuer Registry.
  */
@@ -91,17 +112,9 @@ export async function checkIssuerTrust(
   issuerAddress: string,
   vct: string,
 ): Promise<void> {
-  // credentialTypeId = keccak256(utf8(vct))
-  const credentialTypeId = keccak256(new TextEncoder().encode(vct));
-
-  const calldata = encodeFunctionCall(
-    "isTrusted(address,bytes32)",
-    [encodeAddress(issuerAddress), credentialTypeId],
-  );
-
-  let result: string;
+  let trusted: boolean;
   try {
-    result = await ethCall(rpcUrl, issuerRegistryAddress, calldata);
+    trusted = await isIssuerTrusted(rpcUrl, issuerRegistryAddress, issuerAddress, vct);
   } catch (e) {
     if (e instanceof RpcError) {
       throw new VerificationError(
@@ -112,7 +125,6 @@ export async function checkIssuerTrust(
     throw e;
   }
 
-  const trusted = decodeBool(result, 0);
   if (!trusted) {
     throw new VerificationError(
       `Issuer not trusted for credential type ${vct}: ${issuerAddress}`,

@@ -199,6 +199,50 @@ Verifier (app / SDK)                                          Chain
   direct_post and emits presentation.verified / presentation.failed.
 ```
 
+## 6. Wallet-to-wallet verification (one phone checks another's credential)
+
+The wallet can verify a credential shown on another phone — a bartender checking a customer's age, one citizen checking another's ID. It is the standalone verifier app's two-QR exchange run from inside the wallet: neither phone reaches the other, and neither reaches Sovra. Code: `frontend/wallet/src/sovra/verify.ts`, discovery in `frontend/packages/verification-sdk/src/discover.ts`.
+
+```
+ Checking wallet                 Chain                  Issuer servers          Other wallet
+        │                          │                          │                        │
+        │ 1. Trusted issuers       │                          │                        │
+        │    (Issuer Registry)     │                          │                        │
+        │ ────────────────────────>│                          │                        │
+        │ 2. Each issuer's DID ->  │                          │                        │
+        │    OpenID4VCIIssuer URL  │                          │                        │
+        │    (DID Registry)        │                          │                        │
+        │ ────────────────────────>│                          │                        │
+        │ 3. Issuer metadata: credential types + claims       │                        │
+        │ ───────────────────────────────────────────────────>│                        │
+        │ 4. Keep the types the    │                          │                        │
+        │    registry trusts each  │                          │                        │
+        │    issuer for            │                          │                        │
+        │ ────────────────────────>│                          │                        │
+        │                          │                          │                        │
+        │ 5. Pick a type and claims; show an unsigned openid4vp:// QR: fresh nonce,     │
+        │    per-session did:sovra client_id, no response_uri                           │
+        │ ─────────────────────────────────────────────────────────────────────────────>│
+        │                          │                          │  6. Diagram 4, steps   │
+        │                          │                          │     3-9: no verifier   │
+        │                          │                          │     name; answers as QR│
+        │ 7. Scan the answer QR (vp_token)                                              │
+        │ <─────────────────────────────────────────────────────────────────────────────│
+        │ 8. Verify (diagram 5)    │                          │                        │
+        │    against that nonce    │                          │                        │
+        │    and client_id         │                          │                        │
+        │ ────────────────────────>│                          │                        │
+        │ 9. Claims + checks       │                          │                        │
+        │                          │                          │                        │
+  Discovery (1-4) only shapes the request. Verification (8) reads the chain alone:
+  metadata off an issuer's server never vouches for anything.
+```
+
+- **SD-JWT only.** An mDoc presentation is signed over the `response_uri` it is posted to, and this exchange posts nowhere.
+- **The checking wallet is an unknown verifier.** Its request is unsigned — a wallet's DID is an account, not in the DID Registry, so there is no key to sign with. The other wallet names no verifier and shows its caution, as it does for the standalone verifier app.
+- **Two minutes.** The checking wallet accepts a holder proof up to 120s old, for the approve-then-scan handoff between two people.
+- **Issuer URL convention.** The backend registers its bare base URL as a workspace DID's `OpenID4VCIIssuer` endpoint and serves each workspace's metadata under `<base>/<workspace DID>`, so discovery appends the DID. An issuer hosted any other way is not discovered; registering the full Credential Issuer Identifier on-chain would let the endpoint be read as-is.
+
 ## What changed vs. the pre-Aligned flows
 
-If you saw older diagrams: the wallet no longer talks to a Sovra "Guardian API" for onboarding or recovery. Account creation, co-signing, and guardian recovery are Aligned's job (diagram 1); Sovra's backend only deals in credentials (diagrams 2–5). The passkey is a native WebAuthn key in the Secure Enclave, and its proofs are WebAuthn assertions verified by the backend and the verifier.
+If you saw older diagrams: the wallet no longer talks to a Sovra "Guardian API" for onboarding or recovery. Account creation, co-signing, and guardian recovery are Aligned's job (diagram 1); Sovra's backend only deals in credentials (diagrams 2–6). The passkey is a native WebAuthn key in the Secure Enclave, and its proofs are WebAuthn assertions verified by the backend and the verifier.
