@@ -9,6 +9,7 @@ defmodule SovraWeb.Issuer.DocumentController do
 
   alias Sovra.Documents
   alias Sovra.Documents.Attestation
+  alias Sovra.Issuer.ClaimUtils
 
   tags(["Signed Documents"])
 
@@ -103,6 +104,14 @@ defmodule SovraWeb.Issuer.DocumentController do
                "`private` requires a session to read the document from either public " <>
                  "endpoint. It gates those endpoints only: a credential already handed out " <>
                  "stays verifiable against the chain by anyone holding it."
+           },
+           valid_until: %OpenApiSpex.Schema{
+             type: :string,
+             format: :"date-time",
+             description:
+               "Optional absolute expiry for this document, overriding the schema's " <>
+                 "`validity_period`. Must be in the future. Omit the field to derive " <>
+                 "expiry from the schema as before; `null` is rejected."
            }
          }
        }},
@@ -122,7 +131,23 @@ defmodule SovraWeb.Issuer.DocumentController do
   def create(conn, params) do
     workspace_id = conn.assigns.current_workspace_id
 
-    opts = [visibility: params["visibility"]]
+    # Absent and null are kept distinct: omitting the key asks for the schema's
+    # validity period, while an explicit null is a caller describing an expiry
+    # it could not compute. Only `Map.fetch/2` can tell the two apart.
+    case Map.fetch(params, "valid_until") do
+      :error ->
+        issue(conn, workspace_id, params, nil)
+
+      {:ok, value} ->
+        case ClaimUtils.parse_valid_until(value) do
+          {:ok, valid_until} -> issue(conn, workspace_id, params, valid_until)
+          {:error, reason} -> handle_error(conn, {:error, {:invalid_valid_until, reason}})
+        end
+    end
+  end
+
+  defp issue(conn, workspace_id, params, valid_until) do
+    opts = [visibility: params["visibility"], valid_until: valid_until]
 
     case Documents.issue(workspace_id, params["schema_id"], params["claims"] || %{}, opts) do
       {:ok, document} ->
@@ -243,6 +268,12 @@ defmodule SovraWeb.Issuer.DocumentController do
 
   defp handle_error(conn, {:error, {:missing_claims, missing}}),
     do: conn |> put_status(422) |> json(%{error: "missing_claims", details: missing})
+
+  defp handle_error(conn, {:error, {:invalid_valid_until, reason}}),
+    do:
+      conn
+      |> put_status(422)
+      |> json(%{error: "invalid_valid_until", details: "valid_until #{reason}"})
 
   defp handle_error(conn, {:error, {:invalid_visibility, _value}}),
     do:

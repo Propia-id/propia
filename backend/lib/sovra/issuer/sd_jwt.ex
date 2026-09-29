@@ -52,7 +52,7 @@ defmodule Sovra.Issuer.SDJWT do
         "_sd" => Enum.map(disclosures, & &1.digest),
         "_sd_alg" => "sha-256"
       }
-      |> maybe_add_expiry(schema, now)
+      |> maybe_add_expiry(schema, opts)
       |> Map.merge(Map.new(non_disclosable_claims))
       |> maybe_add_credential_status(issuer, opts)
 
@@ -79,7 +79,11 @@ defmodule Sovra.Issuer.SDJWT do
   later via the `credential.issued` webhook.
   """
   def build_preview(issuer, schema, claims, opts \\ []) do
-    iat = System.system_time(:second)
+    iat =
+      case Keyword.get(opts, :now) do
+        %DateTime{} = dt -> DateTime.to_unix(dt)
+        _ -> System.system_time(:second)
+      end
 
     schema_keys =
       schema.claims
@@ -91,7 +95,7 @@ defmodule Sovra.Issuer.SDJWT do
       "iat" => iat,
       "vct" => schema.credential_type
     }
-    |> maybe_add_expiry(schema, iat)
+    |> maybe_add_expiry(schema, opts)
     |> Map.merge(claims |> Map.take(schema_keys) |> describe_attachments(schema))
     |> maybe_add_credential_status(issuer, opts)
   end
@@ -165,11 +169,15 @@ defmodule Sovra.Issuer.SDJWT do
     %{"type" => ClaimValue.attachment_type(), "media_type" => media_type, "bytes" => bytes}
   end
 
+  # Defers to the one resolver every issuance path shares, so an issuer's
+  # custom `:valid_until` beats the schema's period here exactly as it does in
+  # the `issued_credentials` row and the offer preview.
+  #
   # Omitted, never `"exp" => nil`: RFC 7519 requires a NumericDate when present.
-  defp maybe_add_expiry(payload, schema, iat) do
-    case parse_validity_period(schema.validity_period) do
+  defp maybe_add_expiry(payload, schema, opts) do
+    case ClaimUtils.resolve_expiry(schema, opts) do
+      %DateTime{} = expires_at -> Map.put(payload, "exp", DateTime.to_unix(expires_at))
       nil -> payload
-      seconds -> Map.put(payload, "exp", iat + seconds)
     end
   end
 

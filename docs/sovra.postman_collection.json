@@ -61,12 +61,12 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"schema_id\": \"{{schemaId}}\",\n  \"claims\": {\n    \"given_name\": \"Ada\",\n    \"family_name\": \"Lovelace\"\n  }\n}",
+              "raw": "{\n  \"schema_id\": \"{{schemaId}}\",\n  \"claims\": {\n    \"given_name\": \"Ada\",\n    \"family_name\": \"Lovelace\"\n  },\n  \"valid_until\": \"2030-03-01T00:00:00Z\"\n}",
               "options": {
                 "raw": { "language": "json" }
               }
             },
-            "description": "Create an issuer-initiated credential offer. Requires `schema_id`; `claims` are pre-bound to the offer and copied into the issued credential when the holder redeems it.\n\nRate limit: 120 req/min per API key."
+            "description": "Create an issuer-initiated credential offer. Requires `schema_id`; `claims` are pre-bound to the offer and copied into the issued credential when the holder redeems it.\n\n`valid_until` is optional: an absolute RFC 3339 instant overriding the schema's `validity_period` for this credential, for re-issuing one that must keep the original expiration. Remove the line to derive expiry from the schema — an explicit `null` is rejected, as is a date in the past.\n\nRate limit: 120 req/min per API key."
           }
         },
         {

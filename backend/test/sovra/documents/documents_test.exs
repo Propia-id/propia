@@ -244,6 +244,72 @@ defmodule Sovra.DocumentsTest do
     end
   end
 
+  describe "issue/4 — custom expiry" do
+    test "a custom date overrides the schema's period", %{workspace: workspace, schema: schema} do
+      valid_until = DateTime.add(DateTime.utc_now(), 1000, :day) |> DateTime.truncate(:second)
+
+      {:ok, document} =
+        Documents.issue(workspace.id, schema.schema_id, claims(), valid_until: valid_until)
+
+      assert payload(document.credential)["exp"] == DateTime.to_unix(valid_until)
+    end
+
+    test "a custom date gives exp to a schema with no validity period", %{workspace: workspace} do
+      {:ok, schema} =
+        Issuer.create_schema(workspace.id, %{
+          schema_id: "letter-#{System.unique_integer([:positive])}",
+          credential_type: "EmploymentLetter",
+          name: "Employment letter",
+          kind: "document",
+          validity_period: nil,
+          claims: [%{"key" => "employee_name", "type" => "string", "required" => true}]
+        })
+
+      valid_until = DateTime.add(DateTime.utc_now(), 30, :day) |> DateTime.truncate(:second)
+
+      {:ok, document} =
+        Documents.issue(workspace.id, schema.schema_id, claims(), valid_until: valid_until)
+
+      assert payload(document.credential)["exp"] == DateTime.to_unix(valid_until)
+    end
+
+    test "a schema claim named exp still cannot override a custom expiry", %{
+      workspace: workspace
+    } do
+      schema = schema_declaring_exp(workspace, nil)
+      valid_until = DateTime.add(DateTime.utc_now(), 30, :day) |> DateTime.truncate(:second)
+
+      {:ok, document} =
+        Documents.issue(workspace.id, schema.schema_id, %{"exp" => 1}, valid_until: valid_until)
+
+      assert payload(document.credential)["exp"] == DateTime.to_unix(valid_until)
+    end
+
+    test "a past date is refused", %{workspace: workspace, schema: schema} do
+      past = DateTime.add(DateTime.utc_now(), -1, :day) |> DateTime.to_iso8601()
+
+      assert {:error, {:invalid_valid_until, reason}} =
+               Documents.issue(workspace.id, schema.schema_id, claims(), valid_until: past)
+
+      assert reason =~ "future"
+    end
+
+    test "a malformed date is refused", %{workspace: workspace, schema: schema} do
+      assert {:error, {:invalid_valid_until, _}} =
+               Documents.issue(workspace.id, schema.schema_id, claims(), valid_until: "whenever")
+    end
+
+    test "omitting it leaves the schema-derived expiry untouched", %{
+      workspace: workspace,
+      schema: schema
+    } do
+      {:ok, document} = Documents.issue(workspace.id, schema.schema_id, claims())
+
+      signed = payload(document.credential)
+      assert signed["exp"] == signed["iat"] + 365 * 86_400
+    end
+  end
+
   describe "get_public/1 and list/1" do
     test "serves a document to anyone holding the id", %{workspace: workspace, schema: schema} do
       {:ok, document} = Documents.issue(workspace.id, schema.schema_id, claims())

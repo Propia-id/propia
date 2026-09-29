@@ -95,7 +95,7 @@ defmodule Sovra.Issuer.Mdoc do
         MetaNamespace.namespace() => encode_items(meta_items)
       }
 
-      valid_until = DateTime.add(now, validity_seconds(schema), :second)
+      valid_until = valid_until(schema, now, opts)
       mso = build_mso(doc_type, namespaces, holder_key, schema, now, valid_until)
 
       case sign_mso(mso, workspace, doc_type) do
@@ -142,7 +142,7 @@ defmodule Sovra.Issuer.Mdoc do
       "doc_type" => doc_type,
       "namespace" => DocType.namespace(workspace, schema),
       "iat" => iat,
-      "exp" => iat + validity_seconds(schema)
+      "exp" => DateTime.to_unix(valid_until(schema, now, opts))
     }
     |> Map.merge(ClaimUtils.take_declared_claims(schema, claims))
     |> maybe_add_status(workspace, opts)
@@ -228,8 +228,16 @@ defmodule Sovra.Issuer.Mdoc do
     }
   end
 
-  defp validity_seconds(schema) do
-    ClaimUtils.parse_validity_period(schema.validity_period) || @default_validity_seconds
+  # Defers to the resolver every issuance path shares, so a custom
+  # `:valid_until` lands in `ValidityInfo` exactly as it lands in the SD-JWT's
+  # `exp` and the `issued_credentials` row.
+  #
+  # The fallback is the mdoc-specific part: the resolver returns nil for a
+  # schema that declares no validity period, which SD-JWT renders as "no `exp`"
+  # and mdoc cannot render at all.
+  defp valid_until(schema, now, opts) do
+    ClaimUtils.resolve_expiry(schema, opts) ||
+      DateTime.add(now, @default_validity_seconds, :second)
   end
 
   # Which key signs, and what travels beside the signature, are both decided by

@@ -7,7 +7,6 @@ defmodule Sovra.Documents.Attestation do
 
   alias Sovra.Crypto.JwtSigner
   alias Sovra.Issuer.ClaimUtils
-  alias Sovra.Issuer.SDJWT
 
   # Same media type the credential rail emits and the verification SDK checks.
   @header %{"alg" => "ES256", "typ" => "vc+sd-jwt"}
@@ -23,8 +22,8 @@ defmodule Sovra.Documents.Attestation do
   is covered by the signature. Returns the JWS, the payload, and the sha-256 of
   the signing input, which is the digest anchored on-chain.
   """
-  def build(workspace, schema, claims, jti) do
-    payload = payload(workspace, schema, claims, jti)
+  def build(workspace, schema, claims, jti, opts \\ []) do
+    payload = payload(workspace, schema, claims, jti, opts)
     signing_input = JwtSigner.encode_signing_input(@header, payload)
 
     case JwtSigner.sign_signing_input(signing_input, workspace.signing_key_id) do
@@ -65,7 +64,7 @@ defmodule Sovra.Documents.Attestation do
   id, and its 122 bits of entropy stop the payload being reconstructed by
   guessing `iat` against the on-chain digest.
   """
-  def payload(workspace, schema, claims, jti) do
+  def payload(workspace, schema, claims, jti, opts \\ []) do
     iat = System.system_time(:second)
     declared = declared_claims(schema, claims)
 
@@ -76,7 +75,7 @@ defmodule Sovra.Documents.Attestation do
         "jti" => jti,
         "iat" => iat
       }
-      |> maybe_put_exp(SDJWT.parse_validity_period(schema.validity_period), iat)
+      |> maybe_put_exp(ClaimUtils.resolve_expiry(schema, opts))
 
     # Registered claims win: a schema declaring a claim named `iss` must not be
     # able to overwrite who issued the document.
@@ -89,6 +88,10 @@ defmodule Sovra.Documents.Attestation do
     |> Map.drop(@registered_claims)
   end
 
-  defp maybe_put_exp(registered, nil, _iat), do: registered
-  defp maybe_put_exp(registered, seconds, iat), do: Map.put(registered, "exp", iat + seconds)
+  # Defers to the resolver every issuance path shares, so a document's custom
+  # `:valid_until` overrides the schema's period exactly as a credential's does.
+  defp maybe_put_exp(registered, nil), do: registered
+
+  defp maybe_put_exp(registered, %DateTime{} = expires_at),
+    do: Map.put(registered, "exp", DateTime.to_unix(expires_at))
 end

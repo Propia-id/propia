@@ -74,6 +74,84 @@ defmodule Sovra.Issuer.ClaimUtils do
   end
 
   @doc """
+  The instant a credential built with `opts` expires, or `nil` for no expiry.
+
+  The single place expiry is decided, for every issuance path — SD-JWT, mdoc,
+  signed documents, and the offer preview. Each one calls this rather than
+  deriving its own, so the signed `exp` (or `ValidityInfo.validUntil`), the
+  `issued_credentials` row and the preview cannot disagree. They used to be
+  three separate computations that agreed only because `deliver_credential/3`
+  threaded the same `now:` into each, and that the preview did not share at all.
+
+  Options:
+
+    * `:valid_until` — an issuer's explicit override, already parsed by
+      `parse_valid_until/1`. Beats the schema's period; that is its purpose.
+    * `:now` — pins the instant a relative period is measured from. Callers
+      that need the result to match a timestamp they record elsewhere must pass
+      it, or two clock reads can land on either side of a second boundary.
+
+  `nil` out means the schema declares no validity period and no override was
+  given, so SD-JWT omits `exp` entirely. mdoc cannot express that —
+  `ValidityInfo.validUntil` is mandatory — and supplies its own fallback.
+  """
+  @spec resolve_expiry(map(), keyword()) :: DateTime.t() | nil
+  def resolve_expiry(schema, opts \\ []) do
+    case Keyword.get(opts, :valid_until) do
+      %DateTime{} = valid_until ->
+        DateTime.truncate(valid_until, :second)
+
+      nil ->
+        case parse_validity_period(schema.validity_period) do
+          nil ->
+            nil
+
+          seconds ->
+            now = Keyword.get(opts, :now) || DateTime.utc_now() |> DateTime.truncate(:second)
+            DateTime.add(now, seconds, :second)
+        end
+    end
+  end
+
+  @doc """
+  Parses an issuer-supplied `valid_until` into the instant a credential expires.
+
+  The override for `parse_validity_period/1`: a schema's period says "a year
+  from whenever this is redeemed", which cannot express "expire exactly when the
+  credential I am replacing did". Re-issuance needs the absolute date.
+
+  Strict on purpose — this is a write boundary, and every rejected shape here
+  would otherwise become a signed expiry nobody chose:
+
+    * only a string is accepted, so `null` is a 422 rather than a second
+      spelling of "use the schema default". Omitting the field is the one way
+      to ask for the default.
+    * the instant must be in the future, or the credential is expired the
+      moment it is signed.
+
+  Offsets are honoured and normalised to UTC, so `"2030-03-01T00:00:00-03:00"`
+  means the instant it names.
+  """
+  def parse_valid_until(value) when is_binary(value) do
+    case DateTime.from_iso8601(value) do
+      {:ok, datetime, _offset} ->
+        datetime = datetime |> DateTime.shift_zone!("Etc/UTC") |> DateTime.truncate(:second)
+
+        if DateTime.after?(datetime, DateTime.utc_now()) do
+          {:ok, datetime}
+        else
+          {:error, "must be in the future"}
+        end
+
+      {:error, _reason} ->
+        {:error, ~s(must be an ISO 8601 date-time like "2030-03-01T00:00:00Z")}
+    end
+  end
+
+  def parse_valid_until(_value),
+    do: {:error, ~s(must be an ISO 8601 date-time like "2030-03-01T00:00:00Z")}
+
+  @doc """
   The W3C Bitstring Status List entries for an issued credential.
 
   Shared by the SD-JWT payload and the mdoc offer preview so the two describe

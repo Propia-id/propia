@@ -3,11 +3,16 @@ defmodule Sovra.Issuer.CredentialBuilder do
   Format-neutral facade over the two credential builders.
 
   Exists so `deliver_credential/3` does not have to know how either format is
-  put together. In particular it makes expiry format-neutral: both clauses
-  derive `expires_at` from the schema's `validity_period`, where the SD-JWT
-  path used to recover it by splitting the finished credential string, decoding
-  its payload, and reading `exp` back out — a roundabout re-derivation of a
-  value we already had, and one that would have needed a CBOR equivalent.
+  put together. Expiry is the clearest case: every path here defers to
+  `ClaimUtils.resolve_expiry/2`, which honours an issuer's custom
+  `:valid_until` over the schema's `validity_period`.
+
+  The SD-JWT path once recovered expiry by splitting the finished credential,
+  decoding its payload and reading `exp` back out; the fix for that left three
+  independent derivations (here, in `SDJWT`, in `Mdoc`) which agreed only
+  because one caller threaded the same `now:` into each, and which the offer
+  preview did not share at all. One resolver plus a `now:` pinned on the way in
+  makes disagreement impossible rather than merely avoided.
   """
 
   alias Sovra.Issuer.ClaimUtils
@@ -48,12 +53,17 @@ defmodule Sovra.Issuer.CredentialBuilder do
         _key,
         opts
       ) do
+    opts = pin_now(opts)
+
     with {:ok, sd_jwt} <- SDJWT.build(workspace, schema, claims, holder_did, opts) do
       {:ok,
        %{
          credential: sd_jwt,
          format: "vc+sd-jwt",
-         expires_at: expires_at(schema, opts),
+         # The same instant handed to the signer, not a second derivation of
+         # it: the row a verifier is checked against has to be the one `exp`
+         # actually carries.
+         expires_at: ClaimUtils.resolve_expiry(schema, opts),
          doc_type: nil
        }}
     end
@@ -67,6 +77,8 @@ defmodule Sovra.Issuer.CredentialBuilder do
         {_x, _y} = holder_key,
         opts
       ) do
+    opts = pin_now(opts)
+
     with {:ok, %{credential: credential, doc_type: doc_type, valid_until: valid_until}} <-
            Mdoc.build(workspace, schema, claims, holder_did, holder_key, opts) do
       {:ok,
@@ -88,23 +100,16 @@ defmodule Sovra.Issuer.CredentialBuilder do
   @doc "The unsigned preview shown at offer-creation time, in the schema's format."
   @spec preview(Sovra.Workspaces.Workspace.t(), CredentialSchema.t(), map(), keyword()) :: map()
   def preview(workspace, %CredentialSchema{format: "mso_mdoc"} = schema, claims, opts),
-    do: Mdoc.build_preview(workspace, schema, claims, opts)
+    do: Mdoc.build_preview(workspace, schema, claims, pin_now(opts))
 
   def preview(workspace, schema, claims, opts),
-    do: SDJWT.build_preview(workspace, schema, claims, opts)
+    do: SDJWT.build_preview(workspace, schema, claims, pin_now(opts))
 
-  # SD-JWT only. nil when the schema declares no validity period: the JWT omits
-  # `exp` and the IssuedCredential row records no expiry. mdoc cannot express
-  # that — `ValidityInfo.validUntil` is mandatory — so it reports the instant it
-  # signed instead of deriving one here.
-  defp expires_at(schema, opts) do
-    case ClaimUtils.parse_validity_period(schema.validity_period) do
-      nil ->
-        nil
-
-      seconds ->
-        now = Keyword.get(opts, :now) || DateTime.utc_now() |> DateTime.truncate(:second)
-        DateTime.add(now, seconds, :second)
-    end
+  # Pins the issuance instant up front so every downstream derivation — the
+  # signed `exp`, the `issued_credentials` row, the preview — measures a
+  # relative validity period from the same second rather than each reading the
+  # clock for itself.
+  defp pin_now(opts) do
+    Keyword.put_new_lazy(opts, :now, fn -> DateTime.utc_now() |> DateTime.truncate(:second) end)
   end
 end

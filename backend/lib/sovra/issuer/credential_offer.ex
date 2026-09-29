@@ -14,7 +14,9 @@ defmodule Sovra.Issuer.CredentialOffer do
     field :status, :string, default: "pending"
     field :status_list_index, :integer
     field :status_purpose, :string, default: "revocation"
+    # The offer's own pickup window. `credential_valid_until` is the credential's.
     field :expires_at, :utc_datetime
+    field :credential_valid_until, :utc_datetime
 
     belongs_to :issuer, Sovra.Workspaces.Workspace
     belongs_to :schema, Sovra.Issuer.CredentialSchema
@@ -23,7 +25,7 @@ defmodule Sovra.Issuer.CredentialOffer do
   end
 
   @required ~w(issuer_id schema_id pre_authorized_code_hash claims expires_at)a
-  @optional ~w(id tx_code status_list_index status_purpose)a
+  @optional ~w(id tx_code status_list_index status_purpose credential_valid_until)a
 
   @status_index_constraint :credential_offers_status_index_purpose_idx
 

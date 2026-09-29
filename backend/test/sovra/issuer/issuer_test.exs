@@ -167,6 +167,127 @@ defmodule Sovra.IssuerTest do
     end
   end
 
+  describe "custom expiration at issuance" do
+    defp offer_with_valid_until(issuer, schema, valid_until) do
+      Issuer.create_credential_offer(issuer.id, schema.schema_id, %{"name" => "Alice"},
+        valid_until: valid_until
+      )
+    end
+
+    defp redeem(schema, result) do
+      {:ok, token_data} = Issuer.exchange_token(result.pre_authorized_code)
+
+      {:ok, built} =
+        Issuer.issue_credential(
+          token_data.access_token,
+          schema.credential_type,
+          holder_proof_jwt(token_data.c_nonce)
+        )
+
+      built
+    end
+
+    test "the custom date is persisted on the offer, not applied to the offer's own window" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+      valid_until = DateTime.add(DateTime.utc_now(), 400, :day) |> DateTime.truncate(:second)
+
+      {:ok, result} = offer_with_valid_until(issuer, schema, valid_until)
+
+      offer = Repo.get!(CredentialOffer, result.offer.id)
+      assert DateTime.compare(offer.credential_valid_until, valid_until) == :eq
+
+      # The offer's own 24h pickup window is a different instant entirely, and a
+      # custom credential expiry must not stretch it.
+      assert DateTime.diff(offer.expires_at, DateTime.utc_now()) <= 86_400
+    end
+
+    test "the custom date reaches the signed exp and the issued row, to the second" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer, validity_period: "1y")
+      valid_until = DateTime.add(DateTime.utc_now(), 400, :day) |> DateTime.truncate(:second)
+
+      {:ok, result} = offer_with_valid_until(issuer, schema, valid_until)
+      %{credential: sd_jwt, format: "vc+sd-jwt"} = redeem(schema, result)
+
+      payload = jwt_payload(sd_jwt)
+      assert payload["exp"] == DateTime.to_unix(valid_until)
+
+      # The dashboard row and the claim a verifier enforces are the same instant.
+      issued = Repo.get_by!(Sovra.Issuer.IssuedCredential, id: result.offer.id)
+      assert DateTime.to_unix(issued.expires_at) == payload["exp"]
+    end
+
+    test "the override beats the schema's validity period rather than shortening it" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer, validity_period: "1y")
+      # Deliberately beyond the schema's year: the issuer, not the schema, is
+      # the authority on a re-issued credential's expiry.
+      valid_until = DateTime.add(DateTime.utc_now(), 1000, :day) |> DateTime.truncate(:second)
+
+      {:ok, result} = offer_with_valid_until(issuer, schema, valid_until)
+      %{credential: sd_jwt} = redeem(schema, result)
+
+      assert jwt_payload(sd_jwt)["exp"] == DateTime.to_unix(valid_until)
+    end
+
+    test "a custom date gives exp to a schema that declares no validity period" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer, validity_period: nil)
+      valid_until = DateTime.add(DateTime.utc_now(), 30, :day) |> DateTime.truncate(:second)
+
+      {:ok, result} = offer_with_valid_until(issuer, schema, valid_until)
+      %{credential: sd_jwt} = redeem(schema, result)
+
+      assert jwt_payload(sd_jwt)["exp"] == DateTime.to_unix(valid_until)
+    end
+
+    test "the offer preview shows the same exp the credential is eventually issued with" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+      valid_until = DateTime.add(DateTime.utc_now(), 400, :day) |> DateTime.truncate(:second)
+
+      {:ok, result} = offer_with_valid_until(issuer, schema, valid_until)
+      %{credential: sd_jwt} = redeem(schema, result)
+
+      assert result.credential["exp"] == jwt_payload(sd_jwt)["exp"]
+    end
+
+    test "omitting the override leaves the schema-derived expiry untouched" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer, validity_period: "30d")
+
+      {:ok, result} =
+        Issuer.create_credential_offer(issuer.id, schema.schema_id, %{"name" => "Alice"})
+
+      assert Repo.get!(CredentialOffer, result.offer.id).credential_valid_until == nil
+
+      %{credential: sd_jwt} = redeem(schema, result)
+      payload = jwt_payload(sd_jwt)
+
+      assert payload["exp"] == payload["iat"] + 30 * 86_400
+    end
+
+    test "a past date is refused before an offer is created" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+      past = DateTime.add(DateTime.utc_now(), -1, :day) |> DateTime.truncate(:second)
+
+      assert {:error, {:invalid_valid_until, reason}} =
+               offer_with_valid_until(issuer, schema, DateTime.to_iso8601(past))
+
+      assert reason =~ "future"
+    end
+
+    test "a malformed date is refused" do
+      issuer = create_test_issuer()
+      schema = create_test_schema(issuer)
+
+      assert {:error, {:invalid_valid_until, _}} =
+               offer_with_valid_until(issuer, schema, "not-a-date")
+    end
+  end
+
   describe "Workspaces.create_workspace/3" do
     test "creates workspace with proper EOA address derived from secp256k1 keypair" do
       user = create_test_user()

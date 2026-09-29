@@ -475,7 +475,16 @@ defmodule Sovra.Issuer do
 
   # ── Credential Offer ───────────────────────────────────
 
-  def create_credential_offer(workspace_id, schema_id, claims) do
+  @doc """
+  Creates a credential offer.
+
+  `:valid_until` overrides the schema's `validity_period` with an absolute
+  instant. It is stored on the offer rather than applied now because the
+  credential is not built until the holder redeems the offer, possibly days
+  later — the whole reason a relative period cannot express "expire exactly
+  when the credential I am replacing did".
+  """
+  def create_credential_offer(workspace_id, schema_id, claims, opts \\ []) do
     with {:ok, workspace} <- Workspaces.get_workspace(workspace_id),
          :ok <- Workspaces.assert_provisioned(workspace),
          {:ok, schema} <- get_schema(workspace_id, schema_id),
@@ -487,6 +496,10 @@ defmodule Sovra.Issuer do
          # workspace can hold one whose signer was never registered.
          :ok <- CredentialSchema.assert_can_issue(schema, workspace),
          :ok <- validate_claims(schema, claims),
+         # After the workspace and schema checks, so a caller reaching for a
+         # workspace that is not theirs is answered on that, not handed input
+         # feedback about a resource they were never entitled to.
+         {:ok, valid_until} <- cast_valid_until(Keyword.get(opts, :valid_until)),
          # Both of these fail here rather than at delivery, and before the offer
          # row exists: a bad value would otherwise surface as a 500 in the middle
          # of the holder's wallet flow, long after the operator who supplied it
@@ -507,7 +520,8 @@ defmodule Sovra.Issuer do
         pre_authorized_code_hash: code_hash,
         claims: claims,
         status_purpose: "revocation",
-        expires_at: expires_at
+        expires_at: expires_at,
+        credential_valid_until: valid_until
       }
 
       case insert_offer_with_retry(workspace, attrs_base) do
@@ -536,7 +550,8 @@ defmodule Sovra.Issuer do
 
           credential_preview =
             CredentialBuilder.preview(workspace, schema, claims,
-              status_list_index: offer.status_list_index
+              status_list_index: offer.status_list_index,
+              valid_until: valid_until
             )
 
           {:ok,
@@ -853,7 +868,8 @@ defmodule Sovra.Issuer do
          {:ok, %{credential: credential, format: format, expires_at: expires_at} = built} <-
            CredentialBuilder.build(workspace, schema, offer.claims, holder_did, holder_key,
              status_list_index: offer.status_list_index,
-             now: now
+             now: now,
+             valid_until: offer.credential_valid_until
            ) do
       # Reuse offer.id as the IssuedCredential's primary key so external
       # integrators have a single stable `credential_id` from offer creation
@@ -1027,6 +1043,22 @@ defmodule Sovra.Issuer do
   defp assert_kind(schema, expected), do: CredentialSchema.assert_kind(schema, expected)
 
   defp validate_claims(schema, claims), do: ClaimUtils.validate_required_claims(schema, claims)
+
+  # Absent is the only way to ask for the schema's default. An explicit null is
+  # rejected rather than quietly meaning the same thing: a caller that sends one
+  # is describing an expiry it could not compute, and silently issuing the
+  # schema default would hand it a date it never chose.
+  defp cast_valid_until(nil), do: {:ok, nil}
+
+  defp cast_valid_until(%DateTime{} = valid_until),
+    do: {:ok, DateTime.truncate(valid_until, :second)}
+
+  defp cast_valid_until(value) do
+    case ClaimUtils.parse_valid_until(value) do
+      {:ok, valid_until} -> {:ok, valid_until}
+      {:error, reason} -> {:error, {:invalid_valid_until, reason}}
+    end
+  end
 
   defp random_hex(bytes) do
     :crypto.strong_rand_bytes(bytes) |> Base.encode16(case: :lower)

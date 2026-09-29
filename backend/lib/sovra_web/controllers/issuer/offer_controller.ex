@@ -3,6 +3,7 @@ defmodule SovraWeb.Issuer.OfferController do
   use OpenApiSpex.ControllerSpecs
 
   alias Sovra.Issuer
+  alias Sovra.Issuer.ClaimUtils
   alias Sovra.Issuer.ClaimValue
 
   tags(["Issuer OID4VCI"])
@@ -12,7 +13,17 @@ defmodule SovraWeb.Issuer.OfferController do
     required: [:schema_id],
     properties: %{
       schema_id: %OpenApiSpex.Schema{type: :string},
-      claims: %OpenApiSpex.Schema{type: :object}
+      claims: %OpenApiSpex.Schema{type: :object},
+      valid_until: %OpenApiSpex.Schema{
+        type: :string,
+        format: :"date-time",
+        description:
+          "Optional absolute expiry for this credential, overriding the schema's " <>
+            "`validity_period`. Use it to re-issue a credential keeping the original " <>
+            "expiration, which a relative period cannot express — the offer is " <>
+            "redeemed at an unknown later time. Must be in the future. Omit the " <>
+            "field to derive expiry from the schema as before; `null` is rejected."
+      }
     }
   }
 
@@ -62,10 +73,36 @@ defmodule SovraWeb.Issuer.OfferController do
   def create(conn, params) do
     workspace_id = conn.assigns.current_workspace_id
 
+    with {:ok, valid_until} <- fetch_valid_until(params) do
+      create_offer(conn, workspace_id, params, valid_until)
+    else
+      {:error, {:invalid_valid_until, reason}} ->
+        conn
+        |> put_status(422)
+        |> json(%{error: "invalid_valid_until", details: "valid_until #{reason}"})
+    end
+  end
+
+  # Absent and null are kept distinct, as they are for a schema's
+  # `validity_period`: omitting the field asks for the schema default, while an
+  # explicit null is a caller describing an expiry it could not compute. Issuing
+  # the default for it would hand back a date nobody chose.
+  defp fetch_valid_until(params) do
+    case Map.fetch(params, "valid_until") do
+      :error -> {:ok, nil}
+      {:ok, value} -> ClaimUtils.parse_valid_until(value) |> tag_error()
+    end
+  end
+
+  defp tag_error({:ok, valid_until}), do: {:ok, valid_until}
+  defp tag_error({:error, reason}), do: {:error, {:invalid_valid_until, reason}}
+
+  defp create_offer(conn, workspace_id, params, valid_until) do
     case Issuer.create_credential_offer(
            workspace_id,
            params["schema_id"],
-           params["claims"] || %{}
+           params["claims"] || %{},
+           valid_until: valid_until
          ) do
       {:ok,
        %{

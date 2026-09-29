@@ -388,6 +388,37 @@ defmodule Sovra.Issuer.MdocTest do
       assert DateTime.compare(issued.expires_at, mso["validityInfo"]["validUntil"]) == :eq
     end
 
+    test "a custom expiry lands in validityInfo and on the issued row", %{
+      workspace: ws,
+      schema: schema,
+      claims: claims
+    } do
+      valid_until = DateTime.add(DateTime.utc_now(), 400, :day) |> DateTime.truncate(:second)
+
+      {:ok, offer} =
+        Issuer.create_credential_offer(ws.id, schema.schema_id, claims, valid_until: valid_until)
+
+      {:ok, token} = Issuer.exchange_token(offer.pre_authorized_code)
+
+      {:ok, %{private_key: priv, public_key_x: x, public_key_y: y}} =
+        Sovra.Crypto.P256.generate_key_pair()
+
+      proof = proof_jwt(priv, x, y, "did:sovra:0xholder789", token.c_nonce)
+
+      {:ok, %{credential: credential}} =
+        Issuer.issue_credential(token.access_token, schema.credential_type, proof)
+
+      {_parsed, mso} = credential |> decode_credential() |> mso()
+
+      # Overrides the schema's year, and validFrom still marks the signing
+      # instant — only the far end of the window moves.
+      assert DateTime.compare(mso["validityInfo"]["validUntil"], valid_until) == :eq
+      assert mso["validityInfo"]["validFrom"] == mso["validityInfo"]["signed"]
+
+      {:ok, issued} = Issuer.get_issued_credential(ws.id, offer.offer.id)
+      assert DateTime.compare(issued.expires_at, valid_until) == :eq
+    end
+
     test "rejects a value with no deterministic CBOR encoding at offer time", %{
       workspace: ws,
       schema: schema,

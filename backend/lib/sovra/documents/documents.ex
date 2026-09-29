@@ -38,10 +38,12 @@ defmodule Sovra.Documents do
          :ok <- CredentialSchema.assert_kind(schema, "document"),
          :ok <- ClaimUtils.validate_required_claims(schema, claims),
          {:ok, visibility} <- cast_visibility(Keyword.get(opts, :visibility)),
+         {:ok, valid_until} <- cast_valid_until(Keyword.get(opts, :valid_until)),
          # Generated before signing so the document's id is covered by the
          # signature, as the payload's `jti`.
          id = Ecto.UUID.generate(),
-         {:ok, signed} <- Attestation.build(workspace, schema, claims, id) do
+         {:ok, signed} <-
+           Attestation.build(workspace, schema, claims, id, valid_until: valid_until) do
       attrs = %{
         id: id,
         workspace_id: workspace_id,
@@ -100,6 +102,21 @@ defmodule Sovra.Documents do
   end
 
   defp cast_visibility(value), do: {:error, {:invalid_visibility, value}}
+
+  # nil is "not supplied", so the schema's validity period applies. The
+  # controller has already rejected an explicit null, which it can tell apart
+  # from an absent key and this cannot.
+  defp cast_valid_until(nil), do: {:ok, nil}
+
+  defp cast_valid_until(%DateTime{} = valid_until),
+    do: {:ok, DateTime.truncate(valid_until, :second)}
+
+  defp cast_valid_until(value) do
+    case ClaimUtils.parse_valid_until(value) do
+      {:ok, valid_until} -> {:ok, valid_until}
+      {:error, reason} -> {:error, {:invalid_valid_until, reason}}
+    end
+  end
 
   # Reached with a registry configured, so what fails here is the transaction
   # itself: a revert, a dead RPC, a receipt that never arrives. A verifier rejects

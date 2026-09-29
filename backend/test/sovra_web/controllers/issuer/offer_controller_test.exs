@@ -51,6 +51,145 @@ defmodule SovraWeb.Issuer.OfferControllerTest do
     end
   end
 
+  describe "valid_until on the offer request" do
+    # Absent and null are kept distinct, exactly as they are for a schema's
+    # `validity_period`: omit the key to derive expiry from the schema, or state
+    # an absolute instant. Anything else is a 422 rather than a silently
+    # substituted default.
+
+    defp authed_post(conn, ws, user, params) do
+      {:ok, token} = UserSession.create(user.id, ws.id, user.is_admin)
+
+      conn
+      |> put_req_header("authorization", "Bearer #{token}")
+      |> post("/dashboard/issuer/offers", params)
+    end
+
+    defp offer_params(schema, extra \\ %{}) do
+      Map.merge(
+        %{"schema_id" => schema.schema_id, "claims" => %{"name" => "Alice"}},
+        extra
+      )
+    end
+
+    test "201 and the preview carries the requested instant", %{conn: conn} do
+      %{workspace: ws, user: user} = create_workspace()
+      schema = create_schema(ws.id)
+      valid_until = DateTime.add(DateTime.utc_now(), 400, :day) |> DateTime.truncate(:second)
+
+      resp =
+        conn
+        |> authed_post(
+          ws,
+          user,
+          offer_params(schema, %{
+            "valid_until" => DateTime.to_iso8601(valid_until)
+          })
+        )
+        |> json_response(201)
+
+      assert resp["credential"]["exp"] == DateTime.to_unix(valid_until)
+    end
+
+    test "an offset is honoured, not read as UTC", %{conn: conn} do
+      %{workspace: ws, user: user} = create_workspace()
+      schema = create_schema(ws.id)
+      valid_until = DateTime.add(DateTime.utc_now(), 400, :day) |> DateTime.truncate(:second)
+
+      # The same instant, written as the wall-clock time three hours west of UTC.
+      shifted =
+        valid_until
+        |> DateTime.add(-3 * 3600, :second)
+        |> DateTime.to_iso8601()
+        |> String.replace("Z", "-03:00")
+
+      resp =
+        conn
+        |> authed_post(ws, user, offer_params(schema, %{"valid_until" => shifted}))
+        |> json_response(201)
+
+      assert resp["credential"]["exp"] == DateTime.to_unix(valid_until)
+    end
+
+    test "422 for a date in the past", %{conn: conn} do
+      %{workspace: ws, user: user} = create_workspace()
+      schema = create_schema(ws.id)
+      past = DateTime.add(DateTime.utc_now(), -1, :day) |> DateTime.to_iso8601()
+
+      resp =
+        conn
+        |> authed_post(ws, user, offer_params(schema, %{"valid_until" => past}))
+        |> json_response(422)
+
+      assert resp["error"] == "invalid_valid_until"
+      assert resp["details"] =~ "future"
+    end
+
+    test "422 for an unparseable string", %{conn: conn} do
+      %{workspace: ws, user: user} = create_workspace()
+      schema = create_schema(ws.id)
+
+      resp =
+        conn
+        |> authed_post(ws, user, offer_params(schema, %{"valid_until" => "next tuesday"}))
+        |> json_response(422)
+
+      assert resp["error"] == "invalid_valid_until"
+    end
+
+    test "422 for an explicit null rather than falling back to the schema", %{conn: conn} do
+      %{workspace: ws, user: user} = create_workspace()
+      schema = create_schema(ws.id)
+
+      resp =
+        conn
+        |> authed_post(ws, user, offer_params(schema, %{"valid_until" => nil}))
+        |> json_response(422)
+
+      assert resp["error"] == "invalid_valid_until"
+    end
+
+    test "422 for a non-string, which to_string/1 would otherwise raise on", %{conn: conn} do
+      %{workspace: ws, user: user} = create_workspace()
+      schema = create_schema(ws.id)
+
+      resp =
+        conn
+        |> authed_post(ws, user, offer_params(schema, %{"valid_until" => %{}}))
+        |> json_response(422)
+
+      assert resp["error"] == "invalid_valid_until"
+    end
+
+    test "omitting the key keeps the schema-derived expiry", %{conn: conn} do
+      %{workspace: ws, user: user} = create_workspace()
+      schema = create_schema(ws.id)
+
+      resp =
+        conn
+        |> authed_post(ws, user, offer_params(schema))
+        |> json_response(201)
+
+      exp = resp["credential"]["exp"]
+      assert exp == resp["credential"]["iat"] + 365 * 86_400
+    end
+
+    test "the API key path enforces the same contract", %{conn: conn} do
+      %{workspace: ws} = create_workspace()
+      schema = create_schema(ws.id)
+      {:ok, %{api_key: key}} = ApiKeys.create_api_key(ws.id, "Prod")
+      past = DateTime.add(DateTime.utc_now(), -1, :day) |> DateTime.to_iso8601()
+
+      resp =
+        conn
+        |> put_req_header("authorization", "Bearer #{key}")
+        |> post("/api/v1/issuer/credential-offer", offer_params(schema, %{"valid_until" => past}))
+        |> json_response(422)
+
+      assert resp["error"] == "invalid_valid_until"
+    end
+  end
+
   describe "POST /api/v1/issuer/credential-offer (API key path)" do
     test "201 with the unified response shape", %{conn: conn} do
       %{workspace: ws} = create_workspace()
