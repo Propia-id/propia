@@ -52,6 +52,9 @@ export interface CredentialDisplayMetadata {
 
 export type CredentialFormat = "vc+sd-jwt" | "mso_mdoc";
 
+/** What the issuer's revocation and suspension lists say about a credential. */
+export type RegistryStatus = "valid" | "revoked" | "suspended";
+
 /**
  * Fields every credential has, whatever its wire format.
  *
@@ -84,6 +87,13 @@ interface StoredCredentialBase {
    * Sparse: only claims the issuer actually labelled appear.
    */
   claimLabels?: Record<string, string>;
+  /**
+   * The last answer from the revocation registry. Persisted, so a credential
+   * the issuer revoked still reads as revoked when the wallet is offline.
+   * Absent until the first successful check, and on a credential that declares
+   * no status entry.
+   */
+  registryStatus?: RegistryStatus;
 }
 
 /**
@@ -161,6 +171,12 @@ export interface CredentialActions {
   removeCredential(id: string): void;
   getCredential(id: string): StoredCredential | undefined;
   getByType(type: string): StoredCredential[];
+  /**
+   * Apply registry answers by credential id. Ids no longer in the store are
+   * ignored. Returns whether any credential changed, so a caller can skip
+   * persisting a refresh that found nothing new.
+   */
+  setRegistryStatuses(statuses: ReadonlyMap<string, RegistryStatus>): boolean;
   loadFromStorage(storage: SecureStorage, namespace: string): Promise<void>;
   persistToStorage(storage: SecureStorage, namespace: string): Promise<void>;
   /** Clear only the in-memory list (e.g. on logout / wallet switch). Storage is untouched. */
@@ -260,6 +276,18 @@ export function createCredentialStore() {
 
     getByType(type) {
       return get().credentials.filter((c) => c.credentialType === type);
+    },
+
+    setRegistryStatuses(statuses) {
+      let changed = false;
+      const credentials = get().credentials.map((c) => {
+        const registryStatus = statuses.get(c.id);
+        if (!registryStatus || registryStatus === c.registryStatus) return c;
+        changed = true;
+        return { ...c, registryStatus };
+      });
+      if (changed) set({ credentials });
+      return changed;
     },
 
     async loadFromStorage(storage, namespace) {

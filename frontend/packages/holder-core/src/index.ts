@@ -43,6 +43,7 @@ export type {
   StoredSdJwtCredential,
   StoredLogo,
   PendingLogo,
+  RegistryStatus,
   StoredAttachment,
 } from "./state/index.js";
 export { createApprovalStore } from "./state/approval-store.js";
@@ -107,6 +108,16 @@ export {
   DidResolutionError,
 } from "./did/index.js";
 export type { ResolvedKey, EthCall } from "./did/index.js";
+
+// Credential status
+export {
+  isStatusSet,
+  readRegistryStatuses,
+  readStatusBitmap,
+  statusReference,
+  STATUS_PURPOSE,
+} from "./status/index.js";
+export type { StatusReference } from "./status/index.js";
 
 // Utilities
 export {

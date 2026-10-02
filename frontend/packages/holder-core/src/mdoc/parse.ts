@@ -71,6 +71,14 @@ export interface ParsedMdoc {
    */
   mandatoryElements: Record<string, string[]>;
   holderDid: string | null;
+  /**
+   * From the Sovra meta namespace: the credential's bit in its issuer's
+   * revocation and suspension lists, and the address those lists are kept
+   * under. An mdoc has no `credentialStatus` field, so this is where the issuer
+   * signs them. Null on a document that carries no such namespace.
+   */
+  statusListIndex: number | null;
+  issuerAddress: string | null;
 }
 
 export function parseIssuerSigned(issuerSignedB64u: string): ParsedMdoc {
@@ -117,7 +125,13 @@ export function parseIssuerSigned(issuerSignedB64u: string): ParsedMdoc {
     validUntil: toUnixSeconds(validity.get("validUntil")),
     mandatoryElements: mandatoryElements(meta.mandatory_elements),
     holderDid: typeof meta.holder_did === "string" ? meta.holder_did : null,
+    statusListIndex: statusListIndex(meta.status_list_index),
+    issuerAddress: typeof meta.issuer_address === "string" ? meta.issuer_address : null,
   };
+}
+
+function statusListIndex(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 /** Narrow the decoded `%{namespace => [element]}` map, dropping anything malformed. */

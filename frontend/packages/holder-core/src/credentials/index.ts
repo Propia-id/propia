@@ -28,6 +28,8 @@ import {
   parseIssuerSigned,
   SOVRA_META_NAMESPACE,
 } from "../mdoc/index.js";
+import type { EthCall } from "../did/index.js";
+import { readRegistryStatuses } from "../status/index.js";
 import { sha256, base64urlDecode, base64urlEncode } from "../utils/index.js";
 
 // ─── Types ────────────────────────────────────────────
@@ -532,6 +534,31 @@ export class CredentialManager {
       return;
     }
     await store.loadFromStorage(this.storage, this.namespace);
+  }
+
+  /**
+   * Re-read the active wallet's credentials against the revocation registry
+   * and persist whatever changed.
+   *
+   * A credential whose issuer's lists cannot be read keeps its last known
+   * status. The wallet may switch while the reads are in flight; their answers
+   * then belong to a holder who is no longer loaded, and are dropped.
+   */
+  async refreshRegistryStatuses(ethCall: EthCall, registryAddress: string): Promise<void> {
+    const ns = this.namespace;
+    if (!ns) return;
+
+    const statuses = await readRegistryStatuses(
+      ethCall,
+      registryAddress,
+      this.credentialStore.getState().credentials,
+    );
+    if (this.namespace !== ns) return;
+
+    const store = this.credentialStore.getState();
+    if (store.setRegistryStatuses(statuses)) {
+      await store.persistToStorage(this.storage, ns);
+    }
   }
 }
 
