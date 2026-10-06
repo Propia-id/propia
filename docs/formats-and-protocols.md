@@ -252,7 +252,7 @@ Productionizing this is tracked in **#195** (two phases: promote the rail as a b
 ### ✅ Shipped — mDoc, online profile (#97)
 Issuance over OID4VCI, presentation over OID4VP `direct_post`, verification both server-side and chain-only. See §2 for the three deliberate deviations from ISO.
 
-Two things are **not** implemented. **Proximity presentment** — BLE, NFC handover, session encryption — is a separate transport stack, not a variation on the online flow. And the **standalone verifier app cannot verify mDocs**: the session transcript that binds a presentation hashes the `response_uri`, and that app deliberately sends none so the exchange works with neither device having network access to the other. mDoc verification runs through the hosted OID4VP flow. The same holds for the wallet's own verify flow, which runs that app's exchange (`docs/flows.md`, diagram 6) and so checks SD-JWT credentials only.
+Two things are **not** implemented. **Proximity presentment** — BLE, NFC handover, session encryption — is a separate transport stack, not a variation on the online flow. And the **standalone verifier app cannot verify mDocs**: the session transcript that binds a presentation hashes the `response_uri`, and that app deliberately sends none so the exchange works with neither device having network access to the other. mDoc verification runs through the hosted OID4VP flow.
 
 ## The DID-resolution nuance (worth internalizing)
 

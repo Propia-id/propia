@@ -16,7 +16,6 @@ import type {
   StoredSdJwtCredential,
 } from "../src/index";
 import { sha256 } from "../src/index";
-import { bytesToHex } from "../src/utils/index";
 
 const YEAR = 365 * 86400;
 
@@ -173,63 +172,4 @@ function discloseOf(salt: string, key: string, value: unknown): string {
 
 function digestOf(disclosure: string): string {
   return b64u(sha256(utf8(disclosure)));
-}
-
-export interface ResolveDocument {
-  methods?: {
-    id: Uint8Array;
-    keyType: number;
-    pubKeyX: Uint8Array;
-    pubKeyY: Uint8Array;
-    relationships: number;
-  }[];
-  services?: { id: Uint8Array; serviceType: Uint8Array; endpoint: string }[];
-  created?: number;
-  updated?: number;
-  versionId?: number;
-  deactivated?: boolean;
-}
-
-/**
- * ABI-encode a SovraDIDRegistry `resolve(address)` return value — the inverse
- * of `decodeResolveResult`, for tests that stand in for the registry.
- */
-export function encodeResolveResult(doc: ResolveDocument = {}): string {
-  const { methods = [], services = [], deactivated = false } = doc;
-  const word = (value: number | Uint8Array): string =>
-    (typeof value === "number" ? value.toString(16) : bytesToHex(value, false)).padStart(64, "0");
-
-  const methodsData =
-    word(methods.length) +
-    methods
-      .map((m) => word(m.id) + word(m.keyType) + word(m.pubKeyX) + word(m.pubKeyY) + word(m.relationships))
-      .join("");
-
-  // Each tuple: id, serviceType, offset to the string (three words in), then
-  // the string's length and its bytes right-padded to a word boundary.
-  const tuples = services.map((s) => {
-    const bytes = bytesToHex(new TextEncoder().encode(s.endpoint), false);
-    const padded = bytes.padEnd(Math.ceil(bytes.length / 64) * 64, "0");
-    return word(s.id) + word(s.serviceType) + word(3 * 32) + word(bytes.length / 2) + padded;
-  });
-  let offset = services.length * 32;
-  const offsets = tuples.map((t) => {
-    const at = offset;
-    offset += t.length / 2;
-    return word(at);
-  });
-  const servicesData = word(services.length) + offsets.join("") + tuples.join("");
-
-  const methodsOffset = 6 * 32;
-  return (
-    "0x" +
-    word(methodsOffset) +
-    word(methodsOffset + methodsData.length / 2) +
-    word(doc.created ?? 1) +
-    word(doc.updated ?? 1) +
-    word(doc.versionId ?? 1) +
-    word(deactivated ? 1 : 0) +
-    methodsData +
-    servicesData
-  );
 }

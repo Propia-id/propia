@@ -93,6 +93,5 @@ export {
 
 export type {
   DecodedVerificationMethod,
-  DecodedServiceEndpoint,
   DecodedResolveResult,
 } from "@sovrahq/holder-core/utils";

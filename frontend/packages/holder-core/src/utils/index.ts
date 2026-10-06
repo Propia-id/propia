@@ -242,16 +242,8 @@ export interface DecodedVerificationMethod {
   relationships: number;
 }
 
-export interface DecodedServiceEndpoint {
-  id: Uint8Array;
-  /** keccak256 of the type string, e.g. keccak256("OpenID4VCIIssuer"). */
-  serviceType: Uint8Array;
-  endpoint: string;
-}
-
 export interface DecodedResolveResult {
   methods: DecodedVerificationMethod[];
-  services: DecodedServiceEndpoint[];
   created: number;
   updated: number;
   versionId: number;
@@ -315,48 +307,7 @@ export function decodeResolveResult(data: string): DecodedResolveResult {
     });
   }
 
-  const services = decodeServices(hex, decodeUint64(data, 1) * 2);
-
-  return { methods, services, created, updated, versionId, deactivated };
-}
-
-/**
- * `ServiceEndpoint` carries a `string`, so the array is of dynamic tuples: a
- * count, then one offset per element (relative to the word after the count),
- * and each tuple holds its own offset to the string (relative to the tuple).
- */
-function decodeServices(hex: string, start: number): DecodedServiceEndpoint[] {
-  const wordAt = (at: number, what: string): string => {
-    const w = hex.slice(at, at + 64);
-    if (w.length !== 64) throw new Error(`ABI data ends before ${what}`);
-    return w;
-  };
-  const intAt = (at: number, what: string): number => {
-    const value = parseInt(wordAt(at, what), 16);
-    if (!Number.isSafeInteger(value)) throw new Error(`${what} is not a number`);
-    return value;
-  };
-
-  const count = intAt(start, "the service endpoint count");
-  const elements = start + 64;
-  const services: DecodedServiceEndpoint[] = [];
-  for (let i = 0; i < count; i++) {
-    const tuple = elements + intAt(elements + i * 64, `service ${i}'s offset`) * 2;
-    const id = hexToBytes(wordAt(tuple, `service ${i}'s id`));
-    const serviceType = hexToBytes(wordAt(tuple + 64, `service ${i}'s type`));
-    const str = tuple + intAt(tuple + 128, `service ${i}'s endpoint offset`) * 2;
-    const length = intAt(str, `service ${i}'s endpoint length`);
-    const body = hex.slice(str + 64, str + 64 + length * 2);
-    if (body.length !== length * 2) {
-      throw new Error(`ABI data ends inside service ${i}'s endpoint`);
-    }
-    services.push({
-      id,
-      serviceType,
-      endpoint: new TextDecoder().decode(hexToBytes(body)),
-    });
-  }
-  return services;
+  return { methods, created, updated, versionId, deactivated };
 }
 
 // ─── EIP-712 ──────────────────────────────────────────

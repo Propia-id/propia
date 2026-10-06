@@ -1,9 +1,9 @@
 /**
  * OpenID4VP request construction, for a verifier whose holder answers by QR.
  *
- * Shared by the standalone verifier app and the wallet's own verify flow, and
- * tested directly against the wallet's parser — this URI is the entire
- * contract between the two devices, and a mismatch is only visible at a demo.
+ * Used by the standalone verifier app, and tested directly against the
+ * wallet's parser — this URI is the entire contract between the two devices,
+ * and a mismatch is only visible at a demo.
  */
 
 export interface PresentationRequestInput {

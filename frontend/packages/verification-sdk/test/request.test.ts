@@ -1,7 +1,6 @@
 /**
- * Contract test: the request a verifier builds with this SDK — the standalone
- * verifier app and the wallet's own verify flow alike — parsed by the code the
- * wallet actually runs.
+ * Contract test: the request a verifier builds with this SDK — as the
+ * standalone verifier app does — parsed by the code the wallet actually runs.
  *
  * `buildPresentationRequestUri` and `PresentationProtocol` live in separate
  * packages with no shared schema, so nothing but a test like this keeps them
