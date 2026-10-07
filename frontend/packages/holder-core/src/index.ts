@@ -86,6 +86,7 @@ export {
   pickClaimLabels,
   pickLogo,
   toStoredDisplay,
+  parsePresentationOutcome,
 } from "./protocols/index.js";
 export { assertionToJwtSegment } from "./protocols/index.js";
 export type {
@@ -94,6 +95,8 @@ export type {
   DCQLQuery,
   VPRequest,
   ApprovalData,
+  PresentationOutcome,
+  RejectionReason,
   HolderAssertion,
   HolderSigner,
   RawEs256Signature,

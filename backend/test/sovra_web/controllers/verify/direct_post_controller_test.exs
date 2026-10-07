@@ -82,7 +82,7 @@ defmodule SovraWeb.Verify.DirectPostControllerTest do
     input <> "." <> sig
   end
 
-  defp setup_pending_session do
+  defp setup_pending_session(requested_paths \\ [["studentName"]]) do
     issuer_ws = create_workspace("Issuer")
     verifier_ws = create_workspace("Verifier")
     schema = create_schema(issuer_ws.id)
@@ -99,7 +99,7 @@ defmodule SovraWeb.Verify.DirectPostControllerTest do
         %{
           "id" => "diploma",
           "format" => "vc+sd-jwt",
-          "claims" => [%{"path" => ["studentName"]}]
+          "claims" => Enum.map(requested_paths, &%{"path" => &1})
         }
       ]
     }
@@ -126,34 +126,45 @@ defmodule SovraWeb.Verify.DirectPostControllerTest do
   end
 
   defp valid_vp_token(ctx) do
-    payload = %{
+    Jason.encode!(%{"diploma" => ctx.sd_jwt <> build_kb(ctx.holder_keys, kb_payload(ctx))})
+  end
+
+  # OID4VP 1.0 §8.2: the wallet form-encodes the Authorization Response.
+  defp direct_post(conn, session_id, params) do
+    conn
+    |> put_req_header("content-type", "application/x-www-form-urlencoded")
+    |> post("/wallet/verifier/direct_post/#{session_id}", URI.encode_query(params))
+  end
+
+  defp trust_holder_keys(ctx) do
+    Application.put_env(:sovra, {StubResolver, :keys}, [
+      %{kty: "EC", crv: "P-256", x: ctx.holder_keys.x, y: ctx.holder_keys.y}
+    ])
+  end
+
+  defp kb_payload(ctx) do
+    %{
       "iss" => ctx.holder_did,
       "aud" => ctx.session.client_id,
       "nonce" => ctx.session.nonce,
       "iat" => System.system_time(:second),
       "sd_hash" => ctx.sd_hash
     }
-
-    Jason.encode!(%{"diploma" => ctx.sd_jwt <> build_kb(ctx.holder_keys, payload)})
   end
 
   describe "POST /wallet/verifier/direct_post/:session_id" do
-    test "200 with a valid vp_token marks the session completed", %{conn: conn} do
+    test "200 verified with a valid vp_token, and the session completed", %{conn: conn} do
       ctx = setup_pending_session()
+      trust_holder_keys(ctx)
 
-      Application.put_env(:sovra, {StubResolver, :keys}, [
-        %{kty: "EC", crv: "P-256", x: ctx.holder_keys.x, y: ctx.holder_keys.y}
-      ])
-
-      vp = valid_vp_token(ctx)
-
-      _resp =
-        conn
-        |> post("/wallet/verifier/direct_post/#{ctx.session.id}", %{
-          "vp_token" => vp,
+      conn =
+        direct_post(conn, ctx.session.id, %{
+          "vp_token" => valid_vp_token(ctx),
           "state" => ctx.session.state
         })
-        |> json_response(200)
+
+      assert json_response(conn, 200) == %{"verification_result" => "verified"}
+      assert get_resp_header(conn, "cache-control") == ["no-store"]
 
       {:ok, refreshed} = Verification.get_session(ctx.session.id)
       assert refreshed.status == "completed"
@@ -164,16 +175,18 @@ defmodule SovraWeb.Verify.DirectPostControllerTest do
       )
     end
 
-    test "200 with an invalid vp_token records a failure (no 4xx to wallet)", %{conn: conn} do
+    test "200 rejected with an invalid vp_token, recording the full tag", %{conn: conn} do
       ctx = setup_pending_session()
 
-      _resp =
+      resp =
         conn
-        |> post("/wallet/verifier/direct_post/#{ctx.session.id}", %{
+        |> direct_post(ctx.session.id, %{
           "vp_token" => "not-a-valid-vp-token",
           "state" => ctx.session.state
         })
         |> json_response(200)
+
+      assert resp == %{"verification_result" => "rejected", "reason" => "invalid_presentation"}
 
       {:ok, refreshed} = Verification.get_session(ctx.session.id)
       assert refreshed.status == "failed"
@@ -185,43 +198,83 @@ defmodule SovraWeb.Verify.DirectPostControllerTest do
       )
     end
 
-    test "200 with a vp_token missing the DCQL credential id records a failure", %{conn: conn} do
+    test "200 rejected with a vp_token missing the DCQL credential id", %{conn: conn} do
       ctx = setup_pending_session()
-
-      Application.put_env(:sovra, {StubResolver, :keys}, [
-        %{kty: "EC", crv: "P-256", x: ctx.holder_keys.x, y: ctx.holder_keys.y}
-      ])
-
-      payload = %{
-        "iss" => ctx.holder_did,
-        "aud" => ctx.session.client_id,
-        "nonce" => ctx.session.nonce,
-        "iat" => System.system_time(:second),
-        "sd_hash" => ctx.sd_hash
-      }
+      trust_holder_keys(ctx)
 
       # Wrong DCQL key — the session asks for "diploma".
-      vp = Jason.encode!(%{"other_id" => ctx.sd_jwt <> build_kb(ctx.holder_keys, payload)})
+      vp =
+        Jason.encode!(%{"other_id" => ctx.sd_jwt <> build_kb(ctx.holder_keys, kb_payload(ctx))})
 
-      _resp =
+      resp =
         conn
-        |> post("/wallet/verifier/direct_post/#{ctx.session.id}", %{
-          "vp_token" => vp,
-          "state" => ctx.session.state
-        })
+        |> direct_post(ctx.session.id, %{"vp_token" => vp, "state" => ctx.session.state})
         |> json_response(200)
+
+      assert resp == %{"verification_result" => "rejected", "reason" => "invalid_presentation"}
 
       {:ok, refreshed} = Verification.get_session(ctx.session.id)
       assert refreshed.status == "failed"
       assert refreshed.error == "malformed_vp_token"
     end
 
-    test "200 (no-op) when resubmitting against an already-terminal session", %{conn: conn} do
+    test "passes an actionable reason through to the holder", %{conn: conn} do
+      ctx = setup_pending_session()
+      trust_holder_keys(ctx)
+      past = DateTime.utc_now() |> DateTime.add(-60) |> DateTime.truncate(:second)
+      Sovra.Repo.update!(Ecto.Changeset.change(ctx.session, expires_at: past))
+
+      resp =
+        conn
+        |> direct_post(ctx.session.id, %{
+          "vp_token" => valid_vp_token(ctx),
+          "state" => ctx.session.state
+        })
+        |> json_response(200)
+
+      assert resp == %{"verification_result" => "rejected", "reason" => "session_expired"}
+    end
+
+    test "reports a claim the credential lacks without naming it", %{conn: conn} do
+      ctx = setup_pending_session([["studentName"], ["gpa"]])
+      trust_holder_keys(ctx)
+
+      resp =
+        conn
+        |> direct_post(ctx.session.id, %{
+          "vp_token" => valid_vp_token(ctx),
+          "state" => ctx.session.state
+        })
+        |> json_response(200)
+
+      assert resp == %{"verification_result" => "rejected", "reason" => "request_not_satisfied"}
+
+      {:ok, refreshed} = Verification.get_session(ctx.session.id)
+      assert refreshed.error == "missing_required_claim:gpa"
+    end
+
+    test "reports our own dependency failing as a verifier error", %{conn: conn} do
+      # No keys installed: the holder DID does not resolve.
+      ctx = setup_pending_session()
+
+      resp =
+        conn
+        |> direct_post(ctx.session.id, %{
+          "vp_token" => valid_vp_token(ctx),
+          "state" => ctx.session.state
+        })
+        |> json_response(200)
+
+      assert resp == %{"verification_result" => "rejected", "reason" => "verifier_error"}
+    end
+
+    test "200 already_answered when resubmitting against an already-terminal session",
+         %{conn: conn} do
       ctx = setup_pending_session()
 
       # First submission: malformed → session goes to "failed".
       conn
-      |> post("/wallet/verifier/direct_post/#{ctx.session.id}", %{
+      |> direct_post(ctx.session.id, %{
         "vp_token" => "not-a-valid-vp-token",
         "state" => ctx.session.state
       })
@@ -231,27 +284,76 @@ defmodule SovraWeb.Verify.DirectPostControllerTest do
         Verification.get_session(ctx.session.id)
 
       # Second submission against the same (now terminal) session must not
-      # 500 and must not overwrite the original outcome.
-      conn
-      |> post("/wallet/verifier/direct_post/#{ctx.session.id}", %{
-        "vp_token" => valid_vp_token(ctx),
-        "state" => ctx.session.state
-      })
-      |> json_response(200)
+      # 500, must not overwrite the original outcome, and must not repeat it.
+      resp =
+        conn
+        |> direct_post(ctx.session.id, %{
+          "vp_token" => valid_vp_token(ctx),
+          "state" => ctx.session.state
+        })
+        |> json_response(200)
+
+      assert resp == %{"verification_result" => "already_answered"}
 
       {:ok, refreshed} = Verification.get_session(ctx.session.id)
       assert refreshed.status == "failed"
       assert refreshed.error == original_error
     end
 
-    test "404 when session id doesn't match the state", %{conn: conn} do
+    test "rejects as session_expired a session the sweeper already expired", %{conn: conn} do
       ctx = setup_pending_session()
-      vp = valid_vp_token(ctx)
+      Sovra.Repo.update!(Ecto.Changeset.change(ctx.session, status: "expired"))
 
       resp =
         conn
-        |> post("/wallet/verifier/direct_post/#{Ecto.UUID.generate()}", %{
-          "vp_token" => vp,
+        |> direct_post(ctx.session.id, %{
+          "vp_token" => valid_vp_token(ctx),
+          "state" => ctx.session.state
+        })
+        |> json_response(200)
+
+      assert resp == %{"verification_result" => "rejected", "reason" => "session_expired"}
+    end
+
+    # Transitional: wallets released before the switch to form encoding.
+    test "still accepts a JSON body", %{conn: conn} do
+      ctx = setup_pending_session()
+      trust_holder_keys(ctx)
+
+      resp =
+        conn
+        |> put_req_header("content-type", "application/json")
+        |> post(
+          "/wallet/verifier/direct_post/#{ctx.session.id}",
+          Jason.encode!(%{"vp_token" => valid_vp_token(ctx), "state" => ctx.session.state})
+        )
+        |> json_response(200)
+
+      assert resp == %{"verification_result" => "verified"}
+    end
+
+    test "415 for a body that is neither form-encoded nor JSON", %{conn: conn} do
+      ctx = setup_pending_session()
+
+      resp =
+        conn
+        |> put_req_header("content-type", "text/plain")
+        |> post("/wallet/verifier/direct_post/#{ctx.session.id}", "vp_token=x")
+        |> json_response(415)
+
+      assert resp == %{"error" => "unsupported_media_type"}
+
+      {:ok, refreshed} = Verification.get_session(ctx.session.id)
+      assert refreshed.status == "pending"
+    end
+
+    test "404 when session id doesn't match the state", %{conn: conn} do
+      ctx = setup_pending_session()
+
+      resp =
+        conn
+        |> direct_post(Ecto.UUID.generate(), %{
+          "vp_token" => valid_vp_token(ctx),
           "state" => ctx.session.state
         })
         |> json_response(404)
@@ -262,7 +364,7 @@ defmodule SovraWeb.Verify.DirectPostControllerTest do
     test "404 when state is unknown", %{conn: conn} do
       resp =
         conn
-        |> post("/wallet/verifier/direct_post/#{Ecto.UUID.generate()}", %{
+        |> direct_post(Ecto.UUID.generate(), %{
           "vp_token" => "anything",
           "state" => "unknown-state-#{System.unique_integer([:positive])}"
         })
@@ -276,7 +378,7 @@ defmodule SovraWeb.Verify.DirectPostControllerTest do
 
       resp =
         conn
-        |> post("/wallet/verifier/direct_post/#{ctx.session.id}", %{"state" => ctx.session.state})
+        |> direct_post(ctx.session.id, %{"state" => ctx.session.state})
         |> json_response(400)
 
       assert resp == %{"error" => "missing_vp_token"}
@@ -287,7 +389,7 @@ defmodule SovraWeb.Verify.DirectPostControllerTest do
 
       resp =
         conn
-        |> post("/wallet/verifier/direct_post/#{ctx.session.id}", %{"vp_token" => "x"})
+        |> direct_post(ctx.session.id, %{"vp_token" => "x"})
         |> json_response(400)
 
       assert resp == %{"error" => "missing_state"}

@@ -15,6 +15,11 @@ The system SHALL support credential presentation via both DIDComm and OpenID4VP 
 - WHEN the holder scans the QR and the wallet parses the DCQL query
 - THEN the wallet identifies matching credentials, displays them to the holder, the holder selects which credential to present and which claims to reveal, and the wallet sends a direct_post response with the vp_token and state parameter
 
+#### Scenario: Show the verifier's verdict
+- GIVEN the holder has approved a presentation answered by direct_post
+- WHEN the verifier's response carries a verdict
+- THEN the wallet shows whether the verifier accepted the credential and, if it did not, why; a verifier that returns no verdict is shown as shared, without claiming it was accepted
+
 #### Scenario: Selective disclosure
 - GIVEN a verifier requests a "UniversityDiploma" credential but only needs studentName and degree
 - WHEN the holder reviews the presentation request

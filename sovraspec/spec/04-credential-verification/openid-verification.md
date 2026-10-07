@@ -20,6 +20,16 @@ The system SHALL create verification sessions with DCQL queries, generate author
 - WHEN the holder's wallet sends a direct_post response containing the vp_token and state parameter
 - THEN the system looks up the session by state, parses the vp_token, validates the credential signatures, checks credential status against the BitstringStatusList, updates the session to "completed" with the presentation data, and emits a webhook event
 
+#### Scenario: Wallet learns the verdict
+- GIVEN a holder's wallet has sent a form-encoded direct_post response for a pending session
+- WHEN the system finishes validating the presentation
+- THEN the direct_post response carries the verdict: "verified", or "rejected" with a reason the holder can act on (credential expired, revoked or suspended; session expired; unknown issuer; request not satisfied; verifier error; invalid presentation), while the session and the webhook keep the precise error
+
+#### Scenario: Resubmission against a finished session
+- GIVEN a verification session that has already reached a verdict
+- WHEN a wallet posts another vp_token for it
+- THEN the session is left unchanged and the response says the request was already answered, without repeating the verdict
+
 #### Scenario: Credential status check during verification
 - GIVEN a holder presents a credential that has been revoked or suspended
 - WHEN the system extracts the credentialStatus from the vp_token and checks it against the BitstringStatusList

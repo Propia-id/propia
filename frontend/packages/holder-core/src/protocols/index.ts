@@ -110,6 +110,66 @@ export interface VPRequest {
   verified: boolean;
 }
 
+/**
+ * Why a verifier rejected a presentation, as it tells the wallet. Coarse by
+ * design: what the holder can act on, and `invalid_presentation` for every
+ * failed check they cannot.
+ */
+export type RejectionReason =
+  | "credential_expired"
+  | "credential_revoked"
+  | "credential_suspended"
+  | "session_expired"
+  | "unknown_issuer"
+  | "request_not_satisfied"
+  | "verifier_error"
+  | "invalid_presentation";
+
+const REJECTION_REASONS: ReadonlySet<string> = new Set<RejectionReason>([
+  "credential_expired",
+  "credential_revoked",
+  "credential_suspended",
+  "session_expired",
+  "unknown_issuer",
+  "request_not_satisfied",
+  "verifier_error",
+  "invalid_presentation",
+]);
+
+/**
+ * The verifier's answer to a direct_post. Its `verification_result` is a
+ * Sovra extension to the OID4VP 1.0 §8.2 response, which the spec permits;
+ * a verifier that does not send one yields `submitted` — delivered, verdict
+ * unknown. `already_answered` means the request had reached a verdict before
+ * this submission, which therefore changed nothing.
+ */
+export type PresentationOutcome =
+  | { result: "verified" }
+  | { result: "rejected"; reason?: RejectionReason }
+  | { result: "already_answered" }
+  | { result: "submitted" };
+
+/**
+ * Unknown values read as the nearest thing this release understands: §8.2
+ * has the wallet ignore what it does not recognise, so a reason added later is
+ * a rejection without a reason, and a result added later is no verdict at all.
+ */
+export function parsePresentationOutcome(body: unknown): PresentationOutcome {
+  if (typeof body !== "object" || body === null) return { result: "submitted" };
+  const { verification_result: result, reason } = body as Record<string, unknown>;
+  switch (result) {
+    case "verified":
+    case "already_answered":
+      return { result };
+    case "rejected":
+      return typeof reason === "string" && REJECTION_REASONS.has(reason)
+        ? { result, reason: reason as RejectionReason }
+        : { result };
+    default:
+      return { result: "submitted" };
+  }
+}
+
 export interface ApprovalData {
   /**
    * The attested name, and only from a request whose signature verified.
@@ -866,15 +926,18 @@ export class PresentationProtocol {
 
   /**
    * POST a vp_token to the verifier's response_uri using the OID4VP
-   * `direct_post` response mode. Throws if the request lacks the
-   * required `responseUri` / `state` fields.
+   * `direct_post` response mode, and return the verdict it answers with.
+   * Throws if the request lacks the required `responseUri` / `state` fields.
    *
    * Per OID4VP, a DCQL request expects the vp_token keyed by the query's
    * credential ids, not the bare presentation. The envelope is added here
    * rather than in `executePresentation` because the QR path (`/response-qr`,
    * read by the standalone verifier app) needs the bare form.
    */
-  async executeDirectPost(request: VPRequest, vpToken: string): Promise<void> {
+  async executeDirectPost(
+    request: VPRequest,
+    vpToken: string,
+  ): Promise<PresentationOutcome> {
     // `resolveRequest` already refuses an unsigned direct_post, but holder-core
     // is a package: the invariant has to hold at its own boundary too.
     if (!request.verified) {
@@ -891,11 +954,12 @@ export class PresentationProtocol {
     if (!credentialId) {
       throw new Error("direct_post requires a DCQL credential id to key the vp_token");
     }
-    await this.api.directPost(
+    const body = await this.api.directPost(
       request.responseUri,
       JSON.stringify({ [credentialId]: vpToken }),
       request.state,
     );
+    return parsePresentationOutcome(body);
   }
 
   /** Execute the full OpenID4VP presentation flow and return the VP token. */

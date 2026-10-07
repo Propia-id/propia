@@ -155,6 +155,10 @@ Selective disclosure in action: the wallet authenticates the verifier first, the
   A signed request is answered by direct_post to its response_uri. An unsigned one
   never is: the wallet shows the response as a QR, since nothing binds that URI to
   the verifier.
+
+  The direct_post answer carries the verdict — verified, or rejected with a reason
+  the holder can act on — so the wallet shows the outcome rather than just "sent".
+  The QR path has no channel back, so there the wallet can only say it was shared.
 ```
 
 ## 5. Credential verification (verifier ↔ chain)

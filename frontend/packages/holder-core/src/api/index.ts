@@ -229,15 +229,24 @@ export class ApiClient {
 
   /**
    * Submit a holder-signed vp_token to the verifier's response_uri (the
-   * direct_post target carried in the OID4VP authorization request).
+   * direct_post target carried in the OID4VP authorization request), and
+   * return the JSON object the Response Endpoint answers with.
+   *
+   * OID4VP 1.0 §8.2 has the body form-encoded. It is built by hand rather
+   * than from a `URLSearchParams`, so what goes on the wire does not depend on
+   * how axios treats React Native's own implementation of that class.
    */
   async directPost(
     responseUri: string,
     vpToken: string,
     state: string,
-  ): Promise<void> {
+  ): Promise<unknown> {
     this.assertSafeOrigin(responseUri, "submit a credential to");
-    await axios.post(responseUri, { vp_token: vpToken, state });
+    const body = `vp_token=${encodeURIComponent(vpToken)}&state=${encodeURIComponent(state)}`;
+    const { data } = await axios.post<unknown>(responseUri, body, {
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    });
+    return data;
   }
 
   // ─── L2 JSON-RPC ─────────────────────────────────
