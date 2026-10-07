@@ -38,6 +38,7 @@ defmodule Sovra.LogTest do
       "credential.design.deleted",
       "credential.design.updated",
       "credential.issued",
+      "credential.offer.code_regenerated",
       "credential.offer.created",
       "credential.request.rejected",
       "credential.revoked",

@@ -41,6 +41,24 @@ defmodule Sovra.Issuer.CredentialOffer do
     |> unique_constraint(:status_list_index, name: @status_index_constraint)
   end
 
+  @doc """
+  Re-mint the pre-authorized code on an offer that has not been claimed.
+
+  The plaintext code is never stored — only this hash — so the QR that carries
+  it cannot be rebuilt from the row once the operator has closed it. Rotating
+  the hash hands them a new scannable code while the offer keeps its identity:
+  same `id` (the credential id the whole flow is correlated on) and same
+  `status_list_index`, so nothing downstream has to be reissued.
+
+  Any code already handed out stops working the moment this lands. That is the
+  point — one offer, one live code.
+  """
+  def regenerated_code_changeset(record, code_hash) do
+    record
+    |> change(pre_authorized_code_hash: code_hash)
+    |> unique_constraint(:pre_authorized_code_hash)
+  end
+
   def token_exchanged_changeset(record, attrs) do
     record
     |> cast(attrs, [:access_token_hash, :c_nonce])

@@ -194,6 +194,7 @@ defmodule SovraWeb.Router do
     put "/schemas/:schema_id/layout", AdminController, :update_layout
     post "/offers", OfferController, :create
     get "/offers", AdminController, :list_offers
+    post "/offers/:id/regenerate", OfferController, :regenerate
     get "/credentials", AdminController, :list_issued_credentials
     get "/credentials/:id", AdminController, :show_issued_credential
     post "/documents", DocumentController, :create

@@ -70,6 +70,97 @@ defmodule SovraWeb.Issuer.OfferController do
     }
   )
 
+  @regenerated_body %OpenApiSpex.Schema{
+    type: :object,
+    properties: %{
+      credential_id: %OpenApiSpex.Schema{
+        type: :string,
+        format: :uuid,
+        description: "Unchanged — the same credential id the offer was created with."
+      },
+      offer_uri: %OpenApiSpex.Schema{type: :string},
+      pre_authorized_code: %OpenApiSpex.Schema{type: :string},
+      expires_at: %OpenApiSpex.Schema{type: :string, format: :"date-time"}
+    }
+  }
+
+  operation(:regenerate,
+    summary: "Regenerate a credential offer's QR",
+    description:
+      "Re-mint the pre-authorized code of an unclaimed offer and return a fresh " <>
+        "`offer_uri`. The offer URI carries the plaintext code and only its hash is " <>
+        "stored, so a QR that has been closed cannot otherwise be shown again. The " <>
+        "offer keeps its credential id and status list index; **any code already " <>
+        "shared for it stops working**. Only a `pending`, unexpired offer can be " <>
+        "regenerated.",
+    parameters: [
+      id: [in: :path, type: %OpenApiSpex.Schema{type: :string, format: :uuid}, required: true]
+    ],
+    responses: %{
+      200 => {"Offer regenerated", "application/json", @regenerated_body},
+      401 => {"Missing or invalid auth", "application/json", @error},
+      404 => {"Offer not found", "application/json", @error},
+      409 => {"Offer already claimed or expired", "application/json", @error}
+    }
+  )
+
+  def regenerate(conn, %{"id" => id}) do
+    # A malformed UUID would raise Ecto.Query.CastError on the lookup; it is a
+    # 404 for the same reason an unknown id is.
+    case Ecto.UUID.cast(id) do
+      :error ->
+        conn |> put_status(404) |> json(%{error: "offer_not_found"})
+
+      {:ok, offer_id} ->
+        regenerate_offer(conn, conn.assigns.current_workspace_id, offer_id)
+    end
+  end
+
+  defp regenerate_offer(conn, workspace_id, offer_id) do
+    case Issuer.regenerate_offer_code(workspace_id, offer_id) do
+      {:ok, %{offer: offer, offer_uri: offer_uri, pre_authorized_code: code}} ->
+        json(conn, %{
+          credential_id: offer.id,
+          offer_uri: offer_uri,
+          pre_authorized_code: code,
+          expires_at: DateTime.to_iso8601(offer.expires_at)
+        })
+
+      {:error, :workspace_not_found} ->
+        conn |> put_status(404) |> json(%{error: "workspace_not_found"})
+
+      {:error, :workspace_not_provisioned} ->
+        conn |> put_status(409) |> json(%{error: "workspace_not_provisioned"})
+
+      {:error, :offer_not_found} ->
+        conn |> put_status(404) |> json(%{error: "offer_not_found"})
+
+      {:error, :offer_expired} ->
+        conn
+        |> put_status(409)
+        |> json(%{
+          error: "offer_expired",
+          details: "this offer's pickup window has closed; issue a new credential instead"
+        })
+
+      {:error, {:offer_not_pending, status}} ->
+        conn
+        |> put_status(409)
+        |> json(%{
+          error: "offer_not_pending",
+          details:
+            "this offer is #{status}; a holder has already started claiming it, " <>
+              "so its QR can no longer be reissued"
+        })
+
+      {:error, %Ecto.Changeset{}} ->
+        conn |> put_status(422) |> json(%{error: "offer_regeneration_failed"})
+
+      {:error, reason} ->
+        conn |> put_status(422) |> json(%{error: to_string(reason)})
+    end
+  end
+
   def create(conn, params) do
     workspace_id = conn.assigns.current_workspace_id
 

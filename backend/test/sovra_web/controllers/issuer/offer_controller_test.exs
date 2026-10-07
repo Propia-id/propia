@@ -260,4 +260,129 @@ defmodule SovraWeb.Issuer.OfferControllerTest do
       assert resp["error"] == "schema_not_found"
     end
   end
+
+  describe "POST /dashboard/issuer/offers/:id/regenerate" do
+    defp authed(conn, ws, user) do
+      {:ok, token} = UserSession.create(user.id, ws.id, user.is_admin)
+      put_req_header(conn, "authorization", "Bearer #{token}")
+    end
+
+    defp create_offer(ws, schema) do
+      {:ok, result} =
+        Issuer.create_credential_offer(ws.id, schema.schema_id, %{"name" => "Alice"})
+
+      result
+    end
+
+    test "200 with a fresh code for the same credential", %{conn: conn} do
+      %{workspace: ws, user: user} = create_workspace()
+      schema = create_schema(ws.id)
+      created = create_offer(ws, schema)
+
+      resp =
+        conn
+        |> authed(ws, user)
+        |> post("/dashboard/issuer/offers/#{created.offer.id}/regenerate")
+        |> json_response(200)
+
+      assert resp["credential_id"] == created.offer.id
+      assert resp["pre_authorized_code"] != created.pre_authorized_code
+      assert resp["offer_uri"] != created.offer_uri
+      assert String.contains?(resp["offer_uri"], resp["pre_authorized_code"])
+    end
+
+    test "the regenerated code redeems the same credential, the old one stops working", %{
+      conn: conn
+    } do
+      %{workspace: ws, user: user} = create_workspace()
+      schema = create_schema(ws.id)
+      created = create_offer(ws, schema)
+
+      resp =
+        conn
+        |> authed(ws, user)
+        |> post("/dashboard/issuer/offers/#{created.offer.id}/regenerate")
+        |> json_response(200)
+
+      assert {:error, :invalid_code} = Issuer.exchange_token(created.pre_authorized_code)
+      assert {:ok, _} = Issuer.exchange_token(resp["pre_authorized_code"])
+
+      offer = Sovra.Repo.get!(Sovra.Issuer.CredentialOffer, created.offer.id)
+      assert offer.status_list_index == created.offer.status_list_index
+    end
+
+    test "404 for an offer belonging to another workspace", %{conn: conn} do
+      %{workspace: ws, user: user} = create_workspace()
+      %{workspace: other_ws} = create_workspace()
+      other_schema = create_schema(other_ws.id)
+      created = create_offer(other_ws, other_schema)
+
+      resp =
+        conn
+        |> authed(ws, user)
+        |> post("/dashboard/issuer/offers/#{created.offer.id}/regenerate")
+        |> json_response(404)
+
+      assert resp["error"] == "offer_not_found"
+    end
+
+    test "404 for an unknown or malformed id", %{conn: conn} do
+      %{workspace: ws, user: user} = create_workspace()
+
+      for id <- [Ecto.UUID.generate(), "not-a-uuid"] do
+        resp =
+          conn
+          |> authed(ws, user)
+          |> post("/dashboard/issuer/offers/#{id}/regenerate")
+          |> json_response(404)
+
+        assert resp["error"] == "offer_not_found"
+      end
+    end
+
+    test "409 once the holder has exchanged the code", %{conn: conn} do
+      %{workspace: ws, user: user} = create_workspace()
+      schema = create_schema(ws.id)
+      created = create_offer(ws, schema)
+      {:ok, _} = Issuer.exchange_token(created.pre_authorized_code)
+
+      resp =
+        conn
+        |> authed(ws, user)
+        |> post("/dashboard/issuer/offers/#{created.offer.id}/regenerate")
+        |> json_response(409)
+
+      assert resp["error"] == "offer_not_pending"
+    end
+
+    test "409 for an expired offer", %{conn: conn} do
+      %{workspace: ws, user: user} = create_workspace()
+      schema = create_schema(ws.id)
+      created = create_offer(ws, schema)
+
+      past = DateTime.utc_now() |> DateTime.add(-60, :second) |> DateTime.truncate(:second)
+
+      Sovra.Repo.get!(Sovra.Issuer.CredentialOffer, created.offer.id)
+      |> Ecto.Changeset.change(expires_at: past)
+      |> Sovra.Repo.update!()
+
+      resp =
+        conn
+        |> authed(ws, user)
+        |> post("/dashboard/issuer/offers/#{created.offer.id}/regenerate")
+        |> json_response(409)
+
+      assert resp["error"] == "offer_expired"
+    end
+
+    test "401 without a session", %{conn: conn} do
+      %{workspace: ws} = create_workspace()
+      schema = create_schema(ws.id)
+      created = create_offer(ws, schema)
+
+      assert conn
+             |> post("/dashboard/issuer/offers/#{created.offer.id}/regenerate")
+             |> json_response(401)
+    end
+  end
 end

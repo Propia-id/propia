@@ -705,6 +705,87 @@ defmodule Sovra.Issuer do
     end)
   end
 
+  @doc """
+  Re-mint the pre-authorized code of an unclaimed offer and rebuild its QR.
+
+  The offer URI carries the plaintext code, and only its SHA-256 is persisted,
+  so an operator who closes the QR cannot get it back: the offer stays valid
+  and claimable but unreachable until it expires. Rather than storing the
+  plaintext — a live bearer token at rest, which is what the hashing avoids —
+  this rotates the code and rebuilds the URI around it.
+
+  The offer keeps its `id` and `status_list_index`, so the credential the
+  holder ends up with is the one the operator already created.
+
+  Only a `pending`, unexpired offer can be regenerated. At `token_exchanged`
+  the wallet is mid-flow and already holds an access token; at `issued` the
+  code hash and claims are gone.
+  """
+  def regenerate_offer_code(workspace_id, offer_id) do
+    with {:ok, workspace} <- Workspaces.get_workspace(workspace_id),
+         :ok <- Workspaces.assert_provisioned(workspace),
+         {:ok, offer} <- get_pending_offer(workspace_id, offer_id) do
+      {plaintext_code, code_hash} = TokenHash.generate_and_hash(32)
+
+      case Repo.update(CredentialOffer.regenerated_code_changeset(offer, code_hash)) do
+        {:ok, offer} ->
+          # Worth an event of its own: the previous code stops working here, so
+          # a wallet failing to redeem a QR an operator shared earlier is
+          # explained by this line and nothing else.
+          Log.event(:info, "credential offer code regenerated",
+            event: "credential.offer.code_regenerated",
+            credential_id: offer.id,
+            workspace_id: workspace_id,
+            schema_id: offer.schema_id
+          )
+
+          {:ok,
+           %{
+             offer: offer,
+             offer_uri: build_offer_uri(plaintext_code, offer, offer.schema, workspace),
+             pre_authorized_code: plaintext_code
+           }}
+
+        {:error, reason} ->
+          reject_regeneration(workspace_id, offer_id, reason)
+      end
+    else
+      {:error, reason} -> reject_regeneration(workspace_id, offer_id, reason)
+    end
+  end
+
+  # Ownership before state: a caller reaching for an offer that is not theirs is
+  # answered on that alone, never told whether some other workspace's offer is
+  # still claimable.
+  defp get_pending_offer(workspace_id, offer_id) do
+    case Repo.get_by(CredentialOffer, id: offer_id, issuer_id: workspace_id) do
+      nil ->
+        {:error, :offer_not_found}
+
+      %{status: "pending"} = offer ->
+        if DateTime.compare(DateTime.utc_now(), offer.expires_at) == :gt do
+          {:error, :offer_expired}
+        else
+          {:ok, Repo.preload(offer, :schema)}
+        end
+
+      offer ->
+        {:error, {:offer_not_pending, offer.status}}
+    end
+  end
+
+  defp reject_regeneration(workspace_id, offer_id, reason) do
+    Log.event(:warning, "credential offer code regeneration rejected",
+      event: "credential.request.rejected",
+      stage: :offer_regenerate,
+      credential_id: offer_id,
+      workspace_id: workspace_id,
+      reason: Log.reason(reason)
+    )
+
+    {:error, reason}
+  end
+
   def build_offer_uri(pre_authorized_code, offer, schema, workspace) do
     credential_issuer = "#{ClaimUtils.base_url()}/#{workspace.did}"
 
