@@ -10,6 +10,7 @@ defmodule Sovra.Ethereum.Client do
   use Sovra.Log
 
   alias Sovra.Ethereum.Chains
+  alias Sovra.Ethereum.SubmitLock
 
   # Receipt polling window. Defaults cover a public testnet (Sepolia blocks
   # are ~12s, and a tx may take a few blocks to confirm): 45 polls × 2s ≈ 90s.
@@ -21,6 +22,11 @@ defmodule Sovra.Ethereum.Client do
 
   @doc """
   Sends a signed transaction and waits for its receipt.
+
+  The nonce is taken from the relayer's `pending` transaction count while
+  holding `Sovra.Ethereum.SubmitLock`, so concurrent writes from any node get
+  consecutive nonces instead of the same one. The receipt is awaited after the
+  lock is released.
 
   Options:
 
@@ -51,10 +57,25 @@ defmodule Sovra.Ethereum.Client do
         ]
         |> Keyword.filter(fn {_k, v} -> v != nil end)
 
-      tx_data
-      |> Ethers.send_transaction(send_opts)
+      from_address
+      |> submit(tx_data, send_opts, config)
       |> handle_send_result(context)
     end
+  end
+
+  # `pending` counts what this relayer has submitted and not yet seen mined, so
+  # under the lock it is exactly the next nonce. `latest`, Ethers' default,
+  # would hand every in-flight transaction's nonce out a second time.
+  defp submit(from_address, tx_data, send_opts, config) do
+    SubmitLock.run(from_address, fn ->
+      with {:ok, nonce} <-
+             Ethers.get_transaction_count(from_address,
+               block: "pending",
+               rpc_opts: rpc_opts(config)
+             ) do
+        Ethers.send_transaction(tx_data, [nonce: nonce] ++ send_opts)
+      end
+    end)
   end
 
   @doc """
@@ -179,6 +200,15 @@ defmodule Sovra.Ethereum.Client do
       |> Keyword.filter(fn {_k, v} -> v != nil end)
 
     Ethers.call(tx_data, call_opts)
+  end
+
+  @doc """
+  Event logs matching `event_filter`. `overrides` go into the `eth_getLogs`
+  params as they are, so use its names: `address:`, `fromBlock:`, `toBlock:`.
+  Leaving out `fromBlock` means `latest`.
+  """
+  def get_logs(event_filter, overrides \\ []) do
+    Ethers.get_logs(event_filter, [rpc_opts: rpc_opts(ethereum_config())] ++ overrides)
   end
 
   defp handle_send_result({:ok, tx_hash}, context) do

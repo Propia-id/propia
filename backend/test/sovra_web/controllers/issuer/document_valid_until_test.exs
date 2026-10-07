@@ -28,7 +28,7 @@ defmodule SovraWeb.Issuer.DocumentValidUntilTest do
         claims: [%{"key" => "employee_name", "type" => "string", "required" => true}]
       })
 
-    schema
+    register_schema(schema)
   end
 
   defp post_document(conn, ws, user, extra) do

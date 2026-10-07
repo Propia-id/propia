@@ -7,7 +7,13 @@ defmodule Sovra.Issuer.IssuedCredential do
 
   schema "issued_credentials" do
     field :holder_did, :string
+    # What the on-chain status list says. A requested change is
+    # `pending_status` until `Sovra.Issuer.CredentialStatusJob` confirms its
+    # transaction and moves it here; `status_change_error` says why the last
+    # one did not land. Neither is ever cast from a caller's attrs.
     field :status, :string, default: "issued"
+    field :pending_status, :string
+    field :status_change_error, :string
     field :status_list_index, :integer
     field :status_purpose, :string, default: "revocation"
     field :issued_at, :utc_datetime
@@ -34,9 +40,19 @@ defmodule Sovra.Issuer.IssuedCredential do
     |> unique_constraint(:status_list_index, name: @status_index_constraint)
   end
 
+  @statuses ~w(issued revoked suspended)
+
+  @doc "A confirmed status change: the target becomes the status."
   def status_changeset(record, status) do
     record
-    |> change(status: status)
-    |> validate_inclusion(:status, ~w(issued revoked suspended))
+    |> change(status: status, pending_status: nil, status_change_error: nil)
+    |> validate_inclusion(:status, @statuses)
   end
+
+  @doc "A status change that ran out of retries. The status is left as it was."
+  def status_change_failed_changeset(record, error) do
+    change(record, pending_status: nil, status_change_error: error)
+  end
+
+  def statuses, do: @statuses
 end

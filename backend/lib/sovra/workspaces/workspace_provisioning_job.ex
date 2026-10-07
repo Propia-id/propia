@@ -1,8 +1,14 @@
 defmodule Sovra.Workspaces.WorkspaceProvisioningJob do
   @moduledoc """
   Async workspace provisioning. Generates the signing key and EOA, derives
-  the workspace DID, registers the DID document on-chain, and emits an
-  `identity.did-generated` webhook on success.
+  the workspace DID, registers the DID document on-chain, registers the
+  workspace as an issuer and initializes its revocation and suspension bitmaps,
+  and emits an `identity.did-generated` webhook on success.
+
+  The issuer registration and the bitmaps belong here rather than to the first
+  schema: they are workspace-wide, and revocation needs the bitmaps, so a
+  workspace is not usable until they exist. Credential types are added per
+  schema, by `Sovra.Issuer.CredentialTypeRegistrationJob`.
 
   Each step is gated on the workspace's current state so the job is safe to
   re-run after a partial earlier attempt — e.g. if signing key generation
@@ -64,6 +70,8 @@ defmodule Sovra.Workspaces.WorkspaceProvisioningJob do
          {:ok, workspace} <- step(:eoa, workspace, &ensure_eoa/1),
          {:ok, workspace} <- step(:did, workspace, &ensure_did/1),
          {:ok, workspace} <- step(:chain_registration, workspace, &register_on_chain_step/1),
+         {:ok, workspace} <- step(:issuer_registration, workspace, &register_issuer_step/1),
+         {:ok, workspace} <- step(:status_bitmaps, workspace, &initialize_bitmaps_step/1),
          {:ok, workspace} <- mark_done(workspace) do
       Log.event(:info, "workspace provisioned",
         event: "workspace.provisioning.completed",
@@ -147,9 +155,17 @@ defmodule Sovra.Workspaces.WorkspaceProvisioningJob do
   defp step_done?(:did, ws), do: is_binary(ws.did)
   defp step_done?(_step, _ws), do: false
 
-  # register_on_chain/1 returns :ok; the step pipeline threads the workspace.
+  # The chain steps return :ok; the step pipeline threads the workspace.
   defp register_on_chain_step(%Workspace{} = ws) do
     with :ok <- register_on_chain(ws), do: {:ok, ws}
+  end
+
+  defp register_issuer_step(%Workspace{} = ws) do
+    with :ok <- register_issuer(ws), do: {:ok, ws}
+  end
+
+  defp initialize_bitmaps_step(%Workspace{} = ws) do
+    with :ok <- initialize_bitmaps(ws), do: {:ok, ws}
   end
 
   defp ensure_signing_key(%Workspace{signing_key_id: key_id} = ws) when is_binary(key_id),
@@ -219,6 +235,41 @@ defmodule Sovra.Workspaces.WorkspaceProvisioningJob do
     end
   end
 
+  @doc """
+  Registers the workspace's EOA as an issuer, with no credential types yet.
+  An issuer that is already registered counts as success, so this is safe to
+  re-run. Public for `Sovra.Release.backfill_issuer_setup/0`.
+  """
+  @spec register_issuer(%Workspace{}) :: :ok | {:error, term()}
+  def register_issuer(%Workspace{eoa_address: eoa_address}) do
+    if Sovra.Ethereum.Client.configured?() do
+      case issuer_registry().register_issuer(eoa_address, []) do
+        {:ok, _tx_hash_or_already} -> :ok
+        {:error, _} = error -> error
+      end
+    else
+      {:error, :ethereum_not_configured}
+    end
+  end
+
+  @doc """
+  Initializes the workspace's revocation and suspension bitmaps. Requires the
+  issuer registration to have landed. A bitmap that already exists counts as
+  success, so this is safe to re-run. Public for
+  `Sovra.Release.backfill_issuer_setup/0`.
+  """
+  @spec initialize_bitmaps(%Workspace{}) :: :ok | {:error, term()}
+  def initialize_bitmaps(%Workspace{eoa_address: eoa_address}) do
+    if Sovra.Ethereum.Client.configured?() do
+      with {:ok, _} <- revocation_registry().initialize_bitmap(eoa_address, 0),
+           {:ok, _} <- revocation_registry().initialize_bitmap(eoa_address, 1) do
+        :ok
+      end
+    else
+      {:error, :ethereum_not_configured}
+    end
+  end
+
   defp mark_done(%Workspace{} = ws) do
     Workspaces.mark_provisioning_done(ws.id, DateTime.utc_now() |> DateTime.truncate(:second))
   end
@@ -232,6 +283,12 @@ defmodule Sovra.Workspaces.WorkspaceProvisioningJob do
 
   defp did_registry,
     do: Application.get_env(:sovra, :did_registry, Sovra.Ethereum.DIDRegistry)
+
+  defp issuer_registry,
+    do: Application.get_env(:sovra, :issuer_registry, Sovra.Ethereum.IssuerRegistry)
+
+  defp revocation_registry,
+    do: Application.get_env(:sovra, :revocation_registry, Sovra.Ethereum.RevocationRegistry)
 
   defp format_error(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp format_error(reason) when is_binary(reason), do: truncate(reason)

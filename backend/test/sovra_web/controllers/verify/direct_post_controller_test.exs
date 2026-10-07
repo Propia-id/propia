@@ -31,6 +31,8 @@ defmodule SovraWeb.Verify.DirectPostControllerTest do
   defmodule StubRegistry do
     def is_revoked(_, _), do: {:ok, false}
     def is_suspended(_, _), do: {:ok, false}
+    # Workspace provisioning initializes the bitmaps.
+    def initialize_bitmap(_, _), do: {:ok, "0xstubtxhash"}
   end
 
   defmodule StubResolver do

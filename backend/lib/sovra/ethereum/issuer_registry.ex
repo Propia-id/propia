@@ -6,12 +6,21 @@ defmodule Sovra.Ethereum.IssuerRegistry do
 
   alias Sovra.Ethereum.Client
   alias Sovra.Ethereum.Contracts.IssuerRegistryContract
+  alias Sovra.Ethereum.Revert
+
+  @already_registered_selector Revert.selector("AlreadyRegistered()")
 
   @doc """
   Register a new issuer with initial credential type hashes.
 
   - `issuer_address` — 0x-prefixed hex string
-  - `credential_type_ids` — list of 32-byte keccak256 hashes of credential type strings
+  - `credential_type_ids` — list of 32-byte keccak256 hashes of credential type
+    strings; may be empty
+
+  A revert with `AlreadyRegistered()` is `{:ok, :already_registered}`: the
+  issuer is on-chain, which is the end state the caller wants, so a retry after
+  a registration that landed unrecorded converges. Types passed to an issuer
+  that was already registered are NOT added — use `add_credential_types/2`.
   """
   def register_issuer(issuer_address, credential_type_ids) do
     IssuerRegistryContract.register_issuer(issuer_address, credential_type_ids)
@@ -20,6 +29,15 @@ defmodule Sovra.Ethereum.IssuerRegistry do
       op: :issuer_register,
       subject_id: issuer_address
     )
+    |> case do
+      {:error, reason} = error ->
+        if Revert.matches?(reason, @already_registered_selector),
+          do: {:ok, :already_registered},
+          else: error
+
+      result ->
+        result
+    end
   end
 
   @doc """

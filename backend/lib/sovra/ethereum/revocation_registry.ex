@@ -6,16 +6,23 @@ defmodule Sovra.Ethereum.RevocationRegistry do
 
   alias Sovra.Ethereum.Client
   alias Sovra.Ethereum.Contracts.RevocationRegistryContract
+  alias Sovra.Ethereum.Revert
 
   @revocation 0
   @suspension 1
 
+  @bitmap_already_initialized_selector Revert.selector("BitmapAlreadyInitialized()")
+
   @doc """
   Initialize a bitmap for an issuer and purpose.
-  Must be called once per (issuer, purpose) pair before any status changes.
+  Must be called once per (issuer, purpose) pair before any status changes, and
+  after the issuer is registered in the issuer registry.
 
   - `issuer_address` — 0x-prefixed hex string
   - `purpose` — 0 (revocation) or 1 (suspension)
+
+  A revert with `BitmapAlreadyInitialized()` is `{:ok, :already_initialized}`,
+  so a retry after an initialization that landed unrecorded converges.
   """
   def initialize_bitmap(issuer_address, purpose \\ @revocation) do
     RevocationRegistryContract.initialize_bitmap(issuer_address, purpose)
@@ -24,6 +31,15 @@ defmodule Sovra.Ethereum.RevocationRegistry do
       op: :bitmap_initialize,
       subject_id: issuer_address
     )
+    |> case do
+      {:error, reason} = error ->
+        if Revert.matches?(reason, @bitmap_already_initialized_selector),
+          do: {:ok, :already_initialized},
+          else: error
+
+      result ->
+        result
+    end
   end
 
   @doc """

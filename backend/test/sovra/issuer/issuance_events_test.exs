@@ -23,6 +23,13 @@ defmodule Sovra.Issuer.IssuanceEventsTest do
 
   defp create_issuer, do: provision_workspace(fixture_workspace().workspace)
 
+  # A status change is requested, then lands when its job runs.
+  defp request_and_confirm(change, issuer, credential_id) do
+    result = change.(issuer.id, credential_id)
+    run_chain_jobs()
+    result
+  end
+
   defp create_schema(issuer, opts \\ []) do
     {:ok, schema} =
       Issuer.create_schema(issuer.id, %{
@@ -35,7 +42,7 @@ defmodule Sovra.Issuer.IssuanceEventsTest do
         ]
       })
 
-    schema
+    register_schema(schema)
   end
 
   @claims %{"name" => "Ada Lovelace", "dni" => "12345678"}
@@ -226,7 +233,17 @@ defmodule Sovra.Issuer.IssuanceEventsTest do
       credential_id = offer_result.offer.id
 
       {{:ok, _}, events} =
-        capture_events(fn -> Issuer.revoke_credential(issuer.id, credential_id) end)
+        capture_events(fn ->
+          request_and_confirm(&Issuer.revoke_credential/2, issuer, credential_id)
+        end)
+
+      # Who asked is logged when the change is requested; the outcome when it
+      # lands on-chain.
+      assert_event(events, "credential.status_change.requested",
+        credential_id: credential_id,
+        status: "revoked",
+        previous_status: "issued"
+      )
 
       # The event name is the webhook's, so support can pivot between what we
       # told the customer and what we did on one identifier.
@@ -259,7 +276,9 @@ defmodule Sovra.Issuer.IssuanceEventsTest do
       credential_id = offer_result.offer.id
 
       {{:ok, _}, events} =
-        capture_events(fn -> Issuer.suspend_credential(issuer.id, credential_id) end)
+        capture_events(fn ->
+          request_and_confirm(&Issuer.suspend_credential/2, issuer, credential_id)
+        end)
 
       assert_event(events, "credential.suspended",
         credential_id: credential_id,
@@ -267,7 +286,9 @@ defmodule Sovra.Issuer.IssuanceEventsTest do
       )
 
       {{:ok, _}, events} =
-        capture_events(fn -> Issuer.unsuspend_credential(issuer.id, credential_id) end)
+        capture_events(fn ->
+          request_and_confirm(&Issuer.unsuspend_credential/2, issuer, credential_id)
+        end)
 
       # The one case where the event name and the resulting status differ —
       # unsuspend returns the credential to "issued" — and previous_status is

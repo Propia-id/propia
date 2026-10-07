@@ -1,7 +1,9 @@
 defmodule Sovra.DocumentsTest do
   use Sovra.DataCase, async: false
+  use Oban.Testing, repo: Sovra.Repo
 
   alias Sovra.Documents
+  alias Sovra.Documents.AnchorJob
   alias Sovra.Documents.Attestation
   alias Sovra.Issuer
 
@@ -24,7 +26,7 @@ defmodule Sovra.DocumentsTest do
         ]
       })
 
-    schema
+    register_schema(schema)
   end
 
   defp with_registry(module, fun) do
@@ -41,15 +43,17 @@ defmodule Sovra.DocumentsTest do
   defp claims, do: %{"employee_name" => "Ada Lovelace", "role" => "Principal engineer"}
 
   describe "issue/3" do
-    test "signs, stores and anchors", %{workspace: workspace, schema: schema} do
+    test "signs and stores, and queues the anchoring", %{workspace: workspace, schema: schema} do
       {:ok, document} = Documents.issue(workspace.id, schema.schema_id, claims())
 
-      assert document.status == "anchored"
-      assert document.tx_hash == "0xstubtxhash"
-      assert document.anchored_at
+      assert document.status == "signed"
+      assert is_nil(document.tx_hash)
+      assert is_nil(document.anchored_at)
       assert Attestation.claims(document.credential, document.schema) == claims()
       assert byte_size(document.digest) == 32
       assert String.ends_with?(document.credential, "~")
+
+      assert_enqueued(worker: AnchorJob, args: %{"document_id" => document.id}, queue: :chain)
     end
 
     test "signs the document id into the payload as jti", %{
@@ -68,26 +72,6 @@ defmodule Sovra.DocumentsTest do
         document.credential |> String.trim_trailing("~") |> rsplit_on_last_dot()
 
       assert document.digest == :crypto.hash(:sha256, signing_input)
-    end
-
-    test "keeps the document when anchoring does not land", %{
-      workspace: workspace,
-      schema: schema
-    } do
-      {:ok, document} =
-        with_registry(SovraTest.Ethereum.AlwaysFailingSignatureRegistry, fn ->
-          Documents.issue(workspace.id, schema.schema_id, claims())
-        end)
-
-      assert document.status == "failed"
-      assert is_nil(document.tx_hash)
-      assert is_nil(document.anchored_at)
-
-      # Everything except the anchor is there, which is why the row is kept: the
-      # transaction may still confirm. A verifier rejects it until then.
-      assert String.ends_with?(document.credential, "~")
-      assert byte_size(document.digest) == 32
-      assert Attestation.claims(document.credential, document.schema) == claims()
     end
 
     test "refuses to sign with no signature registry", %{workspace: workspace, schema: schema} do
@@ -236,6 +220,8 @@ defmodule Sovra.DocumentsTest do
           claims: [%{"key" => "employee_name", "type" => "string", "required" => true}]
         })
 
+      schema = register_schema(schema)
+
       {:ok, document} = Documents.issue(workspace.id, schema.schema_id, claims())
 
       signed = payload(document.credential)
@@ -264,6 +250,8 @@ defmodule Sovra.DocumentsTest do
           validity_period: nil,
           claims: [%{"key" => "employee_name", "type" => "string", "required" => true}]
         })
+
+      schema = register_schema(schema)
 
       valid_until = DateTime.add(DateTime.utc_now(), 30, :day) |> DateTime.truncate(:second)
 
@@ -338,7 +326,7 @@ defmodule Sovra.DocumentsTest do
         claims: [%{"key" => "exp", "type" => "string", "required" => true}]
       })
 
-    schema
+    register_schema(schema)
   end
 
   defp payload(credential) do

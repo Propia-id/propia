@@ -13,6 +13,8 @@ defmodule Sovra.Issuer do
     CredentialSchema,
     CredentialDesign,
     CredentialOffer,
+    CredentialStatusJob,
+    CredentialTypeRegistrationJob,
     IssuedCredential,
     MdocElement,
     StatusList,
@@ -26,7 +28,6 @@ defmodule Sovra.Issuer do
   alias Sovra.Documents
   alias Sovra.Crypto.P256
   alias Sovra.Crypto.WebAuthn
-  alias Sovra.Ethereum.{IssuerRegistry, RevocationRegistry}
   alias Sovra.Repo
   alias Sovra.Workspaces
   alias Sovra.Workspaces.Workspace
@@ -43,7 +44,7 @@ defmodule Sovra.Issuer do
     with {:ok, workspace} <- Workspaces.get_workspace(workspace_id),
          :ok <- Workspaces.assert_provisioned(workspace),
          :ok <- assert_doc_type_allowed(attrs, workspace),
-         {:ok, schema} <- CredentialSchema.create_changeset(attrs) |> Repo.insert() do
+         {:ok, schema} <- insert_schema(attrs) do
       # No schema_version: create_schema/2 always produces version 1 — the
       # controller never passes one and revisions go through
       # credential.schema.revised, which does carry both versions.
@@ -57,26 +58,24 @@ defmodule Sovra.Issuer do
         claim_count: length(schema.claims || [])
       )
 
-      case register_credential_type_on_chain(workspace.eoa_address, schema.credential_type) do
-        :ok ->
-          :ok
-
-        {:error, reason} ->
-          # Non-fatal: the schema exists and can issue, but the credential type
-          # is not on the registry, so third-party verifiers cannot resolve it.
-          Log.event(:error, "on-chain credential type registration failed",
-            event: "credential.schema.chain_registration_failed",
-            workspace_id: workspace_id,
-            schema_id: schema.id,
-            credential_type: schema.credential_type,
-            eoa_address: workspace.eoa_address,
-            reason: Log.reason(reason)
-          )
-      end
-
       {:ok, schema}
     else
       {:error, reason} -> reject_schema(:create, workspace_id, nil, reason)
+    end
+  end
+
+  # The registration job is inserted with the schema, so a schema never exists
+  # without the job that will register its credential type on-chain.
+  defp insert_schema(attrs) do
+    Ecto.Multi.new()
+    |> Ecto.Multi.insert(:schema, CredentialSchema.create_changeset(attrs))
+    |> Oban.insert(:registration_job, fn %{schema: schema} ->
+      CredentialTypeRegistrationJob.new_for(schema)
+    end)
+    |> Repo.transaction()
+    |> case do
+      {:ok, %{schema: schema}} -> {:ok, schema}
+      {:error, _step, reason, _changes} -> {:error, reason}
     end
   end
 
@@ -210,8 +209,19 @@ defmodule Sovra.Issuer do
         "version" => prior.version + 1
       })
 
+    # The credential type is the prior's, and so is its on-chain registration.
+    # The prior is locked, so a registration job updating this type waits for
+    # this row and then sees it (see `CredentialTypeRegistrationJob`).
+    changeset =
+      new_attrs
+      |> CredentialSchema.create_changeset()
+      |> Ecto.Changeset.change(
+        registration_status: prior.registration_status,
+        registration_error: prior.registration_error
+      )
+
     try do
-      case CredentialSchema.create_changeset(new_attrs) |> Repo.insert() do
+      case Repo.insert(changeset) do
         {:ok, new_schema} ->
           inherit_design(prior, new_schema)
           inherit_layout(prior, new_schema)
@@ -489,6 +499,8 @@ defmodule Sovra.Issuer do
          :ok <- Workspaces.assert_provisioned(workspace),
          {:ok, schema} <- get_schema(workspace_id, schema_id),
          :ok <- assert_kind(schema, "credential"),
+         # A credential whose type is not yet trusted on-chain would not verify.
+         :ok <- CredentialSchema.assert_registered(schema),
          # An ISO docType is trusted through the workspace's certificate chain,
          # so issuing under one without a registered document signer produces a
          # credential that resolves to nobody. Checked again here rather than
@@ -1147,76 +1159,41 @@ defmodule Sovra.Issuer do
 
   # ── Credential Status Management ─────────────────────
 
-  def revoke_credential(workspace_id, credential_id) do
-    change_credential_status(
-      workspace_id,
-      credential_id,
-      "revoked",
-      "credential.revoked",
-      fn addr, idx -> revocation_registry().revoke(addr, idx) end
-    )
-  end
+  @doc """
+  Requests a credential's revocation. The change is written to the on-chain
+  status list in the background (`Sovra.Issuer.CredentialStatusJob`): this
+  returns the credential with `pending_status: "revoked"`, and its `status`
+  moves once the transaction lands.
+  """
+  def revoke_credential(workspace_id, credential_id),
+    do: change_credential_status(workspace_id, credential_id, "revoked")
 
-  def suspend_credential(workspace_id, credential_id) do
-    change_credential_status(
-      workspace_id,
-      credential_id,
-      "suspended",
-      "credential.suspended",
-      fn addr, idx -> revocation_registry().suspend(addr, idx) end
-    )
-  end
+  @doc "Requests a credential's suspension. Asynchronous, like `revoke_credential/2`."
+  def suspend_credential(workspace_id, credential_id),
+    do: change_credential_status(workspace_id, credential_id, "suspended")
 
-  def unsuspend_credential(workspace_id, credential_id) do
-    change_credential_status(
-      workspace_id,
-      credential_id,
-      "issued",
-      "credential.unsuspended",
-      fn addr, idx -> revocation_registry().unsuspend(addr, idx) end
-    )
-  end
+  @doc "Requests lifting a credential's suspension. Asynchronous, like `revoke_credential/2`."
+  def unsuspend_credential(workspace_id, credential_id),
+    do: change_credential_status(workspace_id, credential_id, "issued")
 
-  defp change_credential_status(workspace_id, credential_id, new_status, event, chain_call) do
+  defp change_credential_status(workspace_id, credential_id, new_status) do
     with {:ok, cred} <- resolve_issued_or_pending(workspace_id, credential_id),
          {:ok, workspace} <- Workspaces.get_workspace(workspace_id),
          :ok <- Workspaces.assert_provisioned(workspace),
+         :ok <- assert_no_pending_change(cred),
          :ok <- validate_status_transition(cred, new_status),
-         {:ok, tx_hash} <-
-           maybe_sync_chain_status(chain_call, workspace_id, cred.status_list_index),
-         {:ok, updated} <-
-           cred |> IssuedCredential.status_changeset(new_status) |> Repo.update() do
-      {:ok, schema} = get_schema_by_id(updated.schema_id)
-
-      # `event` is already the webhook's event name, so the log and the webhook
-      # carry the same vocabulary for free. Revocation is the mutation with
-      # legal weight and the one most likely to be disputed, and it left no
-      # trace outside the database until now — tx_hash is what ties it to the
-      # on-chain status list a third-party verifier will read.
-      # No `status`: the event name is the outcome. credential.revoked ->
-      # "revoked", .suspended -> "suspended", .unsuspended -> "issued", and
-      # previous_status is the half the name cannot carry — issued -> revoked
-      # and suspended -> revoked are different stories. schema_id and
-      # credential_type are on credential.issued under the same credential_id.
-      Log.event(:info, "credential status changed",
-        event: event,
-        credential_id: updated.id,
+         {:ok, requested} <- request_status_change(cred, new_status) do
+      # Who asked, and when. The outcome is logged by the job under the
+      # webhook's event name (credential.revoked, …), with its tx_hash.
+      Log.event(:info, "credential status change requested",
+        event: "credential.status_change.requested",
+        credential_id: requested.id,
         workspace_id: workspace_id,
-        holder_did: updated.holder_did,
-        previous_status: cred.status,
-        status_list_index: updated.status_list_index,
-        tx_hash: tx_hash
+        status: new_status,
+        previous_status: cred.status
       )
 
-      {:ok, _job} =
-        Sovra.Webhooks.enqueue(workspace_id, event, %{
-          "credential_id" => updated.id,
-          "holder_did" => updated.holder_did,
-          "schema_type" => schema.credential_type,
-          "status_at" => DateTime.utc_now() |> DateTime.to_iso8601()
-        })
-
-      {:ok, updated}
+      {:ok, requested}
     else
       {:error, reason} ->
         Log.event(:warning, "credential status change rejected",
@@ -1231,6 +1208,39 @@ defmodule Sovra.Issuer do
     end
   end
 
+  defp assert_no_pending_change(%IssuedCredential{pending_status: nil}), do: :ok
+  defp assert_no_pending_change(%IssuedCredential{}), do: {:error, :status_change_pending}
+
+  # Compare-and-set, so a credential takes a new change only while it is still
+  # in the status the transition was checked against and has none on the way.
+  # Two concurrent requests cannot both start one, so a suspend and an
+  # unsuspend never race each other on-chain.
+  defp request_status_change(cred, new_status) do
+    claim =
+      from(c in IssuedCredential,
+        where: c.id == ^cred.id and c.status == ^cred.status and is_nil(c.pending_status)
+      )
+
+    Ecto.Multi.new()
+    |> Ecto.Multi.update_all(:claim, claim,
+      set: [
+        pending_status: new_status,
+        status_change_error: nil,
+        updated_at: DateTime.utc_now() |> DateTime.truncate(:second)
+      ]
+    )
+    |> Ecto.Multi.run(:claimed, fn
+      _repo, %{claim: {1, _}} -> {:ok, :claimed}
+      _repo, _changes -> {:error, :status_change_pending}
+    end)
+    |> Oban.insert(:status_job, CredentialStatusJob.new_for(cred))
+    |> Repo.transaction()
+    |> case do
+      {:ok, _} -> {:ok, %{cred | pending_status: new_status, status_change_error: nil}}
+      {:error, _step, reason, _changes} -> {:error, reason}
+    end
+  end
+
   # Used by lifecycle ops: only an *issued* credential can transition. If the
   # id resolves to a pending offer instead, surface that as a distinct error so
   # the controller can return 422 (different from a true 404).
@@ -1239,19 +1249,6 @@ defmodule Sovra.Issuer do
       {:ok, {:issued, cred}} -> {:ok, cred}
       {:ok, {:pending, _offer}} -> {:error, :credential_not_yet_issued}
       {:error, :credential_not_found} = err -> err
-    end
-  end
-
-  # Returns the transaction hash so the caller can record which on-chain write
-  # carried the status change; `{:ok, nil}` when there is no chain configured.
-  defp maybe_sync_chain_status(chain_call, workspace_id, index) do
-    if ethereum_configured?() do
-      case chain_call.(get_workspace_eoa(workspace_id), index) do
-        {:ok, tx_hash} -> {:ok, tx_hash}
-        {:error, _} = error -> error
-      end
-    else
-      {:ok, nil}
     end
   end
 
@@ -1295,10 +1292,6 @@ defmodule Sovra.Issuer do
   defp validate_status_transition(%{status: "suspended"}, "issued"), do: :ok
   defp validate_status_transition(_cred, _target), do: {:error, :invalid_status_transition}
 
-  defp get_workspace_eoa(workspace_id) do
-    Repo.get!(Workspace, workspace_id).eoa_address
-  end
-
   # ── Status List Index Assignment ─────────────────────
   #
   # Indices are derived deterministically via HMAC over the workspace's
@@ -1327,47 +1320,4 @@ defmodule Sovra.Issuer do
         error
     end
   end
-
-  # ── On-Chain Registration Helpers ─────────────────────
-
-  defp initialize_bitmaps_on_chain(eoa_address) do
-    if ethereum_configured?() do
-      with {:ok, _} <- revocation_registry().initialize_bitmap(eoa_address, 0),
-           {:ok, _} <- revocation_registry().initialize_bitmap(eoa_address, 1) do
-        :ok
-      end
-    else
-      {:error, :ethereum_not_configured}
-    end
-  end
-
-  defp register_credential_type_on_chain(eoa_address, credential_type) do
-    if ethereum_configured?() do
-      type_hash = IssuerRegistry.credential_type_hash(credential_type)
-
-      case IssuerRegistry.is_registered(eoa_address) do
-        {:ok, true} ->
-          case IssuerRegistry.add_credential_types(eoa_address, [type_hash]) do
-            {:ok, _tx_hash} -> :ok
-            {:error, reason} -> {:error, reason}
-          end
-
-        {:ok, false} ->
-          with {:ok, _tx_hash} <- IssuerRegistry.register_issuer(eoa_address, [type_hash]),
-               :ok <- initialize_bitmaps_on_chain(eoa_address) do
-            :ok
-          end
-
-        {:error, reason} ->
-          {:error, reason}
-      end
-    else
-      {:error, :ethereum_not_configured}
-    end
-  end
-
-  defp ethereum_configured?, do: Sovra.Ethereum.Client.configured?()
-
-  defp revocation_registry,
-    do: Application.get_env(:sovra, :revocation_registry, RevocationRegistry)
 end

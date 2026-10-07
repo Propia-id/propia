@@ -66,6 +66,10 @@ defmodule SovraWeb.Issuer.OfferController do
       201 => {"Offer created", "application/json", @response_body},
       401 => {"Missing or invalid auth", "application/json", @error},
       404 => {"Schema not found", "application/json", @error},
+      409 =>
+        {"Workspace not provisioned, or the schema's credential type is not registered " <>
+           "on-chain yet (`schema_registration_pending`) or could not be " <>
+           "(`schema_registration_failed`)", "application/json", @error},
       422 => {"Validation error", "application/json", @error}
     }
   )
@@ -221,6 +225,10 @@ defmodule SovraWeb.Issuer.OfferController do
       {:error, :schema_not_found} ->
         conn |> put_status(404) |> json(%{error: "schema_not_found"})
 
+      {:error, reason}
+      when reason in [:schema_registration_pending, :schema_registration_failed] ->
+        conn |> put_status(409) |> json(schema_registration_error(reason))
+
       {:error, {:missing_claims, missing}} ->
         conn |> put_status(422) |> json(%{error: "missing_claims", details: missing})
 
@@ -255,6 +263,20 @@ defmodule SovraWeb.Issuer.OfferController do
         conn |> put_status(422) |> json(%{error: to_string(reason)})
     end
   end
+
+  defp schema_registration_error(:schema_registration_pending),
+    do: %{
+      error: "schema_registration_pending",
+      details:
+        "the schema's credential type is still being registered on-chain; retry in a few seconds"
+    }
+
+  defp schema_registration_error(:schema_registration_failed),
+    do: %{
+      error: "schema_registration_failed",
+      details:
+        "the schema's credential type could not be registered on-chain, so nothing can be issued from it"
+    }
 
   # An operator reads these, so they say what to do rather than naming the check
   # that failed.

@@ -21,8 +21,10 @@ defmodule SovraWeb.Issuer.DocumentController do
         type: :string,
         enum: ["signed", "anchored", "failed", "revoked"],
         description:
-          "`anchored` is the only shippable state. `failed` means the document is signed " <>
-            "but its anchoring transaction did not land, so a verifier will reject it."
+          "`anchored` is the only shippable state. A new document is `signed` while its " <>
+            "anchoring transaction is sent in the background, and moves to `anchored`, or " <>
+            "to `failed` if the transaction never lands, in which case a verifier rejects " <>
+            "it. Each move is announced by a `document.status-changed` webhook."
       },
       visibility: %OpenApiSpex.Schema{
         type: :string,
@@ -79,9 +81,11 @@ defmodule SovraWeb.Issuer.DocumentController do
   operation(:create,
     summary: "Issue a signed document",
     description:
-      "Validates the claims, signs them, stores the document and anchors the signature " <>
-        "on-chain, in one call. The schema must be of kind `document`. Claims the schema " <>
-        "does not declare are dropped before signing.",
+      "Validates the claims, signs them and stores the document, which comes back " <>
+        "`signed`. The signature is then anchored on-chain in the background: the " <>
+        "document moves to `anchored` (or `failed`) and a `document.status-changed` " <>
+        "webhook carries the new `status`. The schema must be of kind `document`. Claims " <>
+        "the schema does not declare are dropped before signing.",
     request_body:
       {"Document params", "application/json",
        %OpenApiSpex.Schema{
@@ -118,7 +122,10 @@ defmodule SovraWeb.Issuer.DocumentController do
     responses: %{
       201 => {"Document issued", "application/json", @document},
       404 => {"Schema or workspace not found", "application/json", @error},
-      409 => {"Workspace not provisioned", "application/json", @error},
+      409 =>
+        {"Workspace not provisioned, or the schema's credential type is not registered " <>
+           "on-chain yet (`schema_registration_pending`) or could not be " <>
+           "(`schema_registration_failed`)", "application/json", @error},
       422 =>
         {"Wrong schema kind, missing required claims, unknown visibility, or validation error",
          "application/json", @error},
@@ -246,6 +253,26 @@ defmodule SovraWeb.Issuer.DocumentController do
 
   defp handle_error(conn, {:error, :workspace_not_provisioned}),
     do: conn |> put_status(409) |> json(%{error: "workspace_not_provisioned"})
+
+  defp handle_error(conn, {:error, :schema_registration_pending}),
+    do:
+      conn
+      |> put_status(409)
+      |> json(%{
+        error: "schema_registration_pending",
+        details:
+          "the schema's credential type is still being registered on-chain; retry in a few seconds"
+      })
+
+  defp handle_error(conn, {:error, :schema_registration_failed}),
+    do:
+      conn
+      |> put_status(409)
+      |> json(%{
+        error: "schema_registration_failed",
+        details:
+          "the schema's credential type could not be registered on-chain, so nothing can be issued from it"
+      })
 
   # The caller did nothing wrong: this server cannot anchor, so it will not sign.
   defp handle_error(conn, {:error, :chain_not_configured}),

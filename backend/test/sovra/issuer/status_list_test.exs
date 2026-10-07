@@ -56,7 +56,7 @@ defmodule Sovra.Issuer.StatusListTest do
         validity_period: "1y"
       })
 
-    schema
+    register_schema(schema)
   end
 
   defp get_status_list(ws_id, purpose) do

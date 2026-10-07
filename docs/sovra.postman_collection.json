@@ -92,7 +92,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "v1", "issuer", "credentials", "{{credentialId}}"]
             },
-            "description": "Return metadata for a credential. The same id covers the full lifecycle: while the holder hasn't claimed yet the response has `status: \"pending\"` (or `\"expired\"` if the offer window passed) with a null credential payload; after issuance, status reflects the live revocation state."
+            "description": "Return metadata for a credential. The same id covers the full lifecycle: while the holder hasn't claimed yet the response has `status: \"pending\"` (or `\"expired\"` if the offer window passed) with a null credential payload; after issuance, status reflects the revocation state confirmed on-chain, and `pending_status` names a requested change that has not landed yet."
           }
         },
         {
@@ -112,7 +112,7 @@
                 }
               ]
             },
-            "description": "Idempotent status transition. Allowed values: `revoked`, `suspended`, `issued`. On the API-key pipeline the workspace's API key is sufficient."
+            "description": "Requests a status transition. Allowed values: `revoked`, `suspended`, `issued`. Answers 202 with the target in `pending_status`; the change is written to the on-chain status list in the background, and `status` moves once it lands, announced by the `credential.revoked` / `credential.suspended` / `credential.unsuspended` webhook. If it never lands, `credential.status-change-failed` is sent and `status` stays as it was. A second change while one is pending is a 409 `status_change_pending`. On the API-key pipeline the workspace's API key is sufficient."
           }
         }
       ]

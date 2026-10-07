@@ -33,6 +33,8 @@ defmodule Sovra.Issuer.MdocTest do
         validity_period: "1y"
       })
 
+    schema = register_schema(schema)
+
     claims = %{
       "member_name" => "Ada Lovelace",
       "joined_on" => "2026-01-15",

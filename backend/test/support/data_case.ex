@@ -63,6 +63,30 @@ defmodule Sovra.DataCase do
   end
 
   @doc """
+  Drain the chain queue, so the credential type registration a new schema
+  enqueued runs, and reload the schema. Use in tests that issue from a schema
+  they just created: nothing is issued from one whose type is not registered.
+  Relies on the test config wiring of `SovraTest.Ethereum.StubIssuerRegistry`.
+  """
+  def register_schema(%Sovra.Issuer.CredentialSchema{} = schema) do
+    run_chain_jobs()
+    Sovra.Repo.reload!(schema)
+  end
+
+  @doc """
+  Drain the chain queue, so every on-chain write enqueued so far runs: schema
+  registrations, document anchors, credential status changes. Use in tests that
+  need the outcome. Relies on the test config wiring of the stub registries.
+  """
+  def run_chain_jobs do
+    Oban.drain_queue(queue: :chain, with_safety: false)
+
+    # Same as provision_workspace/1: the jobs ran in this process.
+    Logger.metadata(oban_job_id: nil, oban_attempt: nil)
+    :ok
+  end
+
+  @doc """
   A helper that transforms changeset errors into a map of messages.
 
       assert {:error, changeset} = Accounts.create_user(%{password: "short"})

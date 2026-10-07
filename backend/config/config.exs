@@ -138,7 +138,10 @@ config :sovra, Sovra.Signer.Health, enabled: true, interval_ms: 60_000
 # Oban job runner (webhooks, mailers, verification housekeeping)
 config :sovra, Oban,
   repo: Sovra.Repo,
-  queues: [webhooks: 10, mailers: 10, verification: 1, provisioning: 5],
+  # `chain` holds the jobs that send relayer transactions. They run side by side:
+  # Sovra.Ethereum.SubmitLock gives each one the next nonce across every node,
+  # and receipts are awaited outside it.
+  queues: [webhooks: 10, mailers: 10, verification: 1, provisioning: 5, chain: 5],
   plugins: [
     {Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7},
     {Oban.Plugins.Cron,

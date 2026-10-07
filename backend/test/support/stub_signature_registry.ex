@@ -11,16 +11,34 @@ defmodule SovraTest.Ethereum.StubSignatureRegistry do
   """
 
   def record(_signer, _type_id, _digest, _r, _s), do: {:ok, "0xstubtxhash"}
+  def find_record(_signer, _digest), do: {:error, :record_not_found}
+  def configured?, do: true
+end
+
+defmodule SovraTest.Ethereum.AlreadyRecordedSignatureRegistry do
+  @moduledoc """
+  Test variant for a signature that is already on-chain: an earlier anchoring
+  transaction landed after its receipt poll gave up. Mirrors what
+  `Sovra.Ethereum.SignatureRegistry` returns when `record` reverts with
+  `AlreadyRecorded()`, and finds that earlier transaction.
+  """
+
+  def record(_signer, _type_id, _digest, _r, _s), do: {:ok, :already_recorded}
+
+  def find_record(_signer, _digest),
+    do: {:ok, %{tx_hash: "0xearliertxhash", recorded_at: ~U[2026-09-30 12:00:00Z]}}
+
   def configured?, do: true
 end
 
 defmodule SovraTest.Ethereum.AlwaysFailingSignatureRegistry do
   @moduledoc """
-  Test variant whose anchoring transaction never lands, so issuance ends
+  Test variant whose anchoring transaction never lands, so anchoring ends
   `failed` with the document already signed and stored.
   """
 
   def record(_signer, _type_id, _digest, _r, _s), do: {:error, :transaction_reverted}
+  def find_record(_signer, _digest), do: {:error, :record_not_found}
   def configured?, do: true
 end
 
@@ -31,5 +49,6 @@ defmodule SovraTest.Ethereum.UnconfiguredSignatureRegistry do
   """
 
   def record(_signer, _type_id, _digest, _r, _s), do: {:error, :chain_not_configured}
+  def find_record(_signer, _digest), do: {:error, :chain_not_configured}
   def configured?, do: false
 end

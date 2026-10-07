@@ -82,6 +82,22 @@ defmodule SovraWeb.Issuer.AdminController do
     }
   )
 
+  @registration_status %OpenApiSpex.Schema{
+    type: :string,
+    enum: ["pending", "registered", "failed"],
+    description:
+      "Whether the credential type is trusted for this workspace in the on-chain issuer " <>
+        "registry. A new schema is `pending` until that write lands, which happens in the " <>
+        "background; nothing can be issued from it until it is `registered`. `failed` " <>
+        "means the write ran out of retries."
+  }
+
+  @registration_error %OpenApiSpex.Schema{
+    type: :string,
+    nullable: true,
+    description: "Why registration failed. Null unless `registration_status` is `failed`."
+  }
+
   operation(:create_schema,
     summary: "Create credential schema",
     description: "Create a new credential schema for the authenticated issuer.",
@@ -136,6 +152,8 @@ defmodule SovraWeb.Issuer.AdminController do
              claims: %OpenApiSpex.Schema{type: :array, items: %OpenApiSpex.Schema{type: :object}},
              validity_period: %OpenApiSpex.Schema{type: :string, nullable: true},
              format: %OpenApiSpex.Schema{type: :string, enum: ["vc+sd-jwt", "mso_mdoc"]},
+             registration_status: @registration_status,
+             registration_error: @registration_error,
              doc_type: %OpenApiSpex.Schema{
                type: :string,
                nullable: true,
@@ -193,7 +211,9 @@ defmodule SovraWeb.Issuer.AdminController do
                      items: %OpenApiSpex.Schema{type: :object}
                    },
                    validity_period: %OpenApiSpex.Schema{type: :string, nullable: true},
-                   version: %OpenApiSpex.Schema{type: :integer}
+                   version: %OpenApiSpex.Schema{type: :integer},
+                   registration_status: @registration_status,
+                   registration_error: @registration_error
                  }
                }
              }
@@ -243,7 +263,9 @@ defmodule SovraWeb.Issuer.AdminController do
              name: %OpenApiSpex.Schema{type: :string},
              claims: %OpenApiSpex.Schema{type: :array, items: %OpenApiSpex.Schema{type: :object}},
              validity_period: %OpenApiSpex.Schema{type: :string, nullable: true},
-             version: %OpenApiSpex.Schema{type: :integer}
+             version: %OpenApiSpex.Schema{type: :integer},
+             registration_status: @registration_status,
+             registration_error: @registration_error
            }
          }},
       404 =>
@@ -328,12 +350,32 @@ defmodule SovraWeb.Issuer.AdminController do
     }
   )
 
+  @pending_status %OpenApiSpex.Schema{
+    type: :string,
+    enum: ["issued", "revoked", "suspended"],
+    nullable: true,
+    description:
+      "The target of a status change whose on-chain write is on the way. `status` " <>
+        "moves to it once the transaction lands, announced by the matching webhook. " <>
+        "Null when no change is in flight."
+  }
+
+  @status_change_error %OpenApiSpex.Schema{
+    type: :string,
+    nullable: true,
+    description:
+      "Why the last status change did not land. Its target was dropped and `status` " <>
+        "left as it was. Null otherwise."
+  }
+
   @credential_object %OpenApiSpex.Schema{
     type: :object,
     properties: %{
       id: %OpenApiSpex.Schema{type: :string, format: :uuid},
       holder_did: %OpenApiSpex.Schema{type: :string},
       status: %OpenApiSpex.Schema{type: :string},
+      pending_status: @pending_status,
+      status_change_error: @status_change_error,
       issued_at: %OpenApiSpex.Schema{type: :string, format: :"date-time"},
       expires_at: %OpenApiSpex.Schema{
         type: :string,
@@ -500,6 +542,8 @@ defmodule SovraWeb.Issuer.AdminController do
           validity_period: schema.validity_period,
           kind: schema.kind,
           format: schema.format,
+          registration_status: schema.registration_status,
+          registration_error: schema.registration_error,
           doc_type: doc_type,
           namespace: namespace
         })
@@ -625,6 +669,8 @@ defmodule SovraWeb.Issuer.AdminController do
             version: s.version,
             kind: s.kind,
             format: s.format,
+            registration_status: s.registration_status,
+            registration_error: s.registration_error,
             doc_type: workspace && DocType.build(workspace, s),
             namespace: workspace && DocType.namespace(workspace, s),
             layout: Map.get(layouts, s.id)
@@ -660,6 +706,8 @@ defmodule SovraWeb.Issuer.AdminController do
             version: schema.version,
             kind: schema.kind,
             format: schema.format,
+            registration_status: schema.registration_status,
+            registration_error: schema.registration_error,
             doc_type: doc_type,
             namespace: namespace
           })
@@ -863,8 +911,13 @@ defmodule SovraWeb.Issuer.AdminController do
   operation(:update_credential_status,
     summary: "Change a credential's status",
     description:
-      "Idempotent status transition. Allowed values: `revoked` (permanent), " <>
+      "Requests a status transition. Allowed values: `revoked` (permanent), " <>
         "`suspended` (reversible), `issued` (un-suspend a suspended credential). " <>
+        "The change is written to the on-chain status list in the background: the " <>
+        "response is 202 with the target in `pending_status`, and `status` moves once " <>
+        "the transaction lands, announced by `credential.revoked`, " <>
+        "`credential.suspended` or `credential.unsuspended`. If it never lands, " <>
+        "`credential.status-change-failed` is sent and `status` stays as it was. " <>
         "On the dashboard pipeline, requires workspace admin; on the API-key " <>
         "pipeline, the workspace's API key is sufficient.",
     parameters: [
@@ -877,13 +930,17 @@ defmodule SovraWeb.Issuer.AdminController do
       ]
     ],
     responses: %{
-      200 =>
-        {"Status updated", "application/json",
+      202 =>
+        {"Status change accepted", "application/json",
          %OpenApiSpex.Schema{
            type: :object,
            properties: %{
              id: %OpenApiSpex.Schema{type: :string, format: :uuid},
-             status: %OpenApiSpex.Schema{type: :string}
+             status: %OpenApiSpex.Schema{
+               type: :string,
+               description: "The current status, unchanged until the transaction lands."
+             },
+             pending_status: @pending_status
            }
          }},
       400 =>
@@ -900,6 +957,13 @@ defmodule SovraWeb.Issuer.AdminController do
          }},
       404 =>
         {"Credential not found", "application/json",
+         %OpenApiSpex.Schema{
+           type: :object,
+           properties: %{error: %OpenApiSpex.Schema{type: :string}}
+         }},
+      409 =>
+        {"Another status change is still on the way (`status_change_pending`), or the " <>
+           "workspace is not provisioned", "application/json",
          %OpenApiSpex.Schema{
            type: :object,
            properties: %{error: %OpenApiSpex.Schema{type: :string}}
@@ -959,7 +1023,12 @@ defmodule SovraWeb.Issuer.AdminController do
 
             case fun.(workspace_id, credential_id) do
               {:ok, cred} ->
-                json(conn, %{id: cred.id, status: cred.status})
+                conn
+                |> put_status(202)
+                |> json(%{id: cred.id, status: cred.status, pending_status: cred.pending_status})
+
+              {:error, :status_change_pending} ->
+                conn |> put_status(409) |> json(%{error: "status_change_pending"})
 
               {:error, :credential_not_found} ->
                 conn |> put_status(404) |> json(%{error: "credential_not_found"})
@@ -988,6 +1057,8 @@ defmodule SovraWeb.Issuer.AdminController do
       id: c.id,
       holder_did: c.holder_did,
       status: c.status,
+      pending_status: c.pending_status,
+      status_change_error: c.status_change_error,
       issued_at: DateTime.to_iso8601(c.issued_at),
       expires_at: c.expires_at && DateTime.to_iso8601(c.expires_at),
       schema: %{
@@ -1009,6 +1080,8 @@ defmodule SovraWeb.Issuer.AdminController do
       id: offer.id,
       holder_did: nil,
       status: status,
+      pending_status: nil,
+      status_change_error: nil,
       issued_at: nil,
       expires_at: DateTime.to_iso8601(offer.expires_at),
       schema: %{

@@ -50,6 +50,8 @@ defmodule SovraWeb.Issuer.ApiCredentialTest do
         validity_period: "1y"
       })
 
+    schema = register_schema(schema)
+
     now = DateTime.utc_now() |> DateTime.truncate(:second)
 
     {:ok, cred} =
@@ -92,6 +94,8 @@ defmodule SovraWeb.Issuer.ApiCredentialTest do
         ],
         validity_period: "1y"
       })
+
+    schema = register_schema(schema)
 
     {:ok, %{offer: offer}} =
       Issuer.create_credential_offer(ws.id, schema.schema_id, %{"name" => "Alice"})
@@ -201,33 +205,70 @@ defmodule SovraWeb.Issuer.ApiCredentialTest do
   end
 
   describe "PUT /api/v1/issuer/credentials/:id/status/:status" do
-    test "revokes via API key and emits webhook", %{conn: conn} do
+    test "accepts a revocation, and confirms it with a webhook once it lands", %{conn: conn} do
       %{api_key: key, credential: cred} = setup_workspace_with_credential()
 
       resp =
         conn
         |> authed(key)
         |> put("/api/v1/issuer/credentials/#{cred.id}/status/revoked")
-        |> json_response(200)
+        |> json_response(202)
 
-      assert resp["status"] == "revoked"
+      assert resp == %{"id" => cred.id, "status" => "issued", "pending_status" => "revoked"}
+      refute_enqueued(worker: DeliveryJob, args: %{"event" => "credential.revoked"})
+
+      assert %{"status" => "issued", "pending_status" => "revoked"} =
+               conn
+               |> authed(key)
+               |> get("/api/v1/issuer/credentials/#{cred.id}")
+               |> json_response(200)
+
+      run_chain_jobs()
+
+      assert %{"status" => "revoked", "pending_status" => nil} =
+               conn
+               |> authed(key)
+               |> get("/api/v1/issuer/credentials/#{cred.id}")
+               |> json_response(200)
+
       assert_enqueued(worker: DeliveryJob, args: %{"event" => "credential.revoked"})
     end
 
     test "suspend then unsuspend round-trip", %{conn: conn} do
       %{api_key: key, credential: cred} = setup_workspace_with_credential()
 
-      assert %{"status" => "suspended"} =
+      assert %{"pending_status" => "suspended"} =
                conn
                |> authed(key)
                |> put("/api/v1/issuer/credentials/#{cred.id}/status/suspended")
-               |> json_response(200)
+               |> json_response(202)
 
-      assert %{"status" => "issued"} =
+      run_chain_jobs()
+
+      assert %{"status" => "suspended", "pending_status" => "issued"} =
                conn
                |> authed(key)
                |> put("/api/v1/issuer/credentials/#{cred.id}/status/issued")
-               |> json_response(200)
+               |> json_response(202)
+
+      run_chain_jobs()
+      assert Sovra.Repo.reload!(cred).status == "issued"
+    end
+
+    test "a second change while one is on the way is a 409", %{conn: conn} do
+      %{api_key: key, credential: cred} = setup_workspace_with_credential()
+
+      conn
+      |> authed(key)
+      |> put("/api/v1/issuer/credentials/#{cred.id}/status/suspended")
+      |> json_response(202)
+
+      conn =
+        conn
+        |> authed(key)
+        |> put("/api/v1/issuer/credentials/#{cred.id}/status/revoked")
+
+      assert json_response(conn, 409) == %{"error" => "status_change_pending"}
     end
 
     test "unknown status returns 400", %{conn: conn} do
@@ -247,7 +288,9 @@ defmodule SovraWeb.Issuer.ApiCredentialTest do
       conn
       |> authed(key)
       |> put("/api/v1/issuer/credentials/#{cred.id}/status/revoked")
-      |> json_response(200)
+      |> json_response(202)
+
+      run_chain_jobs()
 
       conn =
         conn

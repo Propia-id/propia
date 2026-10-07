@@ -31,7 +31,8 @@ defmodule Sovra.IssuerTest do
     }
 
     {:ok, schema} = Issuer.create_schema(issuer.id, attrs)
-    schema
+
+    register_schema(schema)
   end
 
   defp holder_proof_jwt(c_nonce) do
@@ -1436,7 +1437,8 @@ defmodule Sovra.IssuerTest do
       }
 
       {:ok, schema} = Issuer.create_schema(issuer.id, attrs)
-      schema
+
+      register_schema(schema)
     end
 
     test "emits an mso_mdoc configuration with the generated doctype" do

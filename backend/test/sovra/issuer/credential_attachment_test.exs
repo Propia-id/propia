@@ -32,7 +32,7 @@ defmodule Sovra.Issuer.CredentialAttachmentTest do
         validity_period: "5y"
       })
 
-    schema
+    register_schema(schema)
   end
 
   defp holder_proof(c_nonce) do
@@ -207,6 +207,8 @@ defmodule Sovra.Issuer.CredentialAttachmentTest do
           ],
           validity_period: "1y"
         })
+
+      schema = register_schema(schema)
 
       {_offer, credential} = issue(workspace, schema, %{"family_name" => "Bilbao"})
 

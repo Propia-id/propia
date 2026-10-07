@@ -29,7 +29,10 @@ defmodule SovraWeb.ConnCase do
       # Import conveniences for testing with connections
       import Plug.Conn
       import Phoenix.ConnTest
-      import Sovra.DataCase, only: [provision_workspace: 1, errors_on: 1]
+
+      import Sovra.DataCase,
+        only: [provision_workspace: 1, register_schema: 1, run_chain_jobs: 0, errors_on: 1]
+
       import SovraWeb.ConnCase
       import Sovra.Fixtures
     end

@@ -28,6 +28,8 @@ defmodule SovraWeb.Verify.DocumentControllerTest do
         claims: [%{"key" => "employee_name", "type" => "string", "required" => true}]
       })
 
+    schema = register_schema(schema)
+
     # A layout with one bound field, so the page actually renders the claim.
     # Without one it comes out with the provenance footer and nothing else.
     {:ok, _layout} =
@@ -52,6 +54,8 @@ defmodule SovraWeb.Verify.DocumentControllerTest do
 
     # No visibility given, so this one lands on the default.
     {:ok, private} = Documents.issue(workspace.id, schema.schema_id, claims)
+
+    run_chain_jobs()
 
     {:ok, token} = UserSession.create(Ecto.UUID.generate(), workspace.id, false)
 

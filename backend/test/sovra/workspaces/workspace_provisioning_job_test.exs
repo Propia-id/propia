@@ -30,6 +30,17 @@ defmodule Sovra.Workspaces.WorkspaceProvisioningJobTest do
     ws
   end
 
+  defp with_env(key, value, fun) do
+    previous = Application.get_env(:sovra, key)
+    Application.put_env(:sovra, key, value)
+
+    try do
+      fun.()
+    after
+      Application.put_env(:sovra, key, previous)
+    end
+  end
+
   describe "perform/1" do
     test "happy path: generates keys, derives DID, marks done, emits webhook" do
       ws = insert_pending_workspace(webhook_url: "https://example.com/hook")
@@ -44,6 +55,13 @@ defmodule Sovra.Workspaces.WorkspaceProvisioningJobTest do
       assert done.did == "did:sovra:" <> done.eoa_address
       assert %DateTime{} = done.provisioned_at
       assert done.provisioning_error == nil
+
+      # Registered as an issuer with no types (schemas add those), then both
+      # status bitmaps, so revocation works from the first credential.
+      eoa = done.eoa_address
+      assert_received {:issuer_registry, :register_issuer, ^eoa, []}
+      assert_received {:revocation_registry, :initialize_bitmap, ^eoa, 0}
+      assert_received {:revocation_registry, :initialize_bitmap, ^eoa, 1}
 
       assert_enqueued(
         worker: DeliveryJob,
@@ -126,6 +144,65 @@ defmodule Sovra.Workspaces.WorkspaceProvisioningJobTest do
       assert done.provisioning_status == "done"
       assert done.provisioning_error == nil
       assert %DateTime{} = done.provisioned_at
+    end
+
+    test "treats an already-registered issuer as success and still initializes the bitmaps" do
+      ws = insert_pending_workspace()
+
+      with_env(:issuer_registry, SovraTest.Ethereum.AlreadyRegisteredIssuerRegistry, fn ->
+        assert :ok = perform_job(WorkspaceProvisioningJob, %{"workspace_id" => ws.id})
+      end)
+
+      done = Repo.reload!(ws)
+      assert done.provisioning_status == "done"
+      eoa = done.eoa_address
+      assert_received {:revocation_registry, :initialize_bitmap, ^eoa, 0}
+      assert_received {:revocation_registry, :initialize_bitmap, ^eoa, 1}
+    end
+
+    test "a failed issuer registration fails the issuer_registration step" do
+      ws = insert_pending_workspace()
+
+      with_env(:issuer_registry, SovraTest.Ethereum.AlwaysFailingIssuerRegistry, fn ->
+        assert {:cancel, :rpc_down} =
+                 perform_job(WorkspaceProvisioningJob, %{"workspace_id" => ws.id},
+                   attempt: 5,
+                   max_attempts: 5
+                 )
+      end)
+
+      failed = Repo.reload!(ws)
+      assert failed.provisioning_status == "failed"
+      assert failed.provisioning_error == "rpc_down"
+      refute_received {:revocation_registry, :initialize_bitmap, _, _}
+    end
+
+    test "a failed bitmap initialization keeps the workspace pending, and a retry finishes it" do
+      ws = insert_pending_workspace()
+
+      with_env(:revocation_registry, SovraTest.Ethereum.FailingBitmapRevocationRegistry, fn ->
+        assert {:error, :rpc_down} =
+                 perform_job(WorkspaceProvisioningJob, %{"workspace_id" => ws.id},
+                   attempt: 1,
+                   max_attempts: 5
+                 )
+      end)
+
+      assert Repo.reload!(ws).provisioning_status == "pending"
+
+      # The retry re-runs the issuer registration too; the real registry answers
+      # that with AlreadyRegistered, which counts as success.
+      assert :ok =
+               perform_job(WorkspaceProvisioningJob, %{"workspace_id" => ws.id},
+                 attempt: 2,
+                 max_attempts: 5
+               )
+
+      done = Repo.reload!(ws)
+      assert done.provisioning_status == "done"
+      eoa = done.eoa_address
+      assert_received {:revocation_registry, :initialize_bitmap, ^eoa, 0}
+      assert_received {:revocation_registry, :initialize_bitmap, ^eoa, 1}
     end
 
     test "cancels and writes failed state on the last attempt when chain fails" do

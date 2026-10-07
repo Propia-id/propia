@@ -12,6 +12,8 @@ defmodule SovraWeb.Verify.StatusListControllerTest do
   defmodule StubRegistry do
     def configure_bitmap(words), do: Process.put({__MODULE__, :bitmap}, words)
     def get_bitmap(_addr, _purpose), do: {:ok, Process.get({__MODULE__, :bitmap}, [0])}
+    # Workspace provisioning initializes the bitmaps.
+    def initialize_bitmap(_addr, _purpose), do: {:ok, "0xstubtxhash"}
   end
 
   setup do

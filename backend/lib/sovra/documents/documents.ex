@@ -9,10 +9,10 @@ defmodule Sovra.Documents do
 
   use Sovra.Log
 
+  alias Sovra.Documents.AnchorJob
   alias Sovra.Documents.Attestation
   alias Sovra.Documents.DocumentLayout
   alias Sovra.Documents.SignedDocument
-  alias Sovra.Ethereum.IssuerRegistry
   alias Sovra.Ethereum.SignatureRegistry
   alias Sovra.Issuer
   alias Sovra.Issuer.ClaimUtils
@@ -23,12 +23,13 @@ defmodule Sovra.Documents do
   import Ecto.Query
 
   @doc """
-  Signs and stores a document for `schema_id` with `claims`, then anchors the
-  signature.
+  Signs and stores a document for `schema_id` with `claims`, and queues the
+  anchoring of its signature.
 
   Refuses to sign at all without a signature registry: an unanchorable document
-  looks issued while missing the timestamp that makes it worth anything. Ends
-  `anchored`, or `failed` when the transaction did not go through.
+  looks issued while missing the timestamp that makes it worth anything. Returns
+  it `signed`; `Sovra.Documents.AnchorJob` moves it to `anchored`, or `failed`
+  when the transaction does not go through.
   """
   def issue(workspace_id, schema_id, claims, opts \\ []) when is_map(claims) do
     with {:ok, workspace} <- Workspaces.get_workspace(workspace_id),
@@ -36,6 +37,9 @@ defmodule Sovra.Documents do
          :ok <- assert_anchoring_configured(),
          {:ok, schema} <- Issuer.get_schema(workspace_id, schema_id),
          :ok <- CredentialSchema.assert_kind(schema, "document"),
+         # The anchor reverts until the type is trusted on-chain, and an
+         # unanchored document is unusable, so do not sign one.
+         :ok <- CredentialSchema.assert_registered(schema),
          :ok <- ClaimUtils.validate_required_claims(schema, claims),
          {:ok, visibility} <- cast_visibility(Keyword.get(opts, :visibility)),
          {:ok, valid_until} <- cast_valid_until(Keyword.get(opts, :valid_until)),
@@ -55,7 +59,7 @@ defmodule Sovra.Documents do
         signed_at: DateTime.utc_now() |> DateTime.truncate(:second)
       }
 
-      case SignedDocument.create_changeset(attrs) |> Repo.insert() do
+      case insert_document(attrs) do
         {:ok, document} ->
           # Never log the credential itself: it carries the claim values, and
           # anyone holding it can present the document.
@@ -68,7 +72,6 @@ defmodule Sovra.Documents do
             visibility: document.visibility
           )
 
-          document = anchor(document, workspace, schema)
           {:ok, Repo.preload(document, [:schema, :workspace])}
 
         {:error, changeset} ->
@@ -83,6 +86,22 @@ defmodule Sovra.Documents do
 
           {:error, changeset}
       end
+    end
+  end
+
+  # The anchor job is inserted with the document, so a document never exists
+  # without the job that will anchor it. The row is stored before anchoring on
+  # purpose: a receipt that never arrived is not the same as a transaction that
+  # never happened, and dropping the row would risk a signature anchored on a
+  # chain that cannot be undone for a document missing from the database.
+  defp insert_document(attrs) do
+    Ecto.Multi.new()
+    |> Ecto.Multi.insert(:document, SignedDocument.create_changeset(attrs))
+    |> Oban.insert(:anchor_job, fn %{document: document} -> AnchorJob.new_for(document) end)
+    |> Repo.transaction()
+    |> case do
+      {:ok, %{document: document}} -> {:ok, document}
+      {:error, _step, reason, _changes} -> {:error, reason}
     end
   end
 
@@ -116,67 +135,6 @@ defmodule Sovra.Documents do
       {:ok, valid_until} -> {:ok, valid_until}
       {:error, reason} -> {:error, {:invalid_valid_until, reason}}
     end
-  end
-
-  # Reached with a registry configured, so what fails here is the transaction
-  # itself: a revert, a dead RPC, a receipt that never arrives. A verifier rejects
-  # an unanchored document, so `failed` is unusable and has to be reissued.
-  #
-  # The row is kept anyway, and stored before anchoring on purpose: a receipt that
-  # never arrived is not the same as a transaction that never happened. Dropping
-  # it would risk a signature anchored on a chain that cannot be undone for a
-  # document missing from the database.
-  defp anchor(document, workspace, schema) do
-    type_id = IssuerRegistry.credential_type_hash(schema.credential_type)
-    {r, s} = signature_components(document.credential)
-
-    case signature_registry().record(workspace.eoa_address, type_id, document.digest, r, s) do
-      {:ok, tx_hash} ->
-        Log.event(:info, "document anchored",
-          event: "document.anchored",
-          document_id: document.id,
-          workspace_id: workspace.id,
-          tx_hash: tx_hash,
-          digest: hex(document.digest)
-        )
-
-        set_status(document, %{
-          status: "anchored",
-          tx_hash: tx_hash,
-          anchored_at: DateTime.utc_now() |> DateTime.truncate(:second)
-        })
-
-      {:error, reason} ->
-        # Signer and type id go here rather than on the happy path: a revert is
-        # almost always one of the two not matching the registries. A verifier
-        # rejects an unanchored document, so this row is unusable and has to be
-        # reissued — which is why it is an error, not a warning.
-        Log.event(:error, "document anchoring failed",
-          event: "document.anchoring_failed",
-          document_id: document.id,
-          workspace_id: workspace.id,
-          eoa_address: workspace.eoa_address,
-          type_id: hex(type_id),
-          digest: hex(document.digest),
-          reason: Log.reason(reason)
-        )
-
-        set_status(document, %{status: "failed"})
-    end
-  end
-
-  # The third JWS segment is raw `r ‖ s`, 32 bytes each (RFC 7518), which is
-  # what the contract expects. Split on `~` first: the head is the JWT and the
-  # tail is the disclosure list, empty for a document.
-  defp signature_components(credential) do
-    [jwt | _disclosures] = String.split(credential, "~")
-    [_header, _payload, signature] = String.split(jwt, ".")
-    <<r::binary-32, s::binary-32>> = Base.url_decode64!(signature, padding: false)
-    {r, s}
-  end
-
-  defp set_status(document, attrs) do
-    document |> SignedDocument.status_changeset(attrs) |> Repo.update!()
   end
 
   defp signature_registry,

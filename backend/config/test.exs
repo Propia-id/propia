@@ -25,6 +25,7 @@ config :sovra,
   hmac_key_store: Sovra.Crypto.DatabaseHmacStore,
   auth_provider: Sovra.Auth.MockAuthProvider,
   did_registry: SovraTest.Ethereum.StubDIDRegistry,
+  issuer_registry: SovraTest.Ethereum.StubIssuerRegistry,
   revocation_registry: SovraTest.Ethereum.StubRevocationRegistry,
   signature_registry: SovraTest.Ethereum.StubSignatureRegistry,
   ethereum: [

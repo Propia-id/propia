@@ -73,32 +73,41 @@ defmodule SovraWeb.Issuer.AdminCredentialStatusTest do
         put_req_header(conn, "authorization", "Bearer #{token}")
       )
 
-  test "admin revokes → status becomes revoked and webhook enqueued", %{conn: conn} do
+  test "admin revokes → pending, then revoked and webhook enqueued once it lands",
+       %{conn: conn} do
     %{workspace: ws, owner: owner, credential: cred} = setup_workspace_with_credential()
 
     resp =
       conn
       |> authed(owner, ws.id)
       |> put("/dashboard/issuer/credentials/#{cred.id}/status/revoked")
-      |> json_response(200)
+      |> json_response(202)
 
     assert resp["id"] == cred.id
-    assert resp["status"] == "revoked"
+    assert resp["status"] == "issued"
+    assert resp["pending_status"] == "revoked"
 
+    run_chain_jobs()
+
+    assert Sovra.Repo.reload!(cred).status == "revoked"
     assert_enqueued(worker: DeliveryJob, args: %{"event" => "credential.revoked"})
   end
 
-  test "admin suspends → status becomes suspended and webhook enqueued", %{conn: conn} do
+  test "admin suspends → pending, then suspended and webhook enqueued once it lands",
+       %{conn: conn} do
     %{workspace: ws, owner: owner, credential: cred} = setup_workspace_with_credential()
 
     resp =
       conn
       |> authed(owner, ws.id)
       |> put("/dashboard/issuer/credentials/#{cred.id}/status/suspended")
-      |> json_response(200)
+      |> json_response(202)
 
-    assert resp["status"] == "suspended"
+    assert resp["pending_status"] == "suspended"
 
+    run_chain_jobs()
+
+    assert Sovra.Repo.reload!(cred).status == "suspended"
     assert_enqueued(worker: DeliveryJob, args: %{"event" => "credential.suspended"})
   end
 

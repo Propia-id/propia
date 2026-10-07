@@ -6,15 +6,11 @@ defmodule Sovra.Ethereum.DIDRegistry do
 
   alias Sovra.Ethereum.Client
   alias Sovra.Ethereum.Contracts.DIDRegistryContract
+  alias Sovra.Ethereum.Revert
   alias Sovra.Crypto.P256
 
-  # Selector for the DIDAlreadyExists() custom error, derived from its
-  # signature at compile time: keccak256("DIDAlreadyExists()")[0..3] = 0x338c38da.
-  @did_already_exists_selector "0x" <>
-                                 ("DIDAlreadyExists()"
-                                  |> ExKeccak.hash_256()
-                                  |> binary_part(0, 4)
-                                  |> Base.encode16(case: :lower))
+  # keccak256("DIDAlreadyExists()")[0..3] = 0x338c38da.
+  @did_already_exists_selector Revert.selector("DIDAlreadyExists()")
 
   @doc """
   Register an issuer DID on-chain with their P-256 signing key and OID4VCI service endpoint.
@@ -52,16 +48,7 @@ defmodule Sovra.Ethereum.DIDRegistry do
   Detects the `DIDAlreadyExists()` revert selector in a JSON-RPC error returned
   by a reverted `create` call. Pure; exposed for testing.
   """
-  def did_already_exists?(reason) when is_map(reason) do
-    [Map.get(reason, "data"), Map.get(reason, "message")]
-    |> Enum.filter(&is_binary/1)
-    |> Enum.any?(&String.contains?(&1, @did_already_exists_selector))
-  end
-
-  def did_already_exists?(reason) when is_binary(reason),
-    do: String.contains?(reason, @did_already_exists_selector)
-
-  def did_already_exists?(_reason), do: false
+  def did_already_exists?(reason), do: Revert.matches?(reason, @did_already_exists_selector)
 
   @doc """
   Resolve a DID document from on-chain storage.

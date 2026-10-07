@@ -25,7 +25,7 @@ defmodule SovraWeb.Issuer.OfferControllerTest do
         validity_period: "1y"
       })
 
-    schema
+    register_schema(schema)
   end
 
   describe "POST /dashboard/issuer/offers (JWT path)" do
@@ -48,6 +48,47 @@ defmodule SovraWeb.Issuer.OfferControllerTest do
       assert resp["offer_uri"]
       assert resp["pre_authorized_code"]
       assert resp["expires_at"]
+    end
+  end
+
+  describe "a schema whose credential type is not registered on-chain yet" do
+    test "is created pending, refuses offers with a 409, and issues once registered",
+         %{conn: conn} do
+      %{workspace: ws, user: user} = create_workspace()
+      {:ok, token} = UserSession.create(user.id, ws.id, user.is_admin)
+      conn = put_req_header(conn, "authorization", "Bearer #{token}")
+
+      schema =
+        conn
+        |> post("/dashboard/issuer/schemas", %{
+          "schema_id" => "pending-#{System.unique_integer([:positive])}",
+          "credential_type" => "PendingCredential",
+          "name" => "Pending",
+          "validity_period" => "1y",
+          "claims" => [
+            %{"key" => "name", "type" => "string", "required" => true, "disclosable" => true}
+          ]
+        })
+        |> json_response(201)
+
+      assert schema["registration_status"] == "pending"
+      assert schema["registration_error"] == nil
+
+      offer = %{"schema_id" => schema["schema_id"], "claims" => %{"name" => "Alice"}}
+
+      assert %{"error" => "schema_registration_pending"} =
+               conn |> post("/dashboard/issuer/offers", offer) |> json_response(409)
+
+      Oban.drain_queue(queue: :chain, with_safety: false)
+
+      assert [%{"registration_status" => "registered"}] =
+               conn
+               |> get("/dashboard/issuer/schemas")
+               |> json_response(200)
+               |> Map.fetch!("schemas")
+               |> Enum.filter(&(&1["schema_id"] == schema["schema_id"]))
+
+      assert conn |> post("/dashboard/issuer/offers", offer) |> json_response(201)
     end
   end
 

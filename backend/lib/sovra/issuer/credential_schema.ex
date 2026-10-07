@@ -45,6 +45,15 @@ defmodule Sovra.Issuer.CredentialSchema do
     # generated schema means.
     field :namespace, :string
 
+    # Whether the credential type is trusted for this workspace in the on-chain
+    # issuer registry: "pending" until `Sovra.Issuer.CredentialTypeRegistrationJob`
+    # confirms it, then "registered", or "failed" once its retries run out.
+    # Nothing is issued from a schema that is not "registered" — a document's
+    # anchor reverts until the type is trusted, and a credential would not
+    # verify. Set by the job only, never cast from a caller's attrs.
+    field :registration_status, :string, default: "pending"
+    field :registration_error, :string
+
     belongs_to :issuer, Sovra.Workspaces.Workspace
 
     timestamps(type: :utc_datetime)
@@ -232,6 +241,19 @@ defmodule Sovra.Issuer.CredentialSchema do
   end
 
   def assert_can_issue(%__MODULE__{}, _workspace), do: :ok
+
+  @doc """
+  Asserts the schema's credential type is registered on-chain, which issuing
+  from it requires. Pending and failed are told apart because an operator does
+  something different about each: waits out a pending one, escalates a failed
+  one.
+  """
+  def assert_registered(%__MODULE__{registration_status: "registered"}), do: :ok
+
+  def assert_registered(%__MODULE__{registration_status: "failed"}),
+    do: {:error, :schema_registration_failed}
+
+  def assert_registered(%__MODULE__{}), do: {:error, :schema_registration_pending}
 
   def kinds, do: @kinds
 

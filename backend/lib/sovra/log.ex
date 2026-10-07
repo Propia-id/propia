@@ -114,12 +114,15 @@ defmodule Sovra.Log do
     credential.offer.created
     credential.request.rejected
     credential.revoked
+    credential.schema.chain_registered
     credential.schema.chain_registration_failed
     credential.schema.created
     credential.schema.deleted
     credential.schema.rejected
     credential.schema.revised
+    credential.status_change.failed
     credential.status_change.rejected
+    credential.status_change.requested
     credential.suspended
     credential.token.exchanged
     credential.unsuspended
