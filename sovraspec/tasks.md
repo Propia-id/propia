@@ -23,7 +23,6 @@
 
 ## Webhook Events
 - [ ] Configurable retry policies per workspace (number of attempts, backoff strategy)
-- [ ] Event filtering (workspaces subscribe only to specific event types)
 - [ ] Dead letter queue for permanently failed deliveries
 
 ## Security

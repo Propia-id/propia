@@ -1,9 +1,13 @@
 defmodule Sovra.Webhooks.DeliveryJob do
   @moduledoc """
-  Oban worker that delivers a signed webhook POST to a workspace's configured
-  `webhook_url`. The HMAC signature is computed by `Sovra.Crypto.HmacKeyStore`
-  (`DatabaseHmacStore` — the secret is stored so it can be revealed to the
-  customer once, since KMS HMAC keys are non-exportable).
+  Oban worker that delivers a signed webhook POST to one of a workspace's
+  endpoints (`Sovra.Webhooks.Webhook`). The HMAC signature is computed with the
+  endpoint's own secret by `Sovra.Crypto.HmacKeyStore` (`DatabaseHmacStore` —
+  the secret is stored so it can be revealed to the customer once, since KMS
+  HMAC keys are non-exportable).
+
+  The endpoint is re-read at delivery time: one deleted, disabled, or no
+  longer subscribed to the event since it was enqueued is skipped.
 
   Retry semantics:
   - 2xx → success.
@@ -17,52 +21,42 @@ defmodule Sovra.Webhooks.DeliveryJob do
 
   alias Sovra.Crypto.HmacKeyStore
   alias Sovra.Repo
-  alias Sovra.Workspaces.Workspace
+  alias Sovra.Webhooks.Webhook
 
   @impl Oban.Worker
   def perform(
         %Oban.Job{
-          args: %{"workspace_id" => workspace_id, "event" => event, "payload" => payload} = args
+          args: %{"webhook_id" => webhook_id, "event" => event, "payload" => payload} = args
         } = job
       ) do
     Log.adopt_job_context(job)
 
     Log.put_context(
-      workspace_id: workspace_id,
+      workspace_id: args["workspace_id"],
+      webhook_id: webhook_id,
       event_type: event,
       delivery_id: args["delivery_id"]
     )
 
-    case Repo.get(Workspace, workspace_id) do
+    case Repo.get(Webhook, webhook_id) do
       nil ->
-        discard(:workspace_not_found)
+        skip(:webhook_deleted)
 
-      %Workspace{webhook_url: nil} ->
-        # Not a failure: the workspace has no destination configured, which is
-        # the documented no-op. Logged so a customer asking "why no webhooks"
-        # has an answer.
-        Log.event(:info, "webhook skipped, no destination configured",
-          event: "webhook.skipped",
-          reason: :no_webhook_url
-        )
+      %Webhook{enabled: false} ->
+        skip(:webhook_disabled)
 
-        :ok
-
-      %Workspace{webhook_secret_key_id: nil} ->
-        discard(:webhook_secret_not_configured)
-
-      %Workspace{webhook_url: url, webhook_secret_key_id: key_id} ->
-        deliver(url, key_id, event, payload)
+      %Webhook{url: url, secret_key_id: key_id, events: events} ->
+        if event in events,
+          do: deliver(url, key_id, event, payload),
+          else: skip(:event_unsubscribed)
     end
   end
 
-  defp discard(reason) do
-    Log.event(:warning, "webhook discarded",
-      event: "webhook.discarded",
-      reason: reason
-    )
-
-    {:discard, reason}
+  # Not a failure: the operator changed the endpoint after the event was
+  # emitted. Logged so a customer asking "why no webhook" has an answer.
+  defp skip(reason) do
+    Log.event(:info, "webhook skipped", event: "webhook.skipped", reason: reason)
+    :ok
   end
 
   defp deliver(url, key_id, event, payload) do
@@ -120,10 +114,13 @@ defmodule Sovra.Webhooks.DeliveryJob do
 
   # A 4xx is the consumer's bug and retrying cannot help, so the event is the
   # only record that the customer's endpoint rejected us.
+  #
+  # No `reason` here or on the 5xx below: the status already says whose fault
+  # it was, and with webhook_id in the job context an atom restating it would
+  # push these lines past New Relic's 10 attributes — see Sovra.Log.
   defp classify(status, ms) when status in 400..499 do
     Log.event(:warning, "webhook delivery rejected by consumer",
       event: "webhook.discarded",
-      reason: :client_error,
       status: status,
       duration_ms: ms
     )
@@ -134,7 +131,6 @@ defmodule Sovra.Webhooks.DeliveryJob do
   defp classify(status, ms) do
     Log.event(:warning, "webhook delivery failed, will retry",
       event: "webhook.failed",
-      reason: :remote_error,
       status: status,
       duration_ms: ms
     )

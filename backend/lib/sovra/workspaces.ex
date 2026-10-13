@@ -1,9 +1,9 @@
 defmodule Sovra.Workspaces do
   @moduledoc """
   Workspace lifecycle — per-tenant operational units that act as credential
-  issuers. Each workspace owns its DID, signing keys, and on-chain EOA, plus a
-  webhook URL, a webhook secret (stored in the HMAC key store), and one or more
-  API keys (managed via `Sovra.Workspaces.ApiKeys`).
+  issuers. Each workspace owns its DID, signing keys, and on-chain EOA, plus
+  webhook endpoints (managed via `Sovra.Webhooks`) and one or more API keys
+  (managed via `Sovra.Workspaces.ApiKeys`).
 
   Workspaces always belong to an organization. Users belong to workspaces via
   the `workspace_members` join table with role `admin` or `member`.
@@ -25,9 +25,8 @@ defmodule Sovra.Workspaces do
 
   @doc """
   Create a workspace under an organization with `owner_user_id` as the
-  founding admin member. Generates a webhook HMAC secret via the configured
-  store — the plaintext is returned **exactly once** so the caller can reveal
-  it to the user.
+  founding admin member. It starts with no webhook endpoints; those are added
+  through `Sovra.Webhooks`.
 
   The signing key, EOA, DID, and on-chain registration are produced
   asynchronously by `Sovra.Workspaces.WorkspaceProvisioningJob`. The
@@ -37,17 +36,12 @@ defmodule Sovra.Workspaces do
   """
   def create_workspace(organization_id, attrs, owner_user_id) do
     name = Map.get(attrs, :name) || Map.get(attrs, "name")
-    webhook_url = Map.get(attrs, :webhook_url) || Map.get(attrs, "webhook_url")
 
-    with {:ok, %{key_id: webhook_key_id, plaintext: webhook_secret}} <-
-           HmacKeyStore.generate_hmac_key(),
-         {:ok, %{key_id: status_index_key_id}} <- HmacKeyStore.generate_hmac_key() do
+    with {:ok, %{key_id: status_index_key_id}} <- HmacKeyStore.generate_hmac_key() do
       changeset =
         Workspace.create_changeset(%{
           name: name,
           organization_id: organization_id,
-          webhook_url: webhook_url,
-          webhook_secret_key_id: webhook_key_id,
           status_index_secret_key_id: status_index_key_id
         })
 
@@ -79,11 +73,10 @@ defmodule Sovra.Workspaces do
             event: "workspace.created",
             workspace_id: workspace.id,
             org_id: organization_id,
-            owner_user_id: owner_user_id,
-            webhook_configured: not is_nil(workspace.webhook_url)
+            owner_user_id: owner_user_id
           )
 
-          {:ok, %{workspace: workspace, webhook_secret: webhook_secret}}
+          {:ok, %{workspace: workspace}}
 
         {:error, _step, changeset, _} ->
           {:error, changeset}
@@ -260,8 +253,7 @@ defmodule Sovra.Workspaces do
         provisioning_status: w.provisioning_status,
         provisioning_error: w.provisioning_error,
         provisioned_at: w.provisioned_at,
-        organization_id: w.organization_id,
-        webhook_url: w.webhook_url
+        organization_id: w.organization_id
       }
     )
     |> Repo.all()
@@ -282,7 +274,6 @@ defmodule Sovra.Workspaces do
         provisioning_error: w.provisioning_error,
         provisioned_at: w.provisioned_at,
         organization_id: w.organization_id,
-        webhook_url: w.webhook_url,
         role: m.role
       }
     )
@@ -300,83 +291,6 @@ defmodule Sovra.Workspaces do
     workspace
     |> Workspace.update_changeset(attrs)
     |> Repo.update()
-    |> tap(fn
-      {:ok, updated} -> log_webhook_url_change(workspace, updated)
-      {:error, _} -> :ok
-    end)
-  end
-
-  # Changing this URL redirects the workspace's entire credential event stream
-  # to a new destination, so the change is recorded: "our webhooks stopped
-  # arriving" is otherwise indistinguishable from a delivery failure.
-  #
-  # HOST ONLY, never the full URL. A webhook URL routinely carries a shared
-  # secret in its path or query (`/hooks/sovra?token=…`), and these logs leave
-  # the host for New Relic. The host answers the question the event exists for
-  # — did the destination move — and `workspaces.webhook_url` has the rest for
-  # anyone with database access.
-  defp log_webhook_url_change(%Workspace{webhook_url: same}, %Workspace{webhook_url: same}),
-    do: :ok
-
-  defp log_webhook_url_change(%Workspace{} = before, %Workspace{} = updated) do
-    Log.event(:info, "workspace webhook URL changed",
-      event: "workspace.webhook_url.changed",
-      workspace_id: updated.id,
-      previous_webhook_host: webhook_host(before.webhook_url),
-      webhook_host: webhook_host(updated.webhook_url)
-    )
-  end
-
-  defp webhook_host(nil), do: nil
-
-  defp webhook_host(url) when is_binary(url) do
-    case URI.parse(url) do
-      %URI{host: host} when is_binary(host) -> host
-      _ -> "unparseable"
-    end
-  end
-
-  @doc """
-  Rotate the workspace's webhook HMAC secret. Returns the new plaintext
-  exactly once.
-  """
-  def regenerate_webhook_secret(%Workspace{} = workspace) do
-    had_previous? = not is_nil(workspace.webhook_secret_key_id)
-
-    case workspace.webhook_secret_key_id do
-      nil ->
-        with {:ok, %{key_id: key_id, plaintext: plaintext}} <- HmacKeyStore.generate_hmac_key(),
-             {:ok, updated} <-
-               workspace
-               |> Workspace.webhook_secret_changeset(key_id)
-               |> Repo.update() do
-          log_secret_regenerated(workspace.id, had_previous?)
-          {:ok, %{workspace: updated, webhook_secret: plaintext}}
-        end
-
-      key_id ->
-        case HmacKeyStore.rotate(key_id) do
-          {:ok, %{plaintext: plaintext}} ->
-            log_secret_regenerated(workspace.id, had_previous?)
-            {:ok, %{workspace: workspace, webhook_secret: plaintext}}
-
-          {:error, _} = error ->
-            error
-        end
-    end
-  end
-
-  # After the rotation lands, not before: the key store or the update can fail,
-  # and an event claiming the secret changed when it did not would send someone
-  # looking for a cause that never happened.
-  defp log_secret_regenerated(workspace_id, had_previous?) do
-    # Invalidates the customer's signature verification until they store the
-    # new secret, so a burst of webhook signature complaints traces back here.
-    Log.event(:info, "workspace webhook secret regenerated",
-      event: "workspace.webhook_secret.regenerated",
-      workspace_id: workspace_id,
-      had_previous_secret: had_previous?
-    )
   end
 
   # ── Membership ─────────────────────────────────────────

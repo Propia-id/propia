@@ -9,7 +9,7 @@ defmodule Sovra.Workspaces.WorkspaceProvisioningJobTest do
   alias Sovra.Workspaces.Workspace
   alias Sovra.Workspaces.WorkspaceProvisioningJob
 
-  defp insert_pending_workspace(opts \\ []) do
+  defp insert_pending_workspace do
     {:ok, user} =
       User.admin_changeset(%{
         email: "user-#{System.unique_integer([:positive])}@example.com",
@@ -22,11 +22,7 @@ defmodule Sovra.Workspaces.WorkspaceProvisioningJobTest do
       |> Organization.create_changeset()
       |> Repo.insert()
 
-    attrs =
-      %{name: "Acme"}
-      |> Map.merge(Map.new(Keyword.take(opts, [:webhook_url])))
-
-    {:ok, %{workspace: ws}} = Workspaces.create_workspace(org.id, attrs, user.id)
+    {:ok, %{workspace: ws}} = Workspaces.create_workspace(org.id, %{name: "Acme"}, user.id)
     ws
   end
 
@@ -43,7 +39,8 @@ defmodule Sovra.Workspaces.WorkspaceProvisioningJobTest do
 
   describe "perform/1" do
     test "happy path: generates keys, derives DID, marks done, emits webhook" do
-      ws = insert_pending_workspace(webhook_url: "https://example.com/hook")
+      ws = insert_pending_workspace()
+      %{webhook: webhook} = fixture_webhook(ws)
 
       assert :ok = perform_job(WorkspaceProvisioningJob, %{"workspace_id" => ws.id})
 
@@ -67,6 +64,7 @@ defmodule Sovra.Workspaces.WorkspaceProvisioningJobTest do
         worker: DeliveryJob,
         args: %{
           "event" => "identity.did-generated",
+          "webhook_id" => webhook.id,
           "workspace_id" => ws.id,
           "payload" => %{
             "event" => "identity.did-generated",
@@ -77,17 +75,15 @@ defmodule Sovra.Workspaces.WorkspaceProvisioningJobTest do
       )
     end
 
-    test "skips webhook delivery work when the workspace has no webhook_url" do
+    test "enqueues no delivery when the workspace has no webhook endpoint" do
       ws = insert_pending_workspace()
-      assert ws.webhook_url == nil
 
       assert :ok = perform_job(WorkspaceProvisioningJob, %{"workspace_id" => ws.id})
 
       done = Repo.reload!(ws)
       assert done.provisioning_status == "done"
 
-      # The webhook is still enqueued — the delivery job no-ops on its own.
-      assert_enqueued(worker: DeliveryJob, args: %{"event" => "identity.did-generated"})
+      refute_enqueued(worker: DeliveryJob)
     end
 
     test "is idempotent when called against an already-done workspace" do

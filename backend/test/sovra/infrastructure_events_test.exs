@@ -158,9 +158,10 @@ defmodule Sovra.InfrastructureEventsTest do
 
   describe "webhooks" do
     test "the delivery_id is recorded at enqueue, which is what a ticket quotes" do
-      %{workspace: ws} = fixture_workspace(webhook_url: "https://example.com/hook")
+      %{workspace: ws} = fixture_workspace()
+      %{webhook: webhook} = fixture_webhook(ws)
 
-      {{:ok, job}, events} =
+      {{:ok, [job]}, events} =
         capture_events(fn ->
           Webhooks.enqueue(ws.id, "credential.issued", %{"credential_id" => "abc"})
         end)
@@ -171,30 +172,50 @@ defmodule Sovra.InfrastructureEventsTest do
       assert_event(events, "webhook.enqueued",
         delivery_id: delivery_id,
         workspace_id: ws.id,
+        webhook_id: webhook.id,
         event_type: "credential.issued"
       )
     end
 
-    test "a workspace with no destination is a recorded no-op, not a failure" do
+    test "a workspace with no subscribed endpoint is a recorded no-op, not a failure" do
       %{workspace: ws} = fixture_workspace()
-      {:ok, job} = Webhooks.enqueue(ws.id, "credential.issued", %{})
+      fixture_webhook(ws, events: ["presentation.verified"])
+
+      {result, events} =
+        capture_events(fn -> Webhooks.enqueue(ws.id, "credential.issued", %{}) end)
+
+      assert result == {:ok, []}
+
+      assert_event(events, "webhook.skipped",
+        reason: :no_subscribed_webhook,
+        workspace_id: ws.id,
+        event_type: "credential.issued"
+      )
+    end
+
+    test "an endpoint disabled after the enqueue is a recorded skip" do
+      %{workspace: ws} = fixture_workspace()
+      %{webhook: webhook} = fixture_webhook(ws)
+      {:ok, [job]} = Webhooks.enqueue(ws.id, "credential.issued", %{})
+      {:ok, _} = Webhooks.update_webhook(ws.id, webhook.id, %{enabled: false})
 
       {result, events} =
         capture_events(fn -> Sovra.Webhooks.DeliveryJob.perform(enqueued(job)) end)
 
       assert result == :ok
-      assert_event(events, "webhook.skipped", reason: :no_webhook_url)
+      assert_event(events, "webhook.skipped", reason: :webhook_disabled)
     end
 
     test "delivery outcomes are separated into delivered, discarded and retried" do
-      %{workspace: ws} = fixture_workspace(webhook_url: "https://example.com/hook")
+      %{workspace: ws} = fixture_workspace()
+      fixture_webhook(ws)
 
       for {status, event, level} <- [
             {200, "webhook.delivered", :info},
             {404, "webhook.discarded", :warning},
             {503, "webhook.failed", :warning}
           ] do
-        {:ok, job} = Webhooks.enqueue(ws.id, "credential.issued", %{})
+        {:ok, [job]} = Webhooks.enqueue(ws.id, "credential.issued", %{})
 
         Application.put_env(:sovra, :webhook_req_opts,
           plug: fn conn -> Plug.Conn.send_resp(conn, status, "") end

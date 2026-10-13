@@ -25,11 +25,11 @@ The system SHALL deliver webhook events first to the workspace's webhookUrl, cap
 The system SHALL deliver events to whichever webhook URLs are configured, sending to workspace-only, platform-only, or both as applicable.
 
 #### Scenario: Only workspace webhook configured
-- GIVEN a workspace has a webhookUrl configured but no central platform webhook is configured
+- GIVEN a workspace has webhook endpoints configured but no central platform webhook is configured
 - WHEN an event is emitted
-- THEN the event is delivered only to the workspace's webhookUrl, signed with the workspace's webhookSecret, and no attempt is made to deliver to a platform URL
+- THEN the event is delivered only to the workspace's enabled endpoints subscribed to it, each signed with that endpoint's signing secret, and no attempt is made to deliver to a platform URL
 
 #### Scenario: Only platform webhook configured
-- GIVEN no workspace webhookUrl is configured but the central platform webhook is configured
+- GIVEN no workspace webhook endpoint is configured but the central platform webhook is configured
 - WHEN an event is emitted
 - THEN the event is sent directly to the platform's webhook URL with an empty `eventWebhookResponse` (since no workspace webhook was called)

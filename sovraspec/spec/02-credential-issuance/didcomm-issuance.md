@@ -27,4 +27,4 @@ The system SHALL emit a `{event:issuance.credential-issued-messaging}` webhook e
 #### Scenario: Webhook notification on issuance
 - GIVEN a credential has been successfully issued to a holder via DIDComm
 - WHEN the issuance is complete
-- THEN a `{event:issuance.credential-issued-messaging}` event is emitted following the dual delivery pattern -- first to the workspace's webhook URL, then to the central platform including the workspace's webhook response
+- THEN a `{event:issuance.credential-issued-messaging}` event is emitted following the dual delivery pattern -- first to the workspace's subscribed webhook endpoints, then to the central platform including the workspace's webhook response

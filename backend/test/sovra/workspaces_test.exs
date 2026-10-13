@@ -16,11 +16,11 @@ defmodule Sovra.WorkspacesTest do
   end
 
   describe "create_workspace/3" do
-    test "creates workspace + owner member + webhook secret in pending state" do
+    test "creates workspace + owner member in pending state" do
       user = create_user()
       org = create_org()
 
-      {:ok, %{workspace: ws, webhook_secret: secret}} =
+      {:ok, %{workspace: ws}} =
         Workspaces.create_workspace(org.id, %{name: "Acme"}, user.id)
 
       assert ws.name == "Acme"
@@ -30,15 +30,12 @@ defmodule Sovra.WorkspacesTest do
       assert ws.did == nil
       assert ws.signing_key_id == nil
       assert ws.eoa_address == nil
-      assert is_binary(ws.webhook_secret_key_id)
-      assert String.starts_with?(secret, "whsec_")
 
       assert {:ok, "admin"} = Workspaces.member_role(ws.id, user.id)
 
       assert_enqueued(worker: WorkspaceProvisioningJob, args: %{"workspace_id" => ws.id})
 
       assert is_binary(ws.status_index_secret_key_id)
-      assert ws.status_index_secret_key_id != ws.webhook_secret_key_id
     end
 
     test "transitions to done after provisioning job runs" do
@@ -57,42 +54,12 @@ defmodule Sovra.WorkspacesTest do
       assert %DateTime{} = provisioned.provisioned_at
     end
 
-    test "accepts optional webhook_url at creation" do
-      user = create_user()
-      org = create_org()
-
-      {:ok, %{workspace: ws}} =
-        Workspaces.create_workspace(
-          org.id,
-          %{name: "Acme", webhook_url: "https://example.com/hook"},
-          user.id
-        )
-
-      assert ws.webhook_url == "https://example.com/hook"
-    end
-
-    test "rejects invalid webhook_url" do
-      user = create_user()
-      org = create_org()
-
-      assert {:error, %Ecto.Changeset{}} =
-               Workspaces.create_workspace(
-                 org.id,
-                 %{name: "Acme", webhook_url: "not-a-url"},
-                 user.id
-               )
-    end
-
     test "rolls back the provisioning job when the workspace insert fails" do
       user = create_user()
       org = create_org()
 
       assert {:error, %Ecto.Changeset{}} =
-               Workspaces.create_workspace(
-                 org.id,
-                 %{name: "Acme", webhook_url: "not-a-url"},
-                 user.id
-               )
+               Workspaces.create_workspace(org.id, %{name: ""}, user.id)
 
       refute_enqueued(worker: WorkspaceProvisioningJob)
     end
@@ -149,17 +116,12 @@ defmodule Sovra.WorkspacesTest do
   end
 
   describe "update_workspace/2" do
-    test "updates name and webhook URL" do
+    test "updates the name" do
       %{workspace: ws} = create_workspace()
 
-      {:ok, updated} =
-        Workspaces.update_workspace(ws, %{
-          name: "Renamed",
-          webhook_url: "https://webhook.test"
-        })
+      {:ok, updated} = Workspaces.update_workspace(ws, %{name: "Renamed"})
 
       assert updated.name == "Renamed"
-      assert updated.webhook_url == "https://webhook.test"
     end
 
     test "refuses updates on deactivated workspaces" do
@@ -172,17 +134,6 @@ defmodule Sovra.WorkspacesTest do
 
       assert {:error, %Ecto.Changeset{}} =
                Workspaces.update_workspace(deactivated, %{name: "Too late"})
-    end
-  end
-
-  describe "regenerate_webhook_secret/1" do
-    test "returns a new plaintext" do
-      %{workspace: ws, webhook_secret: original} = create_workspace()
-
-      {:ok, %{webhook_secret: new_plaintext}} = Workspaces.regenerate_webhook_secret(ws)
-
-      assert is_binary(new_plaintext)
-      assert new_plaintext != original
     end
   end
 

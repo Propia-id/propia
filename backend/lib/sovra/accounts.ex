@@ -20,8 +20,7 @@ defmodule Sovra.Accounts do
 
   @doc """
   Register a new user. Creates a default organization (with the user as
-  owner) and a default workspace. Returns the created records and the
-  workspace's webhook secret (revealed once).
+  owner) and a default workspace. Returns the created records.
 
   Required keys: `:email`, `:password`, `:full_name`.
   Optional: `:workspace_name` (defaults to "<full_name>'s workspace").
@@ -42,7 +41,7 @@ defmodule Sovra.Accounts do
              |> User.registration_changeset()
              |> Repo.insert(),
            {:ok, _org_mem} <- Organizations.add_member(organization.id, user.id, "owner"),
-           {:ok, %{workspace: workspace, webhook_secret: webhook_secret}} <-
+           {:ok, %{workspace: workspace}} <-
              Workspaces.create_workspace(
                organization.id,
                %{name: workspace_name},
@@ -51,8 +50,7 @@ defmodule Sovra.Accounts do
         %{
           user: user,
           workspace: workspace,
-          organization: organization,
-          webhook_secret: webhook_secret
+          organization: organization
         }
       else
         {:error, reason} -> Repo.rollback(reason)

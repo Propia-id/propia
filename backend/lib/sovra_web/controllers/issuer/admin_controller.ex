@@ -443,7 +443,7 @@ defmodule SovraWeb.Issuer.AdminController do
            full_name: full_name,
            workspace_name: issuer_name
          }) do
-      {:ok, %{workspace: workspace, user: user} = result} ->
+      {:ok, %{workspace: workspace, user: user}} ->
         # A platform admin minting an account for someone else — distinct from
         # self-service registration, and the actor is the admin, which the log
         # context already carries from RequireAdminPlug.
@@ -463,7 +463,6 @@ defmodule SovraWeb.Issuer.AdminController do
             did: workspace.did,
             status: workspace.status
           },
-          webhook_secret: Map.get(result, :webhook_secret),
           email: String.downcase(email)
         })
 

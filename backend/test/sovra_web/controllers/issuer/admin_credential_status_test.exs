@@ -38,6 +38,7 @@ defmodule SovraWeb.Issuer.AdminCredentialStatusTest do
     org = org()
     {:ok, %{workspace: ws}} = Workspaces.create_workspace(org.id, %{name: "Acme"}, owner.id)
     ws = provision_workspace(ws)
+    fixture_webhook(ws)
 
     {:ok, schema} =
       Issuer.create_schema(ws.id, %{

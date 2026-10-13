@@ -8,8 +8,8 @@ defmodule Sovra.Issuer.CredentialStatusJobTest do
   alias Sovra.Webhooks.DeliveryJob
 
   setup do
-    workspace =
-      provision_workspace(fixture_workspace(webhook_url: "https://example.com/hook").workspace)
+    workspace = provision_workspace(fixture_workspace().workspace)
+    fixture_webhook(workspace)
 
     {:ok, schema} =
       Issuer.create_schema(workspace.id, %{

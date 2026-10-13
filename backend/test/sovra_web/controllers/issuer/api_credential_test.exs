@@ -38,6 +38,7 @@ defmodule SovraWeb.Issuer.ApiCredentialTest do
     {:ok, %{workspace: ws}} = Workspaces.create_workspace(org.id, %{name: "Acme"}, owner.id)
     ws = provision_workspace(ws)
     {:ok, %{api_key: key}} = ApiKeys.create_api_key(ws.id, "Prod")
+    fixture_webhook(ws)
 
     {:ok, schema} =
       Issuer.create_schema(ws.id, %{

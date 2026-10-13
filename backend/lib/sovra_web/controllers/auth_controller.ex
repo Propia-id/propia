@@ -206,10 +206,7 @@ defmodule SovraWeb.AuthController do
     case Accounts.register_user(params) do
       {:ok, %{user: user, workspace: workspace}} ->
         # Use the same listing query as login/refresh so the response shape is
-        # symmetric (organization_id, webhook_url, role columns all present).
-        # Note: the workspace's webhook_secret is intentionally NOT returned —
-        # registering a new account isn't the right surface to reveal a
-        # one-time API secret. Users rotate via the workspace settings UI.
+        # symmetric (organization_id and role columns all present).
         workspaces = Workspaces.list_workspaces_for_user(user.id)
 
         Log.event(:info, "user registered",

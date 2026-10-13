@@ -38,11 +38,14 @@ defmodule Sovra.LogBudgetTest do
     every_request: ~w(request_id user_id workspace_id org_id auth_method),
     # Log.adopt_job_context/1
     job: ~w(request_id oban_job_id oban_attempt),
+    # Log.adopt_job_context/1 plus the delivery the job is for
+    webhook_delivery:
+      ~w(request_id oban_job_id oban_attempt workspace_id webhook_id event_type delivery_id),
     # SessionPlug, on the wallet rail
     guardian: ~w(request_id sovra_address auth_method)
   }
 
-  @job_files ~w(workspace_provisioning_job delivery_job mailer_job expired_sessions_sweeper)
+  @job_files ~w(workspace_provisioning_job mailer_job expired_sessions_sweeper)
 
   # ethereum/client.ex builds its chain events as `[{:k, v} | context]`, where
   # the tail is `Keyword.take(opts, [:op, :subject_id, :workspace_id])`. The
@@ -101,6 +104,7 @@ defmodule Sovra.LogBudgetTest do
   defp ambient_for(%{file: file}) do
     cond do
       String.contains?(file, "request_log.ex") -> @ambient.every_request
+      String.contains?(file, "webhooks/delivery_job.ex") -> @ambient.webhook_delivery
       String.contains?(file, @job_files) -> @ambient.job
       String.contains?(file, "guardian") -> @ambient.guardian
       true -> @ambient.request

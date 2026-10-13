@@ -341,9 +341,11 @@ defmodule SovraWeb.Router do
 
     patch "/:workspace_id", WorkspaceController, :update
 
-    post "/:workspace_id/regenerate_webhook_secret",
-         WorkspaceController,
-         :regenerate_webhook_secret
+    get "/:workspace_id/webhooks", WebhookController, :index
+    post "/:workspace_id/webhooks", WebhookController, :create
+    patch "/:workspace_id/webhooks/:id", WebhookController, :update
+    delete "/:workspace_id/webhooks/:id", WebhookController, :delete
+    post "/:workspace_id/webhooks/:id/rotate_secret", WebhookController, :rotate_secret
 
     get "/:workspace_id/members", WorkspaceMemberController, :index
     post "/:workspace_id/members", WorkspaceMemberController, :add

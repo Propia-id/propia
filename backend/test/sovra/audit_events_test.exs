@@ -13,6 +13,7 @@ defmodule Sovra.AuditEventsTest do
   alias Sovra.Auth.IssuerInvitations
   alias Sovra.Auth.MailerJob
   alias Sovra.Organizations
+  alias Sovra.Webhooks
   alias Sovra.Workspaces
   alias Sovra.Workspaces.ApiKeys
 
@@ -55,72 +56,117 @@ defmodule Sovra.AuditEventsTest do
   end
 
   describe "workspaces" do
-    test "workspace.created records the owner and whether a webhook was set" do
+    test "workspace.created records the owner" do
       owner = fixture_user()
       org = fixture_org()
 
       {{:ok, %{workspace: ws}}, events} =
-        capture_events(fn ->
-          Workspaces.create_workspace(
-            org.id,
-            %{name: "Acme", webhook_url: "https://acme.example.com/hook"},
-            owner.id
-          )
-        end)
+        capture_events(fn -> Workspaces.create_workspace(org.id, %{name: "Acme"}, owner.id) end)
 
       assert_event(events, "workspace.created",
         workspace_id: ws.id,
         org_id: org.id,
-        owner_user_id: owner.id,
-        webhook_configured: true
+        owner_user_id: owner.id
       )
     end
+  end
 
-    test "workspace.webhook_url.changed records both hosts, never the full URL" do
-      # A webhook URL routinely carries a shared secret in its path or query,
-      # and these logs leave the host for New Relic. The host answers the
-      # question the event exists for — did the destination move — and
-      # workspaces.webhook_url has the rest for anyone with database access.
-      %{workspace: ws} = fixture_workspace(webhook_url: "https://old.example.com/hook")
+  describe "webhooks" do
+    # A webhook URL routinely carries a shared secret in its path or query, and
+    # these logs leave the host for New Relic. The host answers the question
+    # the events exist for — where the event stream goes — and
+    # workspace_webhooks.url has the rest for anyone with database access.
+    test "workspace.webhook.created records the host and events, never the full URL" do
+      %{workspace: ws} = fixture_workspace()
 
-      {{:ok, _}, events} =
+      {{:ok, %{webhook: webhook, secret: secret}}, events} =
         capture_events(fn ->
-          Workspaces.update_workspace(ws, %{
-            webhook_url: "https://new.example.com/hook?token=s3cr3t"
+          Webhooks.create_webhook(ws.id, %{
+            url: "https://acme.example.com/hook?token=s3cr3t",
+            events: ["credential.issued", "credential.revoked"]
           })
         end)
 
       event =
-        assert_event(events, "workspace.webhook_url.changed",
+        assert_event(events, "workspace.webhook.created",
           workspace_id: ws.id,
+          webhook_id: webhook.id,
+          webhook_host: "acme.example.com",
+          events: "credential.issued,credential.revoked",
+          enabled: true
+        )
+
+      refute inspect(event.metadata) =~ "s3cr3t"
+      refute inspect(event.metadata) =~ "/hook"
+      refute inspect(event.metadata) =~ secret
+    end
+
+    test "workspace.webhook.updated records both hosts, never the full URL" do
+      %{workspace: ws} = fixture_workspace()
+      %{webhook: webhook} = fixture_webhook(ws, url: "https://old.example.com/hook")
+
+      {{:ok, _}, events} =
+        capture_events(fn ->
+          Webhooks.update_webhook(ws.id, webhook.id, %{
+            url: "https://new.example.com/hook?token=s3cr3t",
+            enabled: false
+          })
+        end)
+
+      event =
+        assert_event(events, "workspace.webhook.updated",
+          workspace_id: ws.id,
+          webhook_id: webhook.id,
           previous_webhook_host: "old.example.com",
-          webhook_host: "new.example.com"
+          webhook_host: "new.example.com",
+          enabled: false
         )
 
       refute inspect(event.metadata) =~ "s3cr3t"
       refute inspect(event.metadata) =~ "/hook"
     end
 
-    test "an update that leaves the webhook alone emits nothing" do
-      %{workspace: ws} = fixture_workspace(webhook_url: "https://same.example.com/hook")
+    test "an update that changes nothing emits nothing" do
+      %{workspace: ws} = fixture_workspace()
+      %{webhook: webhook} = fixture_webhook(ws)
 
       {{:ok, _}, events} =
-        capture_events(fn -> Workspaces.update_workspace(ws, %{name: "Renamed"}) end)
+        capture_events(fn ->
+          Webhooks.update_webhook(ws.id, webhook.id, %{url: webhook.url})
+        end)
 
-      refute_event(events, "workspace.webhook_url.changed")
+      refute_event(events, "workspace.webhook.updated")
     end
 
-    test "workspace.webhook_secret.regenerated fires on rotation" do
+    test "workspace.webhook.deleted fires on deletion" do
       %{workspace: ws} = fixture_workspace()
+      %{webhook: webhook} = fixture_webhook(ws, url: "https://gone.example.com/hook")
 
       {{:ok, _}, events} =
-        capture_events(fn -> Workspaces.regenerate_webhook_secret(ws) end)
+        capture_events(fn -> Webhooks.delete_webhook(ws.id, webhook.id) end)
+
+      assert_event(events, "workspace.webhook.deleted",
+        workspace_id: ws.id,
+        webhook_id: webhook.id,
+        webhook_host: "gone.example.com"
+      )
+    end
+
+    test "workspace.webhook.secret_rotated fires on rotation" do
+      %{workspace: ws} = fixture_workspace()
+      %{webhook: webhook} = fixture_webhook(ws)
+
+      {{:ok, %{secret: secret}}, events} =
+        capture_events(fn -> Webhooks.rotate_webhook_secret(ws.id, webhook.id) end)
 
       event =
-        assert_event(events, "workspace.webhook_secret.regenerated", workspace_id: ws.id)
+        assert_event(events, "workspace.webhook.secret_rotated",
+          workspace_id: ws.id,
+          webhook_id: webhook.id
+        )
 
       # The point of the event is that the secret rotated, never the secret.
-      refute inspect(event.metadata) =~ "sovra_"
+      refute inspect(event.metadata) =~ secret
     end
   end
 

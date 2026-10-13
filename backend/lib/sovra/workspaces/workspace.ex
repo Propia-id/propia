@@ -17,8 +17,6 @@ defmodule Sovra.Workspaces.Workspace do
     field :provisioning_status, :string, default: "pending"
     field :provisioning_error, :string
     field :provisioned_at, :utc_datetime
-    field :webhook_url, :string
-    field :webhook_secret_key_id, :string
     field :status_index_secret_key_id, :string
 
     # The mDL document signer: a dedicated KMS key, the certificate an issuing
@@ -36,16 +34,12 @@ defmodule Sovra.Workspaces.Workspace do
     timestamps(type: :utc_datetime)
   end
 
-  @create_required ~w(name organization_id webhook_secret_key_id status_index_secret_key_id)a
-  @create_optional ~w(webhook_url)a
-
-  @url_regex ~r|^https?://[^\s]+$|
+  @create_required ~w(name organization_id status_index_secret_key_id)a
 
   def create_changeset(record \\ %__MODULE__{}, attrs) do
     record
-    |> cast(attrs, @create_required ++ @create_optional)
+    |> cast(attrs, @create_required)
     |> validate_required(@create_required)
-    |> validate_url(:webhook_url)
     |> foreign_key_constraint(:organization_id)
   end
 
@@ -56,9 +50,8 @@ defmodule Sovra.Workspaces.Workspace do
       |> add_error(:status, "cannot update a deactivated workspace")
     else
       record
-      |> cast(attrs, [:name, :webhook_url])
+      |> cast(attrs, [:name])
       |> validate_length(:name, min: 1, max: 200)
-      |> validate_url(:webhook_url)
     end
   end
 
@@ -95,10 +88,6 @@ defmodule Sovra.Workspaces.Workspace do
     )
   end
 
-  def webhook_secret_changeset(record, key_id) do
-    change(record, webhook_secret_key_id: key_id)
-  end
-
   def status_changeset(record, status) do
     record
     |> change(status: status)
@@ -132,9 +121,5 @@ defmodule Sovra.Workspaces.Workspace do
   def provisioning_retry_changeset(record) do
     record
     |> change(provisioning_status: "pending", provisioning_error: nil)
-  end
-
-  defp validate_url(changeset, field) do
-    validate_format(changeset, field, @url_regex, message: "must be a valid http(s) URL")
   end
 end

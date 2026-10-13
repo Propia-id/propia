@@ -21,7 +21,6 @@ defmodule SovraWeb.Workspaces.WorkspaceController do
       },
       provisioning_error: %OpenApiSpex.Schema{type: :string, nullable: true},
       provisioned_at: %OpenApiSpex.Schema{type: :string, format: :"date-time", nullable: true},
-      webhook_url: %OpenApiSpex.Schema{type: :string, nullable: true},
       organization_id: %OpenApiSpex.Schema{type: :string, format: :uuid},
       role: %OpenApiSpex.Schema{type: :string, nullable: true}
     }
@@ -43,11 +42,7 @@ defmodule SovraWeb.Workspaces.WorkspaceController do
   @create_workspace_response %OpenApiSpex.Schema{
     type: :object,
     properties: %{
-      workspace: @workspace_schema,
-      webhook_secret: %OpenApiSpex.Schema{
-        type: :string,
-        description: "Plaintext webhook HMAC secret — returned exactly once"
-      }
+      workspace: @workspace_schema
     }
   }
 
@@ -93,8 +88,7 @@ defmodule SovraWeb.Workspaces.WorkspaceController do
     summary: "Create workspace in an organization",
     description:
       "Creates a workspace under the given organization. Caller becomes the " <>
-        "workspace admin. The response carries the plaintext webhook secret " <>
-        "exactly once.",
+        "workspace admin.",
     parameters: [
       org_id: [in: :path, type: :string, required: true, description: "Organization UUID"]
     ],
@@ -104,8 +98,7 @@ defmodule SovraWeb.Workspaces.WorkspaceController do
          type: :object,
          required: [:name],
          properties: %{
-           name: %OpenApiSpex.Schema{type: :string},
-           webhook_url: %OpenApiSpex.Schema{type: :string}
+           name: %OpenApiSpex.Schema{type: :string}
          }
        }},
     responses: %{
@@ -140,8 +133,7 @@ defmodule SovraWeb.Workspaces.WorkspaceController do
        %OpenApiSpex.Schema{
          type: :object,
          properties: %{
-           name: %OpenApiSpex.Schema{type: :string},
-           webhook_url: %OpenApiSpex.Schema{type: :string}
+           name: %OpenApiSpex.Schema{type: :string}
          }
        }},
     responses: %{
@@ -150,26 +142,6 @@ defmodule SovraWeb.Workspaces.WorkspaceController do
       403 => {"Not an admin", "application/json", @error},
       404 => {"Not found", "application/json", @error},
       422 => {"Validation error", "application/json", @validation_error}
-    }
-  )
-
-  operation(:regenerate_webhook_secret,
-    summary: "Rotate webhook secret",
-    parameters: [
-      workspace_id: [in: :path, type: :string, required: true, description: "Workspace UUID"]
-    ],
-    responses: %{
-      200 =>
-        {"Rotated", "application/json",
-         %OpenApiSpex.Schema{
-           type: :object,
-           properties: %{
-             webhook_secret: %OpenApiSpex.Schema{type: :string}
-           }
-         }},
-      401 => {"Missing session", "application/json", @error},
-      403 => {"Not an admin", "application/json", @error},
-      404 => {"Not found", "application/json", @error}
     }
   )
 
@@ -233,19 +205,11 @@ defmodule SovraWeb.Workspaces.WorkspaceController do
   def create(conn, %{"org_id" => org_id} = params) do
     user_id = conn.assigns.current_user.user_id
 
-    attrs = %{
-      name: params["name"],
-      webhook_url: params["webhook_url"]
-    }
-
-    case Workspaces.create_workspace(org_id, attrs, user_id) do
-      {:ok, %{workspace: workspace, webhook_secret: webhook_secret}} ->
+    case Workspaces.create_workspace(org_id, %{name: params["name"]}, user_id) do
+      {:ok, %{workspace: workspace}} ->
         conn
         |> put_status(201)
-        |> json(%{
-          workspace: workspace_json(workspace, "admin"),
-          webhook_secret: webhook_secret
-        })
+        |> json(%{workspace: workspace_json(workspace, "admin")})
 
       {:error, %Ecto.Changeset{} = changeset} ->
         conn
@@ -275,9 +239,7 @@ defmodule SovraWeb.Workspaces.WorkspaceController do
   def update(conn, %{"workspace_id" => workspace_id} = params) do
     case Workspaces.get_workspace(workspace_id) do
       {:ok, workspace} ->
-        attrs = Map.take(params, ["name", "webhook_url"])
-
-        case Workspaces.update_workspace(workspace, atomize(attrs)) do
+        case Workspaces.update_workspace(workspace, Map.take(params, ["name"])) do
           {:ok, updated} ->
             json(conn, workspace_json(updated, conn.assigns[:current_workspace_role]))
 
@@ -285,22 +247,6 @@ defmodule SovraWeb.Workspaces.WorkspaceController do
             conn
             |> put_status(422)
             |> json(%{error: "validation_error", details: changeset_errors(cs)})
-        end
-
-      {:error, :workspace_not_found} ->
-        conn |> put_status(404) |> json(%{error: "workspace_not_found"})
-    end
-  end
-
-  def regenerate_webhook_secret(conn, %{"workspace_id" => workspace_id}) do
-    case Workspaces.get_workspace(workspace_id) do
-      {:ok, workspace} ->
-        case Workspaces.regenerate_webhook_secret(workspace) do
-          {:ok, %{webhook_secret: plaintext}} ->
-            json(conn, %{webhook_secret: plaintext})
-
-          {:error, reason} ->
-            conn |> put_status(500) |> json(%{error: to_string_reason(reason)})
         end
 
       {:error, :workspace_not_found} ->
@@ -355,7 +301,6 @@ defmodule SovraWeb.Workspaces.WorkspaceController do
       provisioning_status: Map.get(workspace, :provisioning_status),
       provisioning_error: Map.get(workspace, :provisioning_error),
       provisioned_at: format_datetime(Map.get(workspace, :provisioned_at)),
-      webhook_url: Map.get(workspace, :webhook_url),
       organization_id: Map.get(workspace, :organization_id),
       role: role
     }
@@ -363,12 +308,6 @@ defmodule SovraWeb.Workspaces.WorkspaceController do
 
   defp format_datetime(nil), do: nil
   defp format_datetime(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
-
-  defp atomize(attrs) do
-    for {k, v} <- attrs, into: %{} do
-      {String.to_existing_atom(k), v}
-    end
-  end
 
   defp changeset_errors(changeset) do
     Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->

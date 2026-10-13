@@ -124,8 +124,10 @@ defmodule Sovra.LogTest do
       "workspace.member.change_rejected",
       "workspace.member.removed",
       "workspace.member.role_changed",
-      "workspace.webhook_secret.regenerated",
-      "workspace.webhook_url.changed"
+      "workspace.webhook.created",
+      "workspace.webhook.deleted",
+      "workspace.webhook.secret_rotated",
+      "workspace.webhook.updated"
     ]
 
     test "is exactly the frozen list" do

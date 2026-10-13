@@ -2,23 +2,23 @@
 
 ## Purpose
 
-Workspaces are the operational units within an organization. Each workspace functions as an independent issuer with its own decentralized identifier (DID), API key, webhook URL, webhook secret, and visual branding. Users can create multiple workspaces within an organization and switch between them.
+Workspaces are the operational units within an organization. Each workspace functions as an independent issuer with its own decentralized identifier (DID), API key, webhook endpoints (each with its own signing secret), and visual branding. Users can create multiple workspaces within an organization and switch between them.
 
 ## Requirements
 
 ### Requirement: Workspace creation and configuration
 
-The system SHALL allow creation and configuration of workspaces within an organization, each with a unique tenantId, DID, API key, webhook URL, webhook secret, and branding configuration.
+The system SHALL allow creation and configuration of workspaces within an organization, each with a unique tenantId, DID, API key, webhook endpoints, and branding configuration.
 
 #### Scenario: Create a workspace
 - GIVEN an authenticated user belonging to an organization
-- WHEN they create a new workspace providing a name and optional webhook URL
-- THEN a new workspace is created with a unique tenantId, a generated API key, a generated webhook secret, and the workspace provisioning process is initiated (key generation, DID creation)
+- WHEN they create a new workspace providing a name
+- THEN a new workspace is created with a unique tenantId, a generated API key, no webhook endpoints, and the workspace provisioning process is initiated (key generation, DID creation)
 
 #### Scenario: Configure workspace webhook
 - GIVEN a workspace that needs to receive event notifications
-- WHEN the admin sets the workspace's webhook URL
-- THEN all subsequent events ({event:issuance.credential-issued-messaging}, {event:verification.presentation-completed-messaging}, etc.) are delivered to that URL with HMAC-SHA256 signatures using the workspace's webhook secret
+- WHEN the admin adds a webhook endpoint with a URL and the event types it subscribes to
+- THEN all subsequent events of those types ({event:issuance.credential-issued-messaging}, {event:verification.presentation-completed-messaging}, etc.) are delivered to that URL with HMAC-SHA256 signatures using the endpoint's own signing secret, revealed once when the endpoint is added
 
 #### Scenario: View workspace DID
 - GIVEN a workspace that has completed provisioning

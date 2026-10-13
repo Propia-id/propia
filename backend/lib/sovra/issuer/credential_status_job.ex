@@ -87,7 +87,7 @@ defmodule Sovra.Issuer.CredentialStatusJob do
           |> IssuedCredential.status_changeset(credential.pending_status)
           |> Repo.update!()
 
-        {:ok, _job} =
+        {:ok, _jobs} =
           Webhooks.enqueue(credential.issuer_id, event, %{
             "credential_id" => updated.id,
             "holder_did" => updated.holder_did,
@@ -139,7 +139,7 @@ defmodule Sovra.Issuer.CredentialStatusJob do
           |> IssuedCredential.status_change_failed_changeset(ChainError.message(reason))
           |> Repo.update!()
 
-          {:ok, _job} =
+          {:ok, _jobs} =
             Webhooks.enqueue(credential.issuer_id, "credential.status-change-failed", %{
               "credential_id" => credential.id,
               "holder_did" => credential.holder_did,

@@ -209,8 +209,10 @@ defmodule Sovra.Log do
     workspace.provisioning.completed
     workspace.provisioning.step_completed
     workspace.provisioning.step_failed
-    workspace.webhook_secret.regenerated
-    workspace.webhook_url.changed
+    workspace.webhook.created
+    workspace.webhook.deleted
+    workspace.webhook.secret_rotated
+    workspace.webhook.updated
   )
 
   @events_set MapSet.new(@events)

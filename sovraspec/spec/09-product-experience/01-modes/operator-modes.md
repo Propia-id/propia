@@ -112,6 +112,6 @@ The system SHOULD adapt copy, tooltips, and error messages to the current mode â
 | New credential entry | Direct to wizard | "Wizard or JSON" dialog |
 | Credential detail | Visual card + history | + JSON tab |
 | Verification detail | Result + status history | + Raw request/response JSON |
-| Webhook settings | URL + secret | + Event payload examples |
+| Webhook settings | Endpoints (URL, events, secret) | + Event payload examples |
 | API keys | Hidden | Visible (create, rotate, revoke) |
 | Errors | Plain language | Plain language + technical detail |

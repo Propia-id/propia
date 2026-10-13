@@ -298,7 +298,7 @@ defmodule Sovra.IssuerTest do
         |> Organization.create_changeset()
         |> Repo.insert()
 
-      {:ok, %{workspace: issuer, webhook_secret: webhook_secret}} =
+      {:ok, %{workspace: issuer}} =
         Workspaces.create_workspace(org.id, %{name: "New Issuer"}, user.id)
 
       issuer = provision_workspace(issuer)
@@ -310,7 +310,6 @@ defmodule Sovra.IssuerTest do
       assert issuer.status == "active"
       refute String.starts_with?(issuer.eoa_key_id, "stub_")
       assert issuer.organization_id == org.id
-      assert is_binary(webhook_secret) and String.starts_with?(webhook_secret, "whsec_")
     end
   end
 
@@ -389,9 +388,10 @@ defmodule Sovra.IssuerTest do
       assert idx == expected
     end
 
-    test "indices derived under the webhook key disagree with the actual allocation" do
+    test "indices derived under a webhook key disagree with the actual allocation" do
       issuer = create_test_issuer()
       schema = create_test_schema(issuer)
+      %{webhook: webhook} = fixture_webhook(issuer)
 
       {:ok, result} =
         Issuer.create_credential_offer(issuer.id, schema.schema_id, %{"name" => "Alice"})
@@ -404,7 +404,7 @@ defmodule Sovra.IssuerTest do
 
       assert {:ok, mac_webhook} =
                HmacKeyStore.hmac(
-                 issuer.webhook_secret_key_id,
+                 webhook.secret_key_id,
                  "sovra:status-index:revocation:#{result.offer.id}:0"
                )
 
@@ -467,6 +467,7 @@ defmodule Sovra.IssuerTest do
   describe "issue_credential/3 with proof verification" do
     setup do
       issuer = create_test_issuer()
+      fixture_webhook(issuer)
       schema = create_test_schema(issuer)
 
       {:ok, offer_result} =

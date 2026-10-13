@@ -46,7 +46,7 @@ Sub-domains mirror the platform-contract sections, so the same domain is easy to
 | `04-credentials/` | [`json-direct-issuance.md`](./04-credentials/json-direct-issuance.md) | [`02/`](../02-credential-issuance/) | Developer-mode-only direct JSON path; equivalent output to wizard |
 | `04-credentials/` | [`credential-lifecycle.md`](./04-credentials/credential-lifecycle.md) | [`03-credential-lifecycle/`](../03-credential-lifecycle/) | Credentials list, detail screen, status-change actions, history table |
 | `05-verifications/` | [`verification-flow.md`](./05-verifications/verification-flow.md) | [`04-credential-verification/`](../04-credential-verification/) | Verification creation, distribution artifacts, real-time status, raw payloads (Dev) |
-| `06-webhooks/` | [`webhook-configuration.md`](./06-webhooks/webhook-configuration.md) | [`07-webhook-events/`](../07-webhook-events/) | Webhook URL, secret rotation, test delivery, delivery history (Dev) |
+| `06-webhooks/` | [`webhook-configuration.md`](./06-webhooks/webhook-configuration.md) | [`07-webhook-events/`](../07-webhook-events/) | Webhook endpoints, event subscriptions, secret rotation, test delivery, delivery history (Dev) |
 | `07-billing/` | [`billing-page.md`](./07-billing/billing-page.md) | [`08-plans-billing/`](../08-plans-billing/) | Plan cards, usage bars, customer portal, invoice history, PAST_DUE banner |
 
 ## Relationship to sections 01–08

@@ -33,24 +33,21 @@ defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
   end
 
   describe "POST /dashboard/organizations/:org_id/workspaces" do
-    test "creates a workspace + returns webhook_secret once + caller is admin", %{conn: conn} do
+    test "creates a workspace + caller is admin", %{conn: conn} do
       owner = user("owner")
       organization = org_with_owner(owner)
 
       resp =
         conn
         |> authed(owner)
-        |> post("/dashboard/organizations/#{organization.id}/workspaces", %{
-          "name" => "Fresh",
-          "webhook_url" => "https://example.test/hook"
-        })
+        |> post("/dashboard/organizations/#{organization.id}/workspaces", %{"name" => "Fresh"})
         |> json_response(201)
 
       assert resp["workspace"]["name"] == "Fresh"
       assert resp["workspace"]["role"] == "admin"
       assert resp["workspace"]["provisioning_status"] == "pending"
       assert resp["workspace"]["did"] == nil
-      assert is_binary(resp["webhook_secret"])
+      refute Map.has_key?(resp, "webhook_secret")
 
       assert {:ok, "admin"} = Workspaces.member_role(resp["workspace"]["id"], owner.id)
     end
@@ -161,20 +158,16 @@ defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
   end
 
   describe "PATCH /dashboard/workspaces/:workspace_id" do
-    test "admin updates name and webhook URL", %{conn: conn} do
+    test "admin updates the name", %{conn: conn} do
       %{workspace: ws, owner: owner} = create_workspace()
 
       resp =
         conn
         |> authed(owner, ws.id)
-        |> patch("/dashboard/workspaces/#{ws.id}", %{
-          "name" => "Renamed",
-          "webhook_url" => "https://new.test/h"
-        })
+        |> patch("/dashboard/workspaces/#{ws.id}", %{"name" => "Renamed"})
         |> json_response(200)
 
       assert resp["name"] == "Renamed"
-      assert resp["webhook_url"] == "https://new.test/h"
     end
 
     test "plain member returns 403", %{conn: conn} do
@@ -188,20 +181,6 @@ defmodule SovraWeb.Workspaces.WorkspaceControllerTest do
         |> patch("/dashboard/workspaces/#{ws.id}", %{"name" => "Nope"})
 
       assert json_response(conn, 403) == %{"error" => "workspace_admin_required"}
-    end
-  end
-
-  describe "POST /dashboard/workspaces/:workspace_id/regenerate_webhook_secret" do
-    test "admin rotates secret", %{conn: conn} do
-      %{workspace: ws, owner: owner} = create_workspace()
-
-      resp =
-        conn
-        |> authed(owner, ws.id)
-        |> post("/dashboard/workspaces/#{ws.id}/regenerate_webhook_secret")
-        |> json_response(200)
-
-      assert is_binary(resp["webhook_secret"])
     end
   end
 

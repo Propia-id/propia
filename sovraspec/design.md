@@ -13,8 +13,9 @@
 
 ## Webhook Architecture
 
-- **Dual delivery**: When a significant event occurs (credential issued, verification completed, DID created), the webhook is sent first to the workspace's configured webhookUrl. The workspace's response is then included when sending the same event to the central platform. This allows the workspace to process events before the platform and enables the platform to know the workspace's reaction.
-- **HMAC-SHA256 signing**: Every webhook payload is signed with the workspace's webhookSecret so the receiver can verify authenticity.
+- **Dual delivery**: When a significant event occurs (credential issued, verification completed, DID created), the webhook is sent first to the workspace's webhook endpoints subscribed to that event type. The workspace's response is then included when sending the same event to the central platform. This allows the workspace to process events before the platform and enables the platform to know the workspace's reaction.
+- **Multiple endpoints**: A workspace can configure up to ten webhook endpoints. Each subscribes to an explicit list of event types and can be disabled without being removed; every event is delivered independently to each enabled endpoint subscribed to it, with the same payload `id` on every delivery.
+- **HMAC-SHA256 signing**: Every webhook payload is signed with the receiving endpoint's own signing secret so the receiver can verify authenticity.
 
 ## Credential Lifecycle
 
@@ -46,7 +47,7 @@
 
 ### Workspace Provisioning
 1. User creates an account with an organization.
-2. User creates a workspace (issuer) -- tenantId, API key, and webhookSecret are generated.
+2. User creates a workspace (issuer) -- tenantId and API key are generated. Webhook endpoints, each with its own signing secret, are added afterwards.
 3. The tenant is created with cryptographic keys in the KMS.
 4. The issuer DID is generated asynchronously.
 5. A `{event:identity.did-generated}` event is sent via webhook so the DID can be stored.
@@ -56,7 +57,7 @@
 1. Create a credential and generate an invitation QR code.
 2. Holder scans the QR with their wallet and accepts the offer.
 3. The credential is issued to the holder.
-4. A `{event:issuance.credential-issued-messaging}` event is sent first to the workspace's webhookUrl.
+4. A `{event:issuance.credential-issued-messaging}` event is sent first to the workspace's subscribed webhook endpoints.
 5. The workspace's webhook response is included when sending the event to the central platform.
 
 ### Credential Issuance (OpenID4VCI)

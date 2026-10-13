@@ -39,6 +39,7 @@ defmodule Sovra.Verification.MdocVerifierTest do
 
     %{workspace: verifier_ws} = fixture_workspace()
     verifier_ws = provision_workspace(verifier_ws)
+    fixture_webhook(verifier_ws)
 
     {:ok, schema} =
       Issuer.create_schema(issuer_ws.id, %{

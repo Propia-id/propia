@@ -123,7 +123,7 @@ defmodule Sovra.Documents.AnchorJob do
       Repo.transaction(fn ->
         updated = document |> SignedDocument.status_changeset(attrs) |> Repo.update!()
 
-        {:ok, _job} =
+        {:ok, _jobs} =
           Webhooks.enqueue(updated.workspace_id, "document.status-changed", %{
             "document_id" => updated.id,
             "status" => updated.status,

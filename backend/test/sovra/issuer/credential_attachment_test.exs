@@ -12,7 +12,11 @@ defmodule Sovra.Issuer.CredentialAttachmentTest do
   @pdf_bytes "%PDF-1.7 pretend this is a scanned driving licence"
   @pdf "data:application/pdf;base64," <> Base.encode64(@pdf_bytes)
 
-  defp issuer_workspace, do: provision_workspace(fixture_workspace().workspace)
+  defp issuer_workspace do
+    workspace = provision_workspace(fixture_workspace().workspace)
+    fixture_webhook(workspace)
+    workspace
+  end
 
   defp attachment_schema(workspace) do
     {:ok, schema} =
