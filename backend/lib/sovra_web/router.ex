@@ -55,12 +55,25 @@ defmodule SovraWeb.Router do
     plug SovraWeb.Plugs.RequireOrgOwnerPlug
   end
 
+  # Every route behind an API key acts for the key's workspace, so the tenant
+  # check is part of authenticating one rather than a pipeline a new scope can
+  # leave out.
   pipeline :api_key do
     plug SovraWeb.Plugs.ApiKeyPlug
+    plug SovraWeb.Plugs.RequireActiveTenantPlug
   end
 
   pipeline :require_workspace_admin do
     plug SovraWeb.Plugs.RequireWorkspaceAdminPlug
+  end
+
+  # Dashboard routes that act for the session's workspace. Not part of
+  # :user_session, because a session also reaches routes that must keep working
+  # for an inactive tenant: switching workspace, the organization screens, the
+  # profile that shows the status. Goes after :require_workspace_admin where
+  # both apply, since that plug can re-point the workspace.
+  pipeline :active_tenant do
+    plug SovraWeb.Plugs.RequireActiveTenantPlug
   end
 
   pipeline :offer_rate_limited do
@@ -179,11 +192,18 @@ defmodule SovraWeb.Router do
     delete "/:id", AdminInvitationController, :revoke
   end
 
-  # Issuer admin
+  # The workspace's own profile, status included. Outside :active_tenant so an
+  # inactive tenant's dashboard can still say why everything else is refused.
   scope "/dashboard/issuer", SovraWeb.Issuer do
     pipe_through [:api, :user_session]
 
     get "/profile", AdminController, :get_issuer
+  end
+
+  # Issuer admin
+  scope "/dashboard/issuer", SovraWeb.Issuer do
+    pipe_through [:api, :user_session, :active_tenant]
+
     post "/schemas", AdminController, :create_schema
     get "/schemas", AdminController, :list_schemas
     put "/schemas/:schema_id", AdminController, :revise_schema
@@ -205,7 +225,7 @@ defmodule SovraWeb.Router do
   # Verification sessions on the dashboard (JWT session) — reuses the
   # workspace-scoped controller actions also exposed under /api/v1/verifier/.
   scope "/dashboard/issuer", SovraWeb.Verifier do
-    pipe_through [:api, :user_session]
+    pipe_through [:api, :user_session, :active_tenant]
 
     post "/verifications", VerificationController, :create
     get "/verifications", VerificationController, :index
@@ -218,6 +238,12 @@ defmodule SovraWeb.Router do
     pipe_through [:api, :user_session]
 
     get "/mdl/template", MdlController, :template
+  end
+
+  # Where the workspace is in becoming an mDL issuer.
+  scope "/dashboard/issuer", SovraWeb.Issuer do
+    pipe_through [:api, :user_session, :active_tenant]
+
     get "/mdl/signer", MdlController, :signer
   end
 
@@ -234,7 +260,7 @@ defmodule SovraWeb.Router do
   # Becoming an mDL issuer. Workspace admin, because registering a document
   # signer decides what the whole workspace can issue and under whose name.
   scope "/dashboard/issuer", SovraWeb.Issuer do
-    pipe_through [:api, :user_session, :require_workspace_admin]
+    pipe_through [:api, :user_session, :require_workspace_admin, :active_tenant]
 
     post "/mdl/signing-key", MdlController, :create_signing_key
     post "/mdl/certification-request", MdlController, :certification_request
@@ -253,7 +279,7 @@ defmodule SovraWeb.Router do
 
   # Admin-only credential status changes (workspace admin required)
   scope "/dashboard/issuer", SovraWeb.Issuer do
-    pipe_through [:api, :user_session, :require_workspace_admin]
+    pipe_through [:api, :user_session, :require_workspace_admin, :active_tenant]
 
     put "/credentials/:id/status/:status", AdminController, :update_credential_status
   end

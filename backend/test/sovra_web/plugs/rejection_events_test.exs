@@ -14,6 +14,7 @@ defmodule SovraWeb.Plugs.RejectionEventsTest do
   alias SovraWeb.Plugs.ApiKeyPlug
   alias SovraWeb.Plugs.OriginCheckPlug
   alias SovraWeb.Plugs.RateLimitPlug
+  alias SovraWeb.Plugs.RequireActiveTenantPlug
   alias SovraWeb.Plugs.RequireAdminPlug
   alias SovraWeb.Plugs.RequireOrgAdminPlug
   alias SovraWeb.Plugs.RequireWorkspaceAdminPlug
@@ -260,6 +261,28 @@ defmodule SovraWeb.Plugs.RejectionEventsTest do
 
       refute result.halted
       refute_event(events, "authz.denied")
+    end
+
+    test "an inactive tenant is tagged with which of the two it was", %{conn: conn} do
+      %{workspace: ws, org: org} = fixture_workspace()
+
+      {_, events} =
+        capture_events(fn ->
+          conn |> assign(:current_workspace_id, ws.id) |> RequireActiveTenantPlug.call([])
+        end)
+
+      refute_event(events, "authz.denied")
+
+      {:ok, _} = Sovra.Organizations.deactivate_organization(org)
+
+      {denied, events} =
+        capture_events(fn ->
+          conn |> assign(:current_workspace_id, ws.id) |> RequireActiveTenantPlug.call([])
+        end)
+
+      assert denied.status == 403
+      event = assert_event(events, "authz.denied", reason: :organization_inactive)
+      assert event.level == :warning
     end
   end
 end
