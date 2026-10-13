@@ -438,14 +438,38 @@ defmodule SovraWeb.Router do
     put "/credentials/:id/status/:status", AdminController, :update_credential_status
   end
 
-  # Signed documents (workspace API key). Schemas and layouts stay on the
-  # dashboard, like credential schemas.
+  # Signed documents (workspace API key). Document layouts stay on the
+  # dashboard: a layout is page artwork, authored in the designer, not
+  # something an integration composes.
   scope "/api/v1/issuer", SovraWeb.Issuer do
     pipe_through [:api, :api_key]
 
     post "/documents", DocumentController, :create
     get "/documents", DocumentController, :index
     put "/documents/:id/visibility/:visibility", DocumentController, :update_visibility
+  end
+
+  # Credential schemas (workspace API key). The same actions the dashboard
+  # calls, so a workspace can define its credential types from its own
+  # provisioning code instead of clicking through the designer — which is what
+  # an issuer onboarding many credential types at once needs.
+  #
+  # Both pipelines reach these through `conn.assigns.current_workspace_id`,
+  # which `ApiKeyPlug` and `UserSessionPlug` both set to the same workspace.
+  # `current_user` is session-only and must not appear in a shared action.
+  #
+  # Revision and deletion are here too: a schema's claims are part of the
+  # integration's contract, so a caller that can create one can also correct
+  # it. `Issuer.delete_schema/2` still refuses once a credential has been
+  # issued from the schema (`:schema_in_use`), and `revise_schema/4` takes a
+  # `base_version` so two concurrent editors cannot silently overwrite.
+  scope "/api/v1/issuer", SovraWeb.Issuer do
+    pipe_through [:api, :api_key]
+
+    post "/schemas", AdminController, :create_schema
+    get "/schemas", AdminController, :list_schemas
+    put "/schemas/:schema_id", AdminController, :revise_schema
+    delete "/schemas/:id", AdminController, :delete_schema
   end
 
   # Verifier API (workspace API key — server-to-server, used to start OID4VP

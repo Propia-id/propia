@@ -509,7 +509,7 @@ defmodule SovraWeb.Issuer.AdminController do
   end
 
   defp do_create_schema(conn, params, validity_period) do
-    workspace_id = conn.assigns.current_user.workspace_id
+    workspace_id = conn.assigns.current_workspace_id
 
     attrs = %{
       schema_id: params["schema_id"],
@@ -648,7 +648,7 @@ defmodule SovraWeb.Issuer.AdminController do
   end
 
   def list_schemas(conn, _params) do
-    workspace_id = conn.assigns.current_user.workspace_id
+    workspace_id = conn.assigns.current_workspace_id
     schemas = Issuer.list_schemas(workspace_id)
     # One query for every layout, rather than one per schema.
     layouts = Documents.layouts_for(Enum.map(schemas, & &1.id))
@@ -681,7 +681,7 @@ defmodule SovraWeb.Issuer.AdminController do
   def revise_schema(conn, %{"schema_id" => schema_id} = params) do
     with {:ok, base_version} <- parse_base_version(params["base_version"]),
          {:ok, validity_period} <- fetch_validity_period(params) do
-      workspace_id = conn.assigns.current_user.workspace_id
+      workspace_id = conn.assigns.current_workspace_id
 
       attrs = %{
         name: params["name"],
@@ -740,7 +740,7 @@ defmodule SovraWeb.Issuer.AdminController do
         conn
 
       {:ok, schema_id} ->
-        workspace_id = conn.assigns.current_user.workspace_id
+        workspace_id = conn.assigns.current_workspace_id
 
         case Issuer.delete_schema(workspace_id, schema_id) do
           {:ok, _} ->
