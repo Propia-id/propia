@@ -817,7 +817,7 @@ defmodule SovraWeb.Issuer.AdminController do
   )
 
   def get_design(conn, %{"schema_id" => schema_id}) do
-    workspace_id = conn.assigns.current_user.workspace_id
+    workspace_id = conn.assigns.current_workspace_id
 
     case Issuer.get_design(workspace_id, schema_id) do
       {:ok, design} -> json(conn, serialize_design(design))
@@ -827,7 +827,7 @@ defmodule SovraWeb.Issuer.AdminController do
   end
 
   def upsert_design(conn, %{"schema_id" => schema_id} = params) do
-    workspace_id = conn.assigns.current_user.workspace_id
+    workspace_id = conn.assigns.current_workspace_id
     attrs = Map.drop(params, ["schema_id"])
 
     case Issuer.upsert_design(workspace_id, schema_id, attrs) do
@@ -845,7 +845,7 @@ defmodule SovraWeb.Issuer.AdminController do
   end
 
   def delete_design(conn, %{"schema_id" => schema_id}) do
-    workspace_id = conn.assigns.current_user.workspace_id
+    workspace_id = conn.assigns.current_workspace_id
 
     case Issuer.delete_design(workspace_id, schema_id) do
       {:ok, _} -> conn |> put_status(204) |> text("")

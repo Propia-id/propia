@@ -472,6 +472,22 @@ defmodule SovraWeb.Router do
     delete "/schemas/:id", AdminController, :delete_schema
   end
 
+  # Credential design (workspace API key) — how a credential of this schema
+  # renders in a wallet: title, subtitle, the claims shown on the face, and
+  # the card's styles. The design is what `ManifestController` turns into the
+  # DIF Credential Manifest `output_descriptor` served at
+  # /wallet/issuer/credential-manifests, so this is the write side of a
+  # surface wallets already read. Managing it from an integration is what lets
+  # a workspace create a credential type and its appearance in one run,
+  # instead of creating the type by API and then opening the designer.
+  scope "/api/v1/issuer", SovraWeb.Issuer do
+    pipe_through [:api, :api_key]
+
+    get "/schemas/:schema_id/design", AdminController, :get_design
+    put "/schemas/:schema_id/design", AdminController, :upsert_design
+    delete "/schemas/:schema_id/design", AdminController, :delete_design
+  end
+
   # Verifier API (workspace API key — server-to-server, used to start OID4VP
   # sessions)
   scope "/api/v1/verifier", SovraWeb.Verifier do
