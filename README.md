@@ -53,25 +53,35 @@ The platform runs in full on a single machine, including a local ledger with
 the registry contracts deployed to it. No account registration and no hosted
 environment are required.
 
-The toolchain is provided by [Nix](https://nixos.org/download), which supplies
-Elixir, Node and the remaining dependencies. PostgreSQL is also required.
-
-First, start a local ledger. Any Ethereum JSON-RPC implementation is suitable;
-[Anvil](https://book.getfoundry.sh/anvil/) is the most direct option. In a
-separate terminal:
-
-```bash
-anvil
-```
-
-Then install the dependencies, prepare the database and deploy the registries:
+The only prerequisite is [Nix](https://nixos.org/download). The development
+shell supplies Elixir, Node, PostgreSQL and Anvil, so nothing else need be
+installed.
 
 ```bash
 git clone https://github.com/Propia-id/propia.git
 cd propia
-make services.start
-make setup
 ```
+
+A local ledger is required for the registry contracts. In a separate terminal:
+
+```bash
+nix develop --command anvil
+```
+
+Any Ethereum JSON-RPC implementation is suitable; Anvil is simply the one
+already provided. Then start PostgreSQL, install the dependencies, prepare the
+database and deploy the registries:
+
+```bash
+make services.start
+DEPLOYER_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 make setup
+```
+
+That key is the first account of Anvil's default mnemonic, which is published
+and identical on every installation. It pays for the local deployment and
+holds the registry roles, and it is to be used for local development only.
+Deployment to any other network is described in
+[`contracts/README.md`](contracts/README.md).
 
 Finally, start the server:
 
