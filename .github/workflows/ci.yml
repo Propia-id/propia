@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sovra_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            backend/deps
+            backend/_build
+          key: backend-${{ runner.os }}-${{ hashFiles('backend/mix.lock') }}
+          restore-keys: backend-${{ runner.os }}-
+
+      - name: Setup
+        run: make backend.setup
+
+      - name: Create database
+        run: make backend.db.create
+
+      - name: Lint
+        run: make backend.lint
+
+      - name: Build
+        run: make backend.build
+
+      - name: Nix release build
+        run: nix build .#sovra-backend --print-build-logs
+
+      - name: Test
+        run: make backend.test
+
+  contracts:
+    name: Contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - uses: actions/cache@v4
+        with:
+          path: contracts/node_modules
+          key: contracts-${{ runner.os }}-${{ hashFiles('contracts/package-lock.json') }}
+          restore-keys: contracts-${{ runner.os }}-
+
+      - name: Setup
+        run: make contracts.setup
+
+      - name: Lint
+        run: make contracts.lint
+
+      - name: Build
+        run: make contracts.build
+
+      - name: Test
+        run: make contracts.test
+
+  sdks:
+    name: SDKs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - uses: actions/cache@v4
+        with:
+          path: frontend/node_modules/.pnpm
+          key: pnpm-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      - name: Setup
+        run: make frontend.setup
+
+      - name: Check
+        run: make frontend.packages.check
+
+      - name: Test
+        run: make frontend.packages.test

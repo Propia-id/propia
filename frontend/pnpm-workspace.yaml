@@ -1,0 +1,7 @@
+# Only the published packages. The applications built on them (wallet,
+# issuer, verifier) are not part of this repository.
+packages:
+  - "packages/*"
+
+allowBuilds:
+  esbuild: true

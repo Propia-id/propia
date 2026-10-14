@@ -1,3 +1,10 @@
+# Nix packages for the published platform.
+#
+# Only `sovra-backend` is built here. The applications built on this platform
+# (wallet, issuer, verifier) are not part of this repository, so the
+# derivations that packaged them — and the pnpm dependency fetch they needed —
+# are not present.
+
 { pkgs }:
 
 let
@@ -10,21 +17,6 @@ let
     version = "0.1.0";
     src = ../backend;
     sha256 = "sha256-axm4cW8bZ9VTivxoXRVMEXtBXrW87f5yEUNXMCBt8CE=";
-  };
-
-  # Fetch pnpm dependencies reproducibly.
-  #
-  # This hash covers frontend/pnpm-lock.yaml, so ANY dependency change in the
-  # workspace invalidates it — including one made for a package this derivation
-  # does not build. The failure surfaces as a hash mismatch in the Frontend
-  # Issuer job, which is confusing when the change was to the wallet. The build
-  # log prints the correct replacement; paste it here.
-  pnpmDeps = pkgs.pnpm.fetchDeps {
-    pname = "sovra-frontend-deps";
-    version = "0.1.0";
-    src = ../frontend;
-    hash = "sha256-6J/KSH8mtVNRxvOSx4f2EJaYxEZGoX9Q7K4khcpusVU=";
-    fetcherVersion = 3;
   };
 
   # Prefetch precompiled Rust NIFs for ex_keccak and ex_secp256k1.
@@ -79,35 +71,5 @@ in {
 
     # Keep the Erlang cookie so the release can start without RELEASE_COOKIE.
     removeCookie = false;
-  };
-
-  # Static build of the issuer frontend (Vite/React).
-  sovra-issuer = pkgs.stdenv.mkDerivation {
-    pname = "sovra-issuer";
-    version = "0.1.0";
-    src = ../frontend;
-
-    nativeBuildInputs = [
-      pkgs.nodejs_24
-      pkgs.pnpm
-      pkgs.pnpm.configHook
-    ];
-
-    inherit pnpmDeps;
-
-    buildPhase = ''
-      runHook preBuild
-      pnpm --filter @sovra/issuer build
-      runHook postBuild
-    '';
-
-    installPhase = ''
-      runHook preInstall
-      mkdir -p $out
-      cp -r issuer/dist/* $out/
-      runHook postInstall
-    '';
-
-    doCheck = false;
   };
 }
